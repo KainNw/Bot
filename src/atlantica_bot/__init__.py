@@ -1,3 +1,3 @@
-"""Atlantica Online client diagnostics; no game-specific addresses are assumed."""
+"""Native hunting controls and read-only diagnostics for the verified Atlantica client."""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

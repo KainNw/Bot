@@ -19,6 +19,8 @@ CODE_BLOCKS = (
     ("vector-helpers", 0x0043A000, 0x1000),
     ("identity-and-target-guards", 0x00433000, 0x2000),
     ("active-index", 0x00446000, 0x1000),
+    ("target-command-validation", 0x00431000, 0x2000),
+    ("send-buffer-pipeline", 0x009A1000, 0x5000),
 )
 ANCHOR_ADDRESS = 0x0043CDA7
 ANCHOR_BYTES = bytes.fromhex("68 08 64 2c 04")

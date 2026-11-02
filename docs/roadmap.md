@@ -12,8 +12,8 @@
   apagado, el marcador desactivado y sin x32dbg. Ese resultado amplía la reproducción;
   todavía no permite asignar una causa. Después pidió priorizar la entrega del panel.
 - El panel se publicó en `codex/panel-caza`; su compilación Windows y prueba de arranque
-  del ejecutable terminaron correctamente. La conexión con el cliente sigue requiriendo
-  prueba en el PC del usuario.
+  del ejecutable terminaron correctamente. El usuario conectó el panel, consultó
+  candidatos y exportó dos ZIP de contexto. La acción independiente sigue pendiente.
 
 ## Caza independiente de Auto Battle — objetivo activo
 
@@ -35,8 +35,11 @@ captura. No se deben presentar como una API de ataque disponible.
 
 La primera exportación de 28 KiB ya se recibió, validó y analizó. Se implementó una
 vista de candidatos de solo lectura que no exige Auto Battle y se amplió la captura
-a los auxiliares faltantes y el método virtual de envío (hasta 48 KiB). Quedan por
-contrastar la tabla en el PC del usuario y analizar esos nuevos bloques. Detalles en
+a los auxiliares faltantes y el método virtual de envío. La segunda captura y el
+resumen real se recibieron: el barrido 0.2.1 consulta ahora la lista activa y corrige
+el contador de cambios. Se identificó `0095EC3A`, pero faltan sus auxiliares de
+preparación y la validación `00431AC0`; la exportación añade esos bloques (hasta
+76 KiB). Todavía no hay acción de ataque independiente. Detalles en
 [independent-mode.md](independent-mode.md).
 
 No se considera modo independiente el cambio artificial del indicador Auto Battle

@@ -30,6 +30,8 @@ con estas regiones fijas de la sección de código de la compilación comprobada
 | Auxiliares de vectores y distancia | `0043A000` | 4 KiB |
 | Identidad y comprobación adicional del objetivo | `00433000` | 8 KiB |
 | Índices activos de la colección | `00446000` | 4 KiB |
+| Construcción y validación del comando del objetivo (0.2.1) | `00431000` | 8 KiB |
+| Preparación del envío (0.2.1) | `009A1000` | 20 KiB |
 
 La versión 0.2 también resuelve por lectura el destino del método virtual del
 despachador. Si la tabla y el método están en las regiones conocidas de la imagen,
@@ -60,6 +62,11 @@ colección de objetivos y efectos de los auxiliares. Después habrá que contras
 los candidatos con el clic manual normal antes de incorporarlos al modo independiente.
 La caza independiente todavía no se presenta como implementada.
 
+La segunda captura ya se recibió y analizó. Identificó el vector de índices activos,
+la copia de identidad y el método virtual real `0095EC3A`; este último delega en dos
+auxiliares de preparación todavía no capturados. Véase
+[el segundo análisis](context-analysis-20261102-185025.md).
+
 ## Lectura independiente de candidatos
 
 **Ver objetivos** permite contrastar las lecturas ya identificadas sin invocar
@@ -67,8 +74,16 @@ funciones internas ni exigir Auto Battle. Se limita a los índices 1–449 admit
 por el auxiliar capturado. Identifica al personaje local en el índice 1, lee la
 rejilla con los getters analizados y ordena por `abs(dx)+abs(dy)`.
 
-Se aplican los filtros conocidos de ID, estado, flags y mapa. Aún faltan la pertenencia
-a índices activos y `00433A4A`; por ello los resultados son candidatos, no objetivos
-completamente validados para atacar. Se contabilizan lecturas fallidas, cambios de
-puntero y causas de rechazo. Si cambia la escena o el personaje durante la consulta,
-se invalida el resultado. El resumen se copia al portapapeles solo a petición del usuario.
+Se aplican los filtros conocidos de ID, estado, flags y mapa. Desde 0.2.1, el barrido
+recorre el vector activo y comprueba su pertenencia con las estructuras identificadas
+en `0044611C`/`0044613D`. Los punteros de la tabla que no pertenecen a la lista se
+cuentan como entradas inactivas y no se dereferencian. Un `slot_mismatch` no se cuenta
+como cambio observado; se conserva como rechazo independiente.
+
+Queda pendiente `00433A4A`, que construye un comando temporal y delega en `00431AC0`.
+Los resultados siguen siendo candidatos, no objetivos completamente validados para
+atacar. Si cambia la lista activa, la escena o el personaje durante la consulta, se
+invalida el resultado. El resumen se copia al portapapeles a petición del usuario.
+
+La exportación 0.2.1 añade `00431000`–`00432FFF` y `009A1000`–`009A5FFF` para los
+auxiliares pendientes, hasta 76 KiB de código en total con el método virtual.

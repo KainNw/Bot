@@ -83,9 +83,14 @@ de rejilla. **Copiar resultados** copia un resumen con el personaje y los diez
 candidatos más cercanos para contrastarlo con el juego. No envía acciones de ataque
 y quedan comprobaciones de selección pendientes.
 
+La versión 0.2.1 consulta la lista activa identificada en la segunda captura y omite
+los punteros de la tabla ajenos a ella. Separa las entradas inactivas y los rechazos
+por identidad de los cambios de puntero observados. Valida que la lista no cambie
+durante la consulta.
+
 El botón **Exportar diagnóstico** está disponible después de Conectar, incluso con
-Auto Battle apagado. La captura ampliada guarda hasta 48 KiB de código más un
-manifiesto para estudiar los auxiliares y el método virtual de envío que faltan.
+Auto Battle apagado. La captura ampliada guarda hasta 76 KiB de código más un
+manifiesto para estudiar la validación del objetivo y preparación del envío.
 La operación solo lee esas regiones y no inicia la caza. Los detalles están en
 [el plan del modo independiente](docs/independent-mode.md).
 

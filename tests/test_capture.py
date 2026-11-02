@@ -63,7 +63,7 @@ def test_exports_only_bounded_code_and_manifest_with_auto_battle_off(session, tm
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["state_at_start"]["auto_battle"] is False
         assert str(session.directory) not in json.dumps(manifest)
-        assert sum(block["size"] for block in manifest["blocks"]) == 48 * 1024
+        assert sum(block["size"] for block in manifest["blocks"]) == 76 * 1024
         assert manifest["dispatch_resolution"] == {
             "owner_context_code": 2,
             "status": "captured",

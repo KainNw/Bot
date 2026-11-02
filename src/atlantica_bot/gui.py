@@ -268,7 +268,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         f"X={view.player.x}, Y={view.player.y}. "
                         f"{len(view.candidates)} candidatos de {view.observed_entries} entradas; "
                         f"{view.read_errors} lecturas fallidas, "
-                        f"{view.changed_entries} entradas cambiadas."
+                        f"{view.changed_entries} punteros cambiados, "
+                        f"{view.inactive_entries} entradas inactivas omitidas."
                     )
                     for candidate in view.candidates:
                         table.insert(
