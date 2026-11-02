@@ -8,7 +8,7 @@ from .hunting import control_hunting, marker_state
 from .session import GameSession, LiveState
 
 
-def launch_panel() -> None:
+def launch_panel(*, smoke_test: bool = False) -> None:
     if sys.platform != "win32":
         raise DiagnosticError("El panel con lectura del cliente se ejecuta en Windows.")
     import tkinter as tk
@@ -183,4 +183,7 @@ def launch_panel() -> None:
             self.root.destroy()
 
     panel = Panel()
+    if smoke_test:
+        # Exercise the real packaged GUI without connecting or changing any files.
+        panel.root.after(500, panel.root.destroy)
     panel.root.mainloop()

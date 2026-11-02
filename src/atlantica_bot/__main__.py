@@ -29,7 +29,10 @@ def parser() -> argparse.ArgumentParser:
     )
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = root.add_subparsers(dest="command", required=True)
-    commands.add_parser("panel", help="Abrir el panel de inicio, parada y estado en Windows.")
+    panel = commands.add_parser(
+        "panel", help="Abrir el panel de inicio, parada y estado en Windows."
+    )
+    panel.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
     hunt = commands.add_parser("hunt", help="Controlar el marcador del AutoHunting integrado.")
     hunt.add_argument("action", choices=("start", "stop", "status"))
     hunt.add_argument(
@@ -57,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "panel":
             from .gui import launch_panel
 
-            launch_panel()
+            launch_panel(smoke_test=args.smoke_test)
             return 0
         if args.command == "hunt":
             result = control_hunting(args.directory, args.action)

@@ -12,9 +12,10 @@ El usuario también comunicó un cierre al probar el clic manual con Auto Battle
 apagado, marcador desactivado y sin x32dbg. No hay todavía registro de ese segundo
 cierre que permita identificar su causa.
 
-**Panel:** implementado con Iniciar, Parar y estado actualizado. La lógica se prueba
-en Linux mediante lecturas simuladas; la ventana y las nuevas APIs nativas todavía
-requieren validación en Windows. La próxima prueba debe hacerse con el juego abierto
+**Panel:** implementado con Iniciar, Parar y estado actualizado. La lógica tiene
+pruebas automatizadas; el workflow de Windows también comprueba las APIs sobre su
+propio proceso y el arranque del ejecutable gráfico. La conexión real con el cliente
+requiere validación en tu PC. La próxima prueba debe hacerse con el juego abierto
 normalmente, sin adjuntar x32dbg, para separar esa variable del comportamiento del cliente.
 
 Solo se admite la compilación cuyo SHA-256 es
@@ -180,10 +181,12 @@ El diagnóstico no necesita un servidor local, Docker ni servicios en segundo pl
 ## Compilar el panel para Windows
 
 El workflow preparado en `.github/workflows/windows-panel.yml` ejecuta los tests en
-Windows y compila `AtlanticaPanel.exe` con PyInstaller. Se inicia manualmente desde
+Windows, compila `AtlanticaPanel.exe` con PyInstaller y prueba su arranque sin conectarse
+al juego. Se inicia manualmente desde
 GitHub Actions o al subir la rama `codex/panel-caza`. Su artefacto será
-`AtlanticaPanel-Windows`, con el ejecutable y su SHA-256. Esa compilación remota
-todavía no se ha ejecutado en esta tarea.
+`AtlanticaPanel-Windows`, con el ejecutable y su SHA-256. La primera compilación
+remota terminó correctamente en
+[GitHub Actions](https://github.com/KainNw/Bot/actions/runs/41502671707).
 
 También se puede compilar localmente en Windows:
 

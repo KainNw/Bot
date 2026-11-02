@@ -34,6 +34,17 @@ jobs:
           uv run --frozen --group build pyinstaller
           --noconfirm --clean --onefile --windowed --noupx
           --name AtlanticaPanel --paths src panel_caza.py
+      - name: Verify executable opens and closes its GUI
+        shell: pwsh
+        run: |
+          $panelProbe = Start-Process -FilePath dist/AtlanticaPanel.exe -ArgumentList '--smoke-test' -PassThru
+          if (-not $panelProbe.WaitForExit(30000)) {
+            $panelProbe.Kill()
+            throw 'The panel did not complete its startup check.'
+          }
+          if ($panelProbe.ExitCode -ne 0) {
+            throw "The panel exited with code $($panelProbe.ExitCode)."
+          }
       - name: Write checksum
         shell: pwsh
         run: |
