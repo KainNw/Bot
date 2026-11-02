@@ -33,6 +33,9 @@ def parser() -> argparse.ArgumentParser:
         "panel", help="Abrir el panel de inicio, parada y estado en Windows."
     )
     panel.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
+    capture = commands.add_parser("capture", help="Exportar contexto de código para análisis.")
+    capture.add_argument("--pid", type=positive_pid, help="PID opcional si hay varios clientes.")
+    capture.add_argument("--output", type=Path, required=True, help="Archivo ZIP nuevo.")
     hunt = commands.add_parser("hunt", help="Controlar el marcador del AutoHunting integrado.")
     hunt.add_argument("action", choices=("start", "stop", "status"))
     hunt.add_argument(
@@ -78,6 +81,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         system = WindowsSystem()
+        if args.command == "capture":
+            from .capture import export_code_context
+            from .session import GameSession
+
+            session = GameSession.connect(system, args.pid)
+            export_code_context(session, args.output)
+            print(f"Contexto de código guardado en {args.output}.")
+            return 0
         if args.command == "self-test":
             self_test(system)
             print("Prueba local correcta: proceso, ejecutable, módulo y lectura de memoria.")

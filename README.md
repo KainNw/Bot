@@ -24,7 +24,9 @@ Solo se admite la compilación cuyo SHA-256 es
 ## Mejoras solicitadas y límites actuales
 
 La prioridad más reciente es entregar el panel de inicio, parada y estado para poder
-mejorarlo por etapas. El primer modo disponible es el control de la caza nativa.
+mejorarlo por etapas. Ese panel ya se publicó y se compiló para Windows. La siguiente
+etapa solicitada es la caza independiente. El primer modo disponible sigue siendo el
+control de la caza nativa.
 
 El usuario ha pedido que Iniciar bot funcione manteniendo Auto Battle apagado.
 **Ese modo independiente todavía no está implementado.** El panel actual controla
@@ -69,6 +71,14 @@ Con el juego cerrado también puedes elegir **Seleccionar carpeta** y pulsar **P
 para dejar el marcador desactivado antes del siguiente arranque. Cerrar el panel no
 desactiva automáticamente la función del cliente; si puede seguir activa, aparece
 una confirmación antes de cerrar la ventana.
+
+## Contexto para la siguiente etapa
+
+El botón **Exportar diagnóstico** está disponible después de Conectar, incluso con
+Auto Battle apagado. Guarda un ZIP de 28 KiB de código más un manifiesto para estudiar
+los auxiliares de ataque y selección de objetivos que faltan. La operación solo lee
+esas regiones y no inicia la caza. Los detalles están en
+[el plan del modo independiente](docs/independent-mode.md).
 
 ## Control por comandos
 

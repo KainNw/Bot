@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
+from .capture import export_code_context
 from .errors import DiagnosticError
 from .hunting import control_hunting, marker_state
 from .session import GameSession, LiveState
@@ -50,6 +52,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.start_button.pack(side="left", padx=(0, 10))
             self.stop_button = ttk.Button(row, text="Parar", command=self.stop, state="disabled")
             self.stop_button.pack(side="left")
+            self.capture_button = ttk.Button(
+                row, text="Exportar diagnóstico", command=self.export, state="disabled"
+            )
+            self.capture_button.pack(side="left", padx=10)
             ttk.Label(frame, textvariable=self.request).pack(anchor="w", pady=4)
             ttk.Label(frame, textvariable=self.status, font=("Segoe UI", 12, "bold")).pack(
                 anchor="w", pady=4
@@ -79,6 +85,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.session = None
                 self.last_state = None
                 self.start_button.configure(state="disabled")
+                self.capture_button.configure(state="disabled")
                 self.folder.set(str(directory))
                 self.status.set("Cliente: sin conexión; estado real sin confirmar")
                 self.refresh_files()
@@ -99,6 +106,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             except Exception as exc:
                 self.session = None
                 self.start_button.configure(state="disabled")
+                self.capture_button.configure(state="disabled")
                 self.status.set("Cliente: sin conexión; estado real sin confirmar")
                 self.error(exc)
 
@@ -115,11 +123,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
         def refresh(self) -> None:
             self.start_button.configure(state="disabled")
+            self.capture_button.configure(state="disabled")
             self.refresh_files()
             if self.session is None:
                 return
             state = self.session.snapshot()
             self.last_state = state
+            self.capture_button.configure(state="normal")
             self.status.set(f"Cliente: {state.label}")
             if state.auto_battle and state.condition_b > 0 and not state.files.marker_present:
                 self.start_button.configure(state="normal")
@@ -181,6 +191,31 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ):
                 return
             self.root.destroy()
+
+        def export(self) -> None:
+            session = self.session
+            if session is None:
+                self.error(
+                    DiagnosticError("Conecta con el juego antes de exportar el diagnóstico.")
+                )
+                return
+            filename = filedialog.asksaveasfilename(
+                title="Guardar diagnóstico de código",
+                defaultextension=".zip",
+                filetypes=[("Archivo ZIP", "*.zip")],
+                initialdir=str(session.directory),
+                initialfile=f"Atlantica-contexto-{datetime.now():%Y%m%d-%H%M%S}.zip",
+            )
+            if not filename:
+                return
+            try:
+                export_code_context(session, Path(filename))
+                self.detail.set(
+                    f"Diagnóstico guardado en {filename}. "
+                    "Adjunta ese ZIP al chat para continuar el análisis."
+                )
+            except (DiagnosticError, OSError) as exc:
+                self.error(exc)
 
     panel = Panel()
     if smoke_test:

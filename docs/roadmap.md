@@ -1,6 +1,6 @@
 # Próximas etapas acordadas
 
-## Entrega del panel y estabilidad — prioridad actual
+## Panel entregado y estabilidad
 
 - Implementados el control conservador del archivo y el panel nativo con estados de
   solicitud/confirmación. La lógica tiene pruebas; el panel requiere prueba en Windows.
@@ -11,8 +11,11 @@
 - El usuario respondió que el clic manual también cierra el cliente con Auto Battle
   apagado, el marcador desactivado y sin x32dbg. Ese resultado amplía la reproducción;
   todavía no permite asignar una causa. Después pidió priorizar la entrega del panel.
+- El panel se publicó en `codex/panel-caza`; su compilación Windows y prueba de arranque
+  del ejecutable terminaron correctamente. La conexión con el cliente sigue requiriendo
+  prueba en el PC del usuario.
 
-## Caza independiente de Auto Battle — siguiente etapa
+## Caza independiente de Auto Battle — objetivo activo
 
 Requisito del usuario: Iniciar bot debe iniciar la caza mientras Auto Battle permanezca
 apagado. El modo nativo hallado exige ese indicador y no cumple este requisito.
@@ -25,6 +28,11 @@ Después hay que identificar la ruta normal del clic y validar selección de obj
 contexto de ejecución y acción. El bloque recibido contiene llamadas a auxiliares
 en `0040C4E9` y `0043652D`, pero sus implementaciones no se han capturado y sus
 efectos no están confirmados. No se deben presentar como una API de ataque disponible.
+
+Se añadió una exportación de solo lectura desde el panel para recoger 28 KiB de
+contexto de los auxiliares y de selección de objetivos, sin adjuntar x32dbg. El ZIP
+de esa captura es el siguiente dato necesario para continuar el análisis. Detalles en
+[independent-mode.md](independent-mode.md).
 
 No se considera modo independiente el cambio artificial del indicador Auto Battle
 ni saltarse su comprobación en la rutina nativa. El controlador actual no hace ninguno
