@@ -17,12 +17,24 @@ class CaptureSystem:
         self.anchor = ANCHOR_BYTES
         self.short = False
         self.zero = False
+        self.unsupported_table = False
 
     def read_memory(self, pid, address, size):
         assert pid == 123
         self.reads.append((address, size))
         if address == ANCHOR_ADDRESS:
             return self.anchor
+        if address == 0x04A9290C:
+            return (0x30000000).to_bytes(4, "little")
+        if address == 0x30000000:
+            table = 0 if self.unsupported_table else 0x042A0000
+            return table.to_bytes(4, "little")
+        if address == 0x30000B98:
+            return (2).to_bytes(4, "little", signed=True)
+        if address == 0x042A0064:
+            return (0x00500010).to_bytes(4, "little")
+        if (address, size) == (0x00500000, 0x2000):
+            return b"\x90" * size
         assert (address, size) in [(address, size) for _, address, size in CODE_BLOCKS]
         if self.short:
             return bytes(size - 1)
@@ -47,16 +59,33 @@ def test_exports_only_bounded_code_and_manifest_with_auto_battle_off(session, tm
     export_code_context(session, output)
     with ZipFile(output) as archive:
         assert archive.testzip() is None
-        assert len(archive.namelist()) == len(CODE_BLOCKS) + 1
+        assert len(archive.namelist()) == len(CODE_BLOCKS) + 2
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["state_at_start"]["auto_battle"] is False
         assert str(session.directory) not in json.dumps(manifest)
-        assert sum(block["size"] for block in manifest["blocks"]) == 28 * 1024
+        assert sum(block["size"] for block in manifest["blocks"]) == 48 * 1024
+        assert manifest["dispatch_resolution"] == {
+            "owner_context_code": 2,
+            "status": "captured",
+            "function_address": "00500010",
+        }
         for block in manifest["blocks"]:
             data = archive.read(block["file"])
             assert len(data) == block["size"]
             assert hashlib.sha256(data).hexdigest() == block["sha256"]
     assert not (session.directory / MARKER_NAME).exists()
+
+
+def test_unsupported_dynamic_table_is_reported_without_exporting_arbitrary_memory(
+    session, tmp_path
+):
+    session.system.unsupported_table = True
+    output = tmp_path / "context.zip"
+    export_code_context(session, output)
+    with ZipFile(output) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["dispatch_resolution"]["status"] == "unavailable"
+        assert len(archive.namelist()) == len(CODE_BLOCKS) + 1
 
 
 def test_existing_output_is_not_overwritten(session, tmp_path):

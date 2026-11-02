@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
+from . import __version__
 from .capture import export_code_context
 from .errors import DiagnosticError
 from .hunting import control_hunting, marker_state
 from .session import GameSession, LiveState
+from .world import scan_world
 
 
 def launch_panel(*, smoke_test: bool = False) -> None:
@@ -21,7 +24,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
     class Panel:
         def __init__(self) -> None:
             self.root = tk.Tk()
-            self.root.title("Atlantica — Control de caza")
+            self.root.title(f"Atlantica — Control de caza {__version__}")
             self.root.minsize(720, 390)
             self.directory: Path | None = None
             self.session: GameSession | None = None
@@ -34,9 +37,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             frame = ttk.Frame(self.root, padding=18)
             frame.pack(fill="both", expand=True)
             ttk.Label(frame, text="Control de caza", font=("Segoe UI", 18)).pack(anchor="w")
-            ttk.Label(frame, text="Modo actual: caza del cliente; requiere Auto Battle.").pack(
-                anchor="w", pady=4
-            )
+            ttk.Label(
+                frame,
+                text="Iniciar requiere Auto Battle. Ver objetivos: solo lectura.",
+            ).pack(anchor="w", pady=4)
             ttk.Label(frame, textvariable=self.folder, wraplength=680).pack(anchor="w", pady=8)
             row = ttk.Frame(frame)
             row.pack(fill="x", pady=4)
@@ -56,6 +60,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 row, text="Exportar diagnóstico", command=self.export, state="disabled"
             )
             self.capture_button.pack(side="left", padx=10)
+            self.targets_button = ttk.Button(
+                row, text="Ver objetivos", command=self.show_targets, state="disabled"
+            )
+            self.targets_button.pack(side="left")
             ttk.Label(frame, textvariable=self.request).pack(anchor="w", pady=4)
             ttk.Label(frame, textvariable=self.status, font=("Segoe UI", 12, "bold")).pack(
                 anchor="w", pady=4
@@ -86,6 +94,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.last_state = None
                 self.start_button.configure(state="disabled")
                 self.capture_button.configure(state="disabled")
+                self.targets_button.configure(state="disabled")
                 self.folder.set(str(directory))
                 self.status.set("Cliente: sin conexión; estado real sin confirmar")
                 self.refresh_files()
@@ -107,6 +116,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.session = None
                 self.start_button.configure(state="disabled")
                 self.capture_button.configure(state="disabled")
+                self.targets_button.configure(state="disabled")
                 self.status.set("Cliente: sin conexión; estado real sin confirmar")
                 self.error(exc)
 
@@ -124,12 +134,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def refresh(self) -> None:
             self.start_button.configure(state="disabled")
             self.capture_button.configure(state="disabled")
+            self.targets_button.configure(state="disabled")
             self.refresh_files()
             if self.session is None:
                 return
             state = self.session.snapshot()
             self.last_state = state
             self.capture_button.configure(state="normal")
+            self.targets_button.configure(state="normal")
             self.status.set(f"Cliente: {state.label}")
             if state.auto_battle and state.condition_b > 0 and not state.files.marker_present:
                 self.start_button.configure(state="normal")
@@ -216,6 +228,83 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 )
             except (DiagnosticError, OSError) as exc:
                 self.error(exc)
+
+        def show_targets(self) -> None:
+            if self.session is None:
+                self.error(DiagnosticError("Conecta con el juego para leer los objetivos."))
+                return
+            window = tk.Toplevel(self.root)
+            window.title("Candidatos de mapa — solo lectura")
+            window.minsize(680, 330)
+            frame = ttk.Frame(window, padding=12)
+            frame.pack(fill="both", expand=True)
+            summary = tk.StringVar(value="Consultando...")
+            ttk.Label(frame, textvariable=summary, wraplength=650).pack(anchor="w", pady=6)
+            columns = ("slot", "kind", "map", "x", "y", "distance")
+            table = ttk.Treeview(frame, columns=columns, show="headings", height=10)
+            for key, title in zip(
+                columns, ("N.º", "ID observado", "Mapa", "X", "Y", "Distancia rejilla"), strict=True
+            ):
+                table.heading(key, text=title)
+                table.column(key, width=100, anchor="center")
+            table.pack(fill="both", expand=True)
+            last = {}
+
+            def refresh_targets() -> None:
+                try:
+                    if self.session is None:
+                        raise DiagnosticError("El cliente se desconectó; vuelve a conectar.")
+                    view = scan_world(self.session)
+                    last.clear()
+                    last.update(view.summary())
+                    table.delete(*table.get_children())
+                    if view.player is None:
+                        summary.set(
+                            "El cliente no está en el estado de mapa que hemos identificado."
+                        )
+                        return
+                    summary.set(
+                        f"Jugador: mapa {view.player.map_id}, "
+                        f"X={view.player.x}, Y={view.player.y}. "
+                        f"{len(view.candidates)} candidatos de {view.observed_entries} entradas; "
+                        f"{view.read_errors} lecturas fallidas, "
+                        f"{view.changed_entries} entradas cambiadas."
+                    )
+                    for candidate in view.candidates:
+                        table.insert(
+                            "",
+                            "end",
+                            values=(
+                                candidate.slot,
+                                candidate.kind_id,
+                                candidate.map_id,
+                                candidate.x,
+                                candidate.y,
+                                candidate.grid_distance,
+                            ),
+                        )
+                except (DiagnosticError, OSError) as exc:
+                    last.clear()
+                    table.delete(*table.get_children())
+                    summary.set(str(exc))
+
+            def copy_results() -> None:
+                if last:
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(json.dumps(last, ensure_ascii=False, indent=2))
+
+            buttons = ttk.Frame(frame)
+            buttons.pack(fill="x", pady=8)
+            ttk.Button(buttons, text="Actualizar", command=refresh_targets).pack(side="left")
+            ttk.Button(buttons, text="Copiar resultados", command=copy_results).pack(
+                side="left", padx=8
+            )
+            ttk.Label(
+                frame,
+                text="Son candidatos; falta validar la acción de ataque.",
+                wraplength=650,
+            ).pack(anchor="w")
+            refresh_targets()
 
     panel = Panel()
     if smoke_test:

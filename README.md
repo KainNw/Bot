@@ -17,6 +17,9 @@ pruebas automatizadas; el workflow de Windows también comprueba las APIs sobre 
 propio proceso y el arranque del ejecutable gráfico. La conexión real con el cliente
 requiere validación en tu PC. La próxima prueba debe hacerse con el juego abierto
 normalmente, sin adjuntar x32dbg, para separar esa variable del comportamiento del cliente.
+El usuario pudo conectar el panel y exportar contexto con Auto Battle apagado en
+una sesión posterior con otro PID. La nueva vista de objetivos todavía requiere
+contrastar sus resultados con el juego.
 
 Solo se admite la compilación cuyo SHA-256 es
 `BC87A0CC5826AA7FB5E4FF10B6B7C1A349962BD8B146AD28EC3FFA9453FE04E6`.
@@ -74,10 +77,16 @@ una confirmación antes de cerrar la ventana.
 
 ## Contexto para la siguiente etapa
 
+La versión 0.2 añade **Ver objetivos** después de Conectar. La consulta no exige
+Auto Battle ni un contador positivo: muestra candidatos del mapa y su distancia
+de rejilla. **Copiar resultados** copia un resumen con el personaje y los diez
+candidatos más cercanos para contrastarlo con el juego. No envía acciones de ataque
+y quedan comprobaciones de selección pendientes.
+
 El botón **Exportar diagnóstico** está disponible después de Conectar, incluso con
-Auto Battle apagado. Guarda un ZIP de 28 KiB de código más un manifiesto para estudiar
-los auxiliares de ataque y selección de objetivos que faltan. La operación solo lee
-esas regiones y no inicia la caza. Los detalles están en
+Auto Battle apagado. La captura ampliada guarda hasta 48 KiB de código más un
+manifiesto para estudiar los auxiliares y el método virtual de envío que faltan.
+La operación solo lee esas regiones y no inicia la caza. Los detalles están en
 [el plan del modo independiente](docs/independent-mode.md).
 
 ## Control por comandos

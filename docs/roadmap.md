@@ -20,18 +20,23 @@
 Requisito del usuario: Iniciar bot debe iniciar la caza mientras Auto Battle permanezca
 apagado. El modo nativo hallado exige ese indicador y no cumple este requisito.
 
+El usuario pidió también automatizar los turnos de sus mercenarios y después
+confirmó priorizar primero el ataque/inicio de encuentros con mobs. Los turnos
+y la aceleración quedan como etapas posteriores.
+
 La línea base solicitada fue: marcador desactivado, sin x32dbg adjunto, Auto Battle
 apagado y un clic manual sobre un mob. El usuario informó que también se cierra.
 Falta obtener evidencia del error antes de considerar ese flujo una base estable.
 
 Después hay que identificar la ruta normal del clic y validar selección de objetivo,
-contexto de ejecución y acción. El bloque recibido contiene llamadas a auxiliares
-en `0040C4E9` y `0043652D`, pero sus implementaciones no se han capturado y sus
-efectos no están confirmados. No se deben presentar como una API de ataque disponible.
+contexto de ejecución y acción. Ya se analizó el constructor `0040C4E9` y el
+despachador `0043652D`, que delega en un método virtual no incluido en la primera
+captura. No se deben presentar como una API de ataque disponible.
 
-Se añadió una exportación de solo lectura desde el panel para recoger 28 KiB de
-contexto de los auxiliares y de selección de objetivos, sin adjuntar x32dbg. El ZIP
-de esa captura es el siguiente dato necesario para continuar el análisis. Detalles en
+La primera exportación de 28 KiB ya se recibió, validó y analizó. Se implementó una
+vista de candidatos de solo lectura que no exige Auto Battle y se amplió la captura
+a los auxiliares faltantes y el método virtual de envío (hasta 48 KiB). Quedan por
+contrastar la tabla en el PC del usuario y analizar esos nuevos bloques. Detalles en
 [independent-mode.md](independent-mode.md).
 
 No se considera modo independiente el cambio artificial del indicador Auto Battle
