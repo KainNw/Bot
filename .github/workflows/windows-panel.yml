@@ -1,0 +1,49 @@
+name: Build Windows panel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/panel-caza
+
+permissions:
+  contents: read
+
+jobs:
+  windows-panel:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.23"
+      - name: Install locked dependencies
+        run: uv sync --frozen --group build --python 3.12
+      - name: Run tests, including native Windows self-test
+        run: uv run --frozen --group build pytest -q
+      - name: Check code
+        run: uv run --frozen --group build ruff check .
+      - name: Check formatting
+        run: uv run --frozen --group build ruff format --check .
+      - name: Build executable
+        run: >-
+          uv run --frozen --group build pyinstaller
+          --noconfirm --clean --onefile --windowed --noupx
+          --name AtlanticaPanel --paths src panel_caza.py
+      - name: Write checksum
+        shell: pwsh
+        run: |
+          $panelDigest = Get-FileHash -LiteralPath dist/AtlanticaPanel.exe -Algorithm SHA256
+          "$($panelDigest.Hash)  AtlanticaPanel.exe" | Set-Content dist/SHA256.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AtlanticaPanel-Windows
+          path: |
+            dist/AtlanticaPanel.exe
+            dist/SHA256.txt
+          if-no-files-found: error
+          retention-days: 14
