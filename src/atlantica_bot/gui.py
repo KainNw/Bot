@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
+from .battle_context import read_normal_battle
 from .capture import export_code_context
 from .clients import control_native_marker, marker_scope
 from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
@@ -185,6 +186,15 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 state="disabled",
             )
             self.calibration_button.pack(side="left", padx=10)
+            member_row = ttk.Frame(frame)
+            member_row.pack(fill="x", pady=4)
+            self.members_button = ttk.Button(
+                member_row, text="Ver mercenarios", command=self.show_members, state="disabled"
+            )
+            self.members_button.pack(side="left", padx=10)
+            ttk.Label(member_row, text="Consulta los nueve puestos durante el combate.").pack(
+                side="left"
+            )
             ttk.Label(frame, textvariable=self.detector_status, wraplength=760).pack(anchor="w")
             row = ttk.Frame(self.advanced)
             row.pack(fill="x", pady=4)
@@ -229,6 +239,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.stop_button.configure(state="disabled")
             self.capture_button.configure(state="disabled")
             self.combat_capture_button.configure(state="disabled")
+            self.members_button.configure(state="disabled")
             self.targets_button.configure(state="disabled")
             self.trial_button.configure(state="disabled")
             self.bot_start_button.configure(state="disabled")
@@ -750,6 +761,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.start_button.configure(state="disabled")
                 self.capture_button.configure(state="disabled")
                 self.combat_capture_button.configure(state="disabled")
+                self.members_button.configure(state="disabled")
                 self.targets_button.configure(state="disabled")
                 self.trial_button.configure(state="disabled")
                 self.bot_start_button.configure(state="disabled")
@@ -787,6 +799,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.start_button.configure(state="disabled")
                 self.capture_button.configure(state="disabled")
                 self.combat_capture_button.configure(state="disabled")
+                self.members_button.configure(state="disabled")
                 self.targets_button.configure(state="disabled")
                 self.status.set("Cliente: sin conexión; estado real sin confirmar")
                 self.error(exc)
@@ -810,6 +823,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.start_button.configure(state="disabled")
             self.capture_button.configure(state="disabled")
             self.combat_capture_button.configure(state="disabled")
+            self.members_button.configure(state="disabled")
             self.targets_button.configure(state="disabled")
             self.trial_button.configure(state="disabled")
             self.bot_start_button.configure(state="disabled")
@@ -822,6 +836,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.last_state = state
             self.capture_button.configure(state="normal")
             self.combat_capture_button.configure(state="normal")
+            self.members_button.configure(state="normal")
             self.targets_button.configure(state="normal")
             self.calibration_button.configure(state="normal")
             calibrated = self.detector is not None and self.detector.matches(
@@ -964,6 +979,90 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 )
             except (DiagnosticError, OSError) as exc:
                 self.error(exc)
+
+        def show_members(self, *, load: bool = True) -> None:
+            selected_session = self.session
+            if selected_session is None:
+                self.error(DiagnosticError("Conecta con la ventana elegida antes de consultar."))
+                return
+            window = tk.Toplevel(self.root)
+            window.title(f"PID {selected_session.process.pid} — mercenarios en combate")
+            frame = ttk.Frame(window, padding=16)
+            frame.pack(fill="both", expand=True)
+            summary = tk.StringVar(value="Consulta de lectura; los turnos siguen siendo manuales.")
+            ttk.Label(frame, textvariable=summary, wraplength=680).pack(anchor="w", pady=6)
+            table = ttk.Treeview(
+                frame, columns=("slot", "label", "kind", "present"), show="headings", height=9
+            )
+            for column, label, width in (
+                ("slot", "Puesto", 70),
+                ("label", "Nombre del perfil", 190),
+                ("kind", "Tipo detectado", 120),
+                ("present", "Ocupado", 80),
+            ):
+                table.heading(column, text=label)
+                table.column(column, width=width, anchor="w")
+            table.pack(fill="both", expand=True, pady=6)
+            last = {}
+
+            def refresh_members() -> None:
+                table.delete(*table.get_children())
+                last.clear()
+                try:
+                    if self.session is not selected_session:
+                        raise DiagnosticError(
+                            "La conexión cambió; abre el visor del cliente elegido."
+                        )
+                    view = read_normal_battle(selected_session)
+                    last.update(view.summary())
+                    last["tool_version"] = __version__
+                    last["captured_at"] = datetime.now().astimezone().isoformat()
+                    if view.member_read_error:
+                        summary.set(view.member_read_error)
+                        return
+                    names = (
+                        {m.slot: m.name for m in self.profile.mercenaries} if self.profile else {}
+                    )
+                    for member in view.members:
+                        table.insert(
+                            "",
+                            "end",
+                            values=(
+                                member.slot,
+                                names.get(member.slot, f"Puesto {member.slot}"),
+                                member.kind_id,
+                                "Sí" if member.kind_id else "No",
+                            ),
+                        )
+                    summary.set(
+                        f"PID {view.pid}: {sum(m.kind_id > 0 for m in view.members)} puestos "
+                        "ocupados. El tipo se leyó del cliente; los nombres proceden del perfil. "
+                        "La disponibilidad para actuar todavía no está comprobada."
+                    )
+                except (DiagnosticError, OSError) as exc:
+                    summary.set(str(exc))
+                    last.update(
+                        {
+                            "pid": selected_session.process.pid,
+                            "status": "unavailable",
+                            "message": str(exc),
+                            "tool_version": __version__,
+                        }
+                    )
+
+            def copy_members() -> None:
+                if last:
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(json.dumps(last, ensure_ascii=False, indent=2))
+
+            buttons = ttk.Frame(frame)
+            buttons.pack(fill="x", pady=6)
+            ttk.Button(buttons, text="Actualizar", command=refresh_members).pack(side="left")
+            ttk.Button(buttons, text="Copiar mercenarios", command=copy_members).pack(
+                side="left", padx=8
+            )
+            if load:
+                refresh_members()
 
         def attack_once(self) -> None:
             session = self.session
@@ -1119,6 +1218,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         from types import SimpleNamespace
 
         panel.session = SimpleNamespace(process=SimpleNamespace(pid=1), creation_time=1)
+        panel.show_members(load=False)
         panel.calibrate_combat()
         panel.calibration_window.destroy()
         panel.session = None

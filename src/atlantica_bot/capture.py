@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import struct
 from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from . import __version__, hunting
+from .battle_context import NormalBattleContext, read_normal_battle
 from .combat import CombatDetector
 from .errors import DiagnosticError
 from .session import GameSession
@@ -44,13 +46,57 @@ COMBAT_CODE_BLOCKS = (
     ("magic-catalog", 0x00503000, 0x1000),
     ("magic-property-query", 0x008F8000, 0x6000),
     ("magic-policy", 0x00544000, 0x1000),
+    # 00431769 indexes owner+091C by actor+0318 and calls 004FE29F.
+    ("normal-battle-manager-and-members", 0x004F0000, 0x30000),
 )
 COMBAT_READONLY_BLOCKS = (
     # Common character/manager method tables at 042DE14C/042DE770 and their strings.
     ("battle-method-tables-and-labels", 0x042DE000, 0x2000),
+    ("normal-battle-labels", 0x042DC000, 0x2000),
 )
 ANCHOR_ADDRESS = 0x0043CDA7
 ANCHOR_BYTES = bytes.fromhex("68 08 64 2c 04")
+NORMAL_METHOD_LIMIT = 24
+
+
+def _normal_methods(session: GameSession, context: NormalBattleContext, blocks: list) -> dict:
+    """Resolve bounded methods from the observed normal context, without calling them."""
+    table = context.method_table_candidate
+    if not 0x03F85000 <= table <= 0x044F9000 - 256:
+        return {"status": "unavailable", "reason": "context_word_is_not_a_known_readonly_table"}
+    reader = session.system.read_memory
+    data = reader(session.process.pid, table, 256)
+    if len(data) != 256:
+        raise DiagnosticError("Lectura incompleta de los métodos del combate normal.")
+    pointers = struct.unpack("<64I", data)
+    if not all(0x00401000 <= address < 0x03F85000 for address in pointers[:3]):
+        return {"status": "unavailable", "reason": "context_word_is_not_a_verified_method_table"}
+    blocks.append(("normal-context-method-table", table, data))
+    entries = []
+    for offset, address in enumerate(pointers):
+        if not 0x00401000 <= address < 0x03F85000:
+            break
+        if len(entries) == NORMAL_METHOD_LIMIT:
+            break
+        existing = next(
+            (name for name, start, code in blocks if start <= address < start + len(code)), None
+        )
+        if existing is None:
+            start = address & ~0xFFF
+            size = min(0x2000, 0x03F85000 - start)
+            code = reader(session.process.pid, start, size)
+            if len(code) != size or not any(code):
+                raise DiagnosticError("Lectura incompleta de un método del combate normal.")
+            existing = f"normal-context-method-{offset:02d}"
+            blocks.append((existing, start, code))
+        entries.append({"offset": offset * 4, "address": f"{address:08X}", "block": existing})
+    return {
+        "status": "captured",
+        "table_address": f"{table:08X}",
+        "entries": entries,
+        "entry_limit": NORMAL_METHOD_LIMIT,
+        "limit_reached": len(entries) == NORMAL_METHOD_LIMIT,
+    }
 
 
 def _dispatcher_context(session: GameSession) -> tuple[dict, tuple[str, int, bytes] | None]:
@@ -155,6 +201,7 @@ def export_code_context(
     context = _bot_context(session, bot_context)
     combat = None
     detector = None
+    normal = None
     if include_combat:
         detector = CombatDetector.for_supported_session(session)
         before = observe_scene(session)
@@ -163,6 +210,11 @@ def export_code_context(
         if before.native_active:
             raise DiagnosticError("Captura el combate con Auto Battle y caza nativa apagados.")
         combat = {"before": before.summary()}
+        try:
+            normal = read_normal_battle(session)
+            combat["normal_combat"] = normal.summary()
+        except (DiagnosticError, OSError) as exc:
+            combat["normal_combat"] = {"status": "unavailable", "message": str(exc)}
     read = session.system.read_memory
     pid = session.process.pid
     if read(pid, ANCHOR_ADDRESS, len(ANCHOR_BYTES)) != ANCHOR_BYTES:
@@ -179,16 +231,20 @@ def export_code_context(
     dispatch, dispatch_block = _dispatcher_context(session)
     if dispatch_block is not None:
         blocks.append(dispatch_block)
+    if normal is not None:
+        combat["normal_method_resolution"] = _normal_methods(session, normal, blocks)
     session.snapshot()  # Do not label an export valid if the process exited during capture.
     if detector is not None:
         after = observe_scene(session)
         if detector.classify(after) != "battle" or after.native_active:
             raise DiagnosticError("El combate cambió durante la captura; vuelve a exportarlo.")
+        if normal is not None and read_normal_battle(session).binding() != normal.binding():
+            raise DiagnosticError("El contexto del combate cambió durante la captura.")
         combat.update(
             {
                 "after": after.summary(),
                 "detector": detector.summary(),
-                "scope": "common_code_client_dependencies_and_readonly_tables",
+                "scope": "observed_context_a_and_battle_code_dependencies",
                 "turn_state_verified": False,
                 "turn_execution_available": False,
                 "reported_controls": {
@@ -200,7 +256,9 @@ def export_code_context(
                 },
             }
         )
-    readonly_names = {name for name, _, _ in COMBAT_READONLY_BLOCKS}
+    readonly_names = {name for name, _, _ in COMBAT_READONLY_BLOCKS} | {
+        "normal-context-method-table"
+    }
     manifest = {
         "schema_version": 4 if include_combat else 2,
         "tool_version": __version__,

@@ -1,9 +1,12 @@
 import hashlib
 import json
+import struct
+from dataclasses import replace
 from zipfile import ZipFile
 
 import pytest
 
+from atlantica_bot.battle_context import MemberSnapshot, NormalBattleContext
 from atlantica_bot.capture import (
     ANCHOR_ADDRESS,
     ANCHOR_BYTES,
@@ -28,6 +31,8 @@ class CaptureSystem:
         self.unsupported_table = False
         self.short_combat = False
         self.short_readonly = False
+        self.short_normal_method = False
+        self.many_normal_methods = False
 
     def read_memory(self, pid, address, size):
         assert pid == 123
@@ -45,6 +50,14 @@ class CaptureSystem:
             return (0x00500010).to_bytes(4, "little")
         if (address, size) == (0x00500000, 0x2000):
             return b"\x90" * size
+        if (address, size) == (0x04303000, 256):
+            if self.many_normal_methods:
+                return struct.pack("<64I", *(0x700010 + n * 0x3000 for n in range(64)))
+            return struct.pack("<64I", 0x700010, 0x700040, 0x8B0010, *([0] * 61))
+        if self.many_normal_methods and 0x700000 <= address < 0x7C0000 and size == 0x2000:
+            return b"\x90" * size
+        if (address, size) == (0x00700000, 0x2000):
+            return b"\x90" * (size - int(self.short_normal_method))
         assert (address, size) in [
             (address, size)
             for _, address, size in CODE_BLOCKS + COMBAT_CODE_BLOCKS + COMBAT_READONLY_BLOCKS
@@ -68,6 +81,11 @@ def session(executable, monkeypatch):
     monkeypatch.setattr(
         session, "snapshot", lambda: LiveState(False, 17, False, HuntingResult(False, False, False))
     )
+
+    def unavailable(_):
+        raise DiagnosticError("Contexto normal no disponible en esta muestra simulada.")
+
+    monkeypatch.setattr("atlantica_bot.capture.read_normal_battle", unavailable)
     return session
 
 
@@ -115,7 +133,7 @@ def test_combat_export_contains_fixed_code_dependencies_readonly_tables_and_cont
         assert archive.testzip() is None
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["schema_version"] == 4 and manifest["purpose"] == "battle_turn_diagnostic"
-        assert sum(b["size"] for b in manifest["blocks"]) == 492 * 1024
+        assert sum(b["size"] for b in manifest["blocks"]) == 692 * 1024
         assert len(archive.namelist()) == (
             len(CODE_BLOCKS) + len(COMBAT_CODE_BLOCKS) + len(COMBAT_READONLY_BLOCKS) + 2
         )
@@ -130,7 +148,7 @@ def test_combat_export_contains_fixed_code_dependencies_readonly_tables_and_cont
                 assert block["kind"] == "code"
                 assert 0x00401000 <= address < address + block["size"] <= 0x03F85000
         constants = [b for b in manifest["blocks"] if b["kind"] == "readonly_constants"]
-        assert len(constants) == 1 and constants[0]["size"] == 8 * 1024
+        assert len(constants) == 2 and all(b["size"] == 8 * 1024 for b in constants)
     combat = manifest["combat"]
     assert combat["before"]["local"]["context_a"] == combat["after"]["local"]["context_a"] == 0
     assert combat["reported_controls"]["magic_shortcuts"] == list("QWERT")
@@ -150,6 +168,92 @@ def test_incomplete_method_tables_are_not_saved_as_a_complete_battle_capture(
     with pytest.raises(DiagnosticError, match="incompleta"):
         export_code_context(session, output, include_combat=True)
     assert not output.exists()
+
+
+@pytest.fixture
+def normal_context(session, monkeypatch):
+    session.creation_time = 777
+    monkeypatch.setattr("atlantica_bot.capture.observe_scene", lambda _: battle_observation())
+    context = NormalBattleContext(
+        123,
+        777,
+        0x500000,
+        (1001, 123456, 0),
+        0x600000,
+        0,
+        0x700000,
+        0x04303000,
+        0x10215B8,
+        tuple(MemberSnapshot(n, 1000 + n, 100, 50) for n in range(1, 10)),
+    )
+    monkeypatch.setattr("atlantica_bot.capture.read_normal_battle", lambda _: context)
+    return context
+
+
+def test_normal_context_capture_follows_only_verified_image_methods_and_reuses_code_blocks(
+    session, normal_context, tmp_path
+):
+    output = tmp_path / "normal.zip"
+    export_code_context(session, output, include_combat=True)
+    with ZipFile(output) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        report = manifest["combat"]
+        assert report["normal_combat"]["context"] == normal_context.context
+        assert len(report["normal_combat"]["members"]) == 9
+        methods = report["normal_method_resolution"]
+        assert methods["status"] == "captured" and len(methods["entries"]) == 3
+        assert not methods["limit_reached"]
+        assert methods["entries"][0]["block"] == methods["entries"][1]["block"]
+        assert methods["entries"][2]["block"] == "battle-client-actions"
+        assert sum(b["size"] for b in manifest["blocks"]) == 700 * 1024 + 256
+        table = next(b for b in manifest["blocks"] if b["address"] == "04303000")
+        assert table["kind"] == "readonly_constants"
+        assert archive.testzip() is None
+
+
+def test_context_word_outside_readonly_image_is_never_followed(
+    session, normal_context, tmp_path, monkeypatch
+):
+    context = replace(normal_context, method_table_candidate=0x30010000)
+    monkeypatch.setattr("atlantica_bot.capture.read_normal_battle", lambda _: context)
+    output = tmp_path / "normal.zip"
+    export_code_context(session, output, include_combat=True)
+    with ZipFile(output) as archive:
+        report = json.loads(archive.read("manifest.json"))["combat"]
+        assert report["normal_method_resolution"]["status"] == "unavailable"
+    assert not any(address == context.method_table_candidate for address, _ in session.system.reads)
+
+
+def test_context_replacement_during_capture_never_creates_a_valid_zip(
+    session, normal_context, tmp_path, monkeypatch
+):
+    versions = iter((normal_context, replace(normal_context, context=0x700100)))
+    monkeypatch.setattr("atlantica_bot.capture.read_normal_battle", lambda _: next(versions))
+    output = tmp_path / "normal.zip"
+    with pytest.raises(DiagnosticError, match="contexto del combate cambió"):
+        export_code_context(session, output, include_combat=True)
+    assert not output.exists()
+
+
+def test_incomplete_dynamically_resolved_method_is_not_saved(session, normal_context, tmp_path):
+    session.system.short_normal_method = True
+    output = tmp_path / "normal.zip"
+    with pytest.raises(DiagnosticError, match="incompleta"):
+        export_code_context(session, output, include_combat=True)
+    assert not output.exists()
+
+
+def test_large_method_table_cannot_expand_export_beyond_the_documented_limit(
+    session, normal_context, tmp_path
+):
+    session.system.many_normal_methods = True
+    output = tmp_path / "normal.zip"
+    export_code_context(session, output, include_combat=True)
+    with ZipFile(output) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    methods = manifest["combat"]["normal_method_resolution"]
+    assert methods["limit_reached"] and len(methods["entries"]) == 24
+    assert sum(b["size"] for b in manifest["blocks"]) == 884 * 1024 + 256
 
 
 @pytest.mark.parametrize(
