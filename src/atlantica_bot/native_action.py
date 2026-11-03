@@ -164,7 +164,13 @@ def try_battle_basic(session: GameSession, window: ClientWindow, trial: BattleTr
     return try_battle_action(session, window, trial)
 
 
-def try_battle_action(session: GameSession, window: ClientWindow, trial: BattleTrial) -> dict:
+def try_battle_action(
+    session: GameSession,
+    window: ClientWindow,
+    trial: BattleTrial,
+    *,
+    cancellation: Cancellation | None = None,
+) -> dict:
     trial.validate()
     if (trial.frame.context.pid, trial.frame.context.creation_time) != (
         session.process.pid,
@@ -177,7 +183,14 @@ def try_battle_action(session: GameSession, window: ClientWindow, trial: BattleT
         if target
         else None
     )
-    return _request(session, window, candidate, operation=trial.operation, battle=trial)
+    return _request(
+        session,
+        window,
+        candidate,
+        operation=trial.operation,
+        battle=trial,
+        cancellation=cancellation,
+    )
 
 
 def _request(

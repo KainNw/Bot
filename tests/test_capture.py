@@ -436,6 +436,10 @@ def test_export_includes_same_instance_history_without_profile_names_or_arbitrar
         "events": [{"event": "attack_not_confirmed", "elapsed_seconds": 30}],
         "target_history": [{"slot": 6, "identity": [14801, 67723769, 0]}],
         "native_attack": {"enabled": True, "requests": 1, "search_radius": 60},
+        "combat": {
+            "enabled": True,
+            "roster": [{"slot": 1, "name": "private-mercenary-label", "present": True}],
+        },
         "profile": {"name": "private-mercenary-label"},
         "directory": "private-installation-path",
     }
@@ -446,6 +450,8 @@ def test_export_includes_same_instance_history_without_profile_names_or_arbitrar
     assert manifest["bot_context"]["events"] == report["events"]
     assert manifest["bot_context"]["target_history"] == report["target_history"]
     assert manifest["bot_context"]["native_attack"] == report["native_attack"]
+    assert manifest["bot_context"]["combat"]["roster"] == [{"slot": 1, "present": True}]
+    assert report["combat"]["roster"][0]["name"] == "private-mercenary-label"
     assert "private-mercenary-label" not in json.dumps(manifest)
     assert "private-installation-path" not in json.dumps(manifest)
 

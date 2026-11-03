@@ -303,6 +303,127 @@ def test_stop_cancels_inflight_worker_and_no_second_request_is_sent(monkeypatch)
     assert len(calls) == 1 and signals[0].closed
 
 
+@pytest.mark.parametrize("execute_turns", [False, True])
+def test_worker_dispatches_turns_only_when_enabled_and_never_scans_world_in_battle(
+    turn_frame, monkeypatch, execute_turns
+):
+    calls, reads, ledger = [], [], set()
+    session = SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100))
+    window = ClientWindow(100, 0x1234, "Atlantica", 1234)
+    worker = HuntWorker(
+        session,
+        window,
+        DETECTOR,
+        execute_turns=execute_turns,
+        battle_ledger=ledger,
+        native_attack=True,
+    )
+    signal = worker.cancellation = object()
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.observe_scene", lambda *args, **kwargs: observation(active=True)
+    )
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.scan_world", lambda *args, **kwargs: pytest.fail("world scan")
+    )
+
+    def read_frame(selected_session):
+        assert selected_session is session
+        reads.append(1)
+        return turn_frame
+
+    def send(selected_session, selected_window, trial, *, cancellation):
+        assert selected_session is session and selected_window is window
+        assert cancellation is signal
+        calls.append(trial)
+        return {"pid": 100, "operation": trial.operation, "status": 26}
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.read_battle_frame", read_frame)
+    monkeypatch.setattr("atlantica_bot.hunt_loop.try_battle_action", send)
+    worker._iteration()
+    assert not calls and not reads  # Two observations are needed to enter battle.
+    worker._iteration()
+    worker._iteration()
+    assert worker.engine.phase == "battle" and worker.engine.battles == 1
+    assert len(calls) == int(execute_turns)
+    assert bool(reads) is execute_turns
+    assert len(ledger) == int(execute_turns)
+    if execute_turns:
+        assert worker.engine.summary()["combat"]["queued"] == 1
+        assert len(worker.engine.summary()["combat"]["roster"]) == 9
+
+
+def test_battle_frame_race_to_map_does_not_dispatch_or_require_reconnection(monkeypatch):
+    session = SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100))
+    worker = HuntWorker(
+        session, ClientWindow(100, 0x1234, "Atlantica"), DETECTOR, execute_turns=True
+    )
+    worker.engine.observe(observation(active=True), 0)
+    worker.engine.observe(observation(active=True), 1)
+    scenes = iter((observation(active=True), observation()))
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.observe_scene", lambda *args, **kwargs: next(scenes)
+    )
+
+    def read_frame(_):
+        raise DiagnosticError("The battle has already ended")
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.read_battle_frame", read_frame)
+    worker._iteration()
+    assert worker.engine.running and not worker.engine.needs_reconnect
+    assert worker.engine.phase == "resuming" and worker.turns.queued == 0
+
+
+def test_stop_during_native_combat_request_uses_worker_cancellation_without_next_order(
+    turn_frame, monkeypatch
+):
+    entered, released = threading.Event(), threading.Event()
+    signals, calls = [], []
+
+    class Signal:
+        def __init__(self, pid):
+            self.cancelled = self.closed = False
+            signals.append(self)
+
+        def cancel(self):
+            self.cancelled = True
+            released.set()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.cancel()
+            self.closed = True
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.BotLease", lambda pid: nullcontext())
+    monkeypatch.setattr("atlantica_bot.hunt_loop.Cancellation", Signal)
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.observe_scene", lambda *args, **kwargs: observation(active=True)
+    )
+    monkeypatch.setattr("atlantica_bot.hunt_loop.read_battle_frame", lambda _: turn_frame)
+
+    def send(session, window, trial, *, cancellation):
+        calls.append(trial)
+        entered.set()
+        assert released.wait(2)
+        assert cancellation.cancelled and not cancellation.closed
+        return {"pid": 100, "operation": trial.operation, "status": 13}
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.try_battle_action", send)
+    worker = HuntWorker(
+        SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100)),
+        ClientWindow(100, 0x1234, "Atlantica"),
+        DETECTOR,
+        execute_turns=True,
+    )
+    worker.start()
+    assert entered.wait(2)
+    worker.stop()
+    worker.thread.join(2)
+    assert not worker.alive and not worker.engine.running and not worker.turns.running
+    assert len(calls) == 1 and signals[0].closed
+
+
 def test_battle_confirmation_requires_two_samples_and_unknown_state_does_not_repeat_attack():
     engine = ready_engine()
     engine.select(view(NEAR), 2)
@@ -341,7 +462,8 @@ def test_report_preserves_bounded_observations_and_counts_unchanged_scene_two():
     assert summary["recent_observations"][-1]["local"]["context_a"] == -1
     assert summary["classification_counts"] == {"map": 42}
     assert summary["first_observation"]["elapsed_seconds"] == 0
-    assert summary["profile"]["turn_execution_available"] is False
+    assert summary["profile"]["turn_execution_available"] is True
+    assert summary["combat"]["enabled"] is False
 
 
 def test_out_of_range_wait_reports_distance_without_changing_native_limit():

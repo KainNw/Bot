@@ -73,15 +73,20 @@ asignan automáticamente al primer cliente abierto. El ciclo toma una copia inmu
 del perfil elegido al iniciar; el editor y selector quedan bloqueados durante la
 ejecución. Guardar un perfil no modifica el juego ni las otras ventanas.
 
-Los archivos nuevos usan `schema_version=2`, con `action` (`basic`, `Q`, `W`, `E`,
-`R` o `T`) y `fallback_basic` por puesto. Los perfiles anteriores de esquema 1
-conservan nombres, selección y prioridad; cargan básico por defecto y solo se
-actualiza el archivo al pulsar Guardar. Un perfil inválido se conserva para revisión.
+Los archivos nuevos usan `schema_version=3`, con `action` (`basic`, `Q`, `W`, `E`,
+`R` o `T`), `fallback_basic` y `target` por puesto, y `magic_first_turn_only` en el
+perfil. El objetivo puede ser `enemy`, `self` o `slot_1`–`slot_9`. Los perfiles de
+esquema 1/2 conservan nombres, selección, prioridad y acciones; cargan enemigo y
+magia inicial por defecto y solo actualizan el archivo al pulsar Guardar. Un perfil
+inválido se conserva para revisión.
 
-Esta versión guarda selección, prioridad y acciones. Los turnos siguen siendo manuales;
-`turn_execution_available=false` lo refleja en el informe. Todavía faltan localizar
-las unidades del combate y validar la selección/orden de sus acciones. Usa
-[Exportar combate](mercenary-turns.md) para aportar el código nativo de esa etapa.
+Desde 0.11, **Ejecutar turnos según el perfil (experimental)** permite aplicar el
+plan a los miembros vivos presentes, en orden. La pestaña **Mercenarios** distingue
+presencia en batalla de habilitación en el perfil. Si no activas la opción, los
+turnos son manuales. El informe del perfil indica `turn_execution_available=true`;
+`combat.enabled` muestra si activaste la ejecución. Consulta
+[turnos de mercenarios](mercenary-turns.md) para configurar la magia inicial y los
+objetivos, y para comprobar la primera prueba del ciclo automático.
 
 ## Alcance y observaciones
 

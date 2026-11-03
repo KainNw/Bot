@@ -429,6 +429,25 @@ def test_battle_basic_sends_one_bound_request_with_distinct_member_and_enemy_slo
     assert not report["attack_confirmed"] and not report["battle_confirmed"]
 
 
+def test_combat_request_reuses_worker_signal_and_does_not_close_it(
+    bridge, battle_trial, monkeypatch
+):
+    calls, cancellations, closes = [], [], []
+    signal = SimpleNamespace(
+        name="worker-signal", cancel=lambda: cancellations.append(1), close=lambda: closes.append(1)
+    )
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(battle_reply(battle_trial)))
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    result = try_battle_action(bridge[0], bridge[1], battle_trial, cancellation=signal)
+    assert result["status"] == 26 and len(calls) == 1
+    assert calls[0][calls[0].index("--cancel-event") + 1] == signal.name
+    assert not cancellations and not closes
+
+
 @pytest.mark.parametrize(
     "key,value",
     [("turn_number", 99), ("turn_tick", 123451), ("mercenary_slot", 4), ("target_unit", 0xB00000)],

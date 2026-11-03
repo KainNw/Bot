@@ -44,10 +44,17 @@ El usuario comunicó anteriormente cierres al moverse con caza nativa/x32dbg, y 
 con clic manual sin ambos. El registro se perdió y no hay causa confirmada. El ataque
 individual nuevo funcionó, pero no se afirma que haya corregido esos otros cierres.
 
-## Turnos y velocidad — etapas posteriores
+## Turnos por perfil 0.11
 
 El usuario pidió también jugar los turnos de sus mercenarios, y confirmó avanzar
-primero con el inicio de encuentros. Los turnos seguirán siendo manuales en esta etapa.
+primero con el inicio de encuentros. Después confirmó el básico nativo de 0.9 y
+la magia Q de 0.10. La versión 0.11 añade ejecución opcional en orden, solo con
+miembros presentes/habilitados, magia en el primer turno propio y básicos después,
+y estado de los nueve puestos en el panel. Deja de enviar órdenes sin enemigos
+vivos. Queda la primera validación de la secuencia completa en el cliente, incluido
+un equipo de dos miembros. El botín con X sigue pendiente.
+
+## Velocidad — etapa posterior
 
 Se solicitó estudiar una velocidad configurable durante batallas y restaurarla al
 salir/parar. Esa función continúa sin implementar. Queda para después de validar

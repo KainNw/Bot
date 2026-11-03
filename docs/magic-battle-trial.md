@@ -1,9 +1,14 @@
 # Selección nativa y prueba de magia 0.10.0
 
-El básico nativo de 0.9 fue comprobado por el usuario. Esta versión añade un botón
-para seleccionar el mercenario en el juego y una prueba de su magia Q/W/E/R/T.
-La selección y la magia nuevas aún requieren comprobación en Atlantica.
-El perfil guarda el plan, pero el ciclo todavía no lo ejecuta automáticamente.
+El básico nativo de 0.9 y la magia Q de 0.10 fueron comprobados visualmente por el
+usuario. Esta guía conserva el procedimiento individual para seleccionar al miembro
+y probar una acción. Desde 0.11, el [ciclo de turnos](mercenary-turns.md) también
+puede ejecutar el perfil en orden si activas su opción antes de iniciar el bot.
+
+El informe recibido de 0.10 en PID 21076 registró puesto 1, Q, acción 207 de la barra
+`207/222/440/1014/1205`, estado 32 y excepción 0. El usuario confirmó que lanzó la
+magia. Eso valida esa habilidad en esa sesión; todavía no prueba las otras teclas,
+otros mercenarios ni la secuencia automática completa.
 
 ## Uso
 
@@ -29,7 +34,8 @@ todavía no se presentan como equivalentes comprobados a los números del teclad
 La restricción de una solicitud por mercenario y lectura de turno es compartida
 entre básico y magia; seleccionar el mercenario no consume esa prueba. Un rechazo
 nativo no provoca un básico alternativo ni reintentos. Después de un resultado incierto
-hay que comprobar el juego y reconectar. El básico alternativo del perfil sigue pendiente.
+hay que comprobar el juego y reconectar. El básico alternativo del perfil se aplica
+solo en el ciclo automático de 0.11; la prueba individual no lo ejecuta.
 
 ## Resultados
 

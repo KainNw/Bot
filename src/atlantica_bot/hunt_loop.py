@@ -7,6 +7,7 @@ import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
 
+from .battle import read_battle_frame
 from .clients import ClientWindow
 from .combat import CombatDetector
 from .errors import DiagnosticError, SceneChanged
@@ -16,11 +17,13 @@ from .native_action import (
     stop_native_pursuit,
     try_approach,
     try_attack,
+    try_battle_action,
     try_native_attack,
 )
 from .navigation import ApproachSettings
 from .profiles import BotProfile
 from .session import GameSession
+from .turns import TurnEngine
 from .world import (
     Candidate,
     GridPosition,
@@ -53,6 +56,8 @@ class HuntEngine:
     profile: BotProfile = field(default_factory=lambda: BotProfile.default(1))
     approach: ApproachSettings = field(default_factory=ApproachSettings)
     native_attack: bool = False
+    execute_turns: bool = False
+    combat: dict = field(default_factory=lambda: {"enabled": False})
     running: bool = True
     phase: str = "waiting_map"
     message: str = "Esperando mapa."
@@ -136,6 +141,8 @@ class HuntEngine:
         if not self.detector.matches(self.pid, self.creation_time):
             raise DiagnosticError("Calibra el detector para esta instancia antes de iniciar.")
         self.profile.validate()
+        if type(self.execute_turns) is not bool:
+            raise DiagnosticError("Revisa la ejecución de turnos del perfil.")
         if type(self.native_attack) is not bool or self.native_attack and self.approach.enabled:
             raise DiagnosticError("Elige ataque nativo o ruta del bot, no ambos.")
 
@@ -880,6 +887,7 @@ class HuntEngine:
                 for identity, slot in sorted(self.engaged_targets.items())
             ],
             "profile": self.profile.summary(),
+            "combat": dict(self.combat),
             "approach": {
                 **self.approach.summary(),
                 "origin": {"map_id": self.origin.map_id, "x": self.origin.x, "y": self.origin.y}
@@ -909,6 +917,8 @@ class HuntWorker:
         approach: ApproachSettings | None = None,
         *,
         native_attack: bool = False,
+        execute_turns: bool = False,
+        battle_ledger: set | None = None,
     ):
         if session.creation_time is None or window.pid != session.process.pid:
             raise DiagnosticError("Conecta con una instancia de Windows válida antes de iniciar.")
@@ -920,7 +930,18 @@ class HuntWorker:
             profile or BotProfile.default(1),
             approach or ApproachSettings(),
             native_attack=native_attack,
+            execute_turns=execute_turns,
         )
+        self.turns = (
+            TurnEngine(
+                session.process.pid, session.creation_time, self.engine.profile, battle_ledger
+            )
+            if execute_turns
+            else None
+        )
+        if self.turns is not None:
+            self.engine.combat = self.turns.summary()
+        self.seen_map = False
         self.events: queue.Queue[dict] = queue.Queue(maxsize=20)
         self.stop_event = threading.Event()
         self.cancellation: Cancellation | None = None
@@ -996,6 +1017,9 @@ class HuntWorker:
                 f"Error interno del bot ({type(exc).__name__}); detenido.", reconnect=True
             )
         finally:
+            if self.turns is not None:
+                self.turns.running = False
+                self.engine.combat = self.turns.summary()
             self._publish()
 
     def _iteration(self) -> None:
@@ -1015,6 +1039,8 @@ class HuntWorker:
             if self.engine.uses_radius
             else observe_scene(self.session)
         )
+        if self.engine.detector.classify(observation) == "map":
+            self.seen_map = True
         if self.engine.observe(observation, time.monotonic()):
             view = (
                 scan_world(self.session, allow_player_movement=True)
@@ -1055,6 +1081,36 @@ class HuntWorker:
                         self.session, self.window, candidate, cancellation=self.cancellation
                     )
                     self.engine.record(candidate, report, time.monotonic())
+        if self.turns is not None and self.engine.running:
+            if self.engine.phase == "battle":
+                try:
+                    frame = read_battle_frame(self.session)
+                except DiagnosticError:
+                    fresh = observe_scene(
+                        self.session,
+                        include_navigation=self.engine.uses_radius,
+                        allow_player_movement=True,
+                    )
+                    if self.engine.detector.classify(fresh) != "battle":
+                        self.engine.observe(fresh, time.monotonic())
+                        self.engine.combat = self.turns.summary()
+                        return
+                    raise
+                self.turns.enter(fresh=self.seen_map)
+                trial = self.turns.next(frame, time.monotonic())
+                if trial is not None and not self.stop_event.is_set():
+                    self.engine.combat = self.turns.summary()
+                    self._publish()
+                    report = try_battle_action(
+                        self.session, self.window, trial, cancellation=self.cancellation
+                    )
+                    self.turns.record(trial, report, time.monotonic())
+                self.engine.message = self.turns.message
+                if not self.turns.running:
+                    self.engine.stop(self.turns.message, reconnect=self.turns.needs_reconnect)
+            elif not self.engine.battle_active:
+                self.turns.leave()
+            self.engine.combat = self.turns.summary()
         if self.engine.route is not None and self.engine.phase == "stopping_move":
             self._stop_route()
         if self.engine.pursuit is not None and self.engine.phase == "stopping_native_pursuit":

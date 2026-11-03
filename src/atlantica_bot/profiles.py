@@ -16,6 +16,11 @@ ACTION_LABELS = {
     "R": "Magia R",
     "T": "Magia T",
 }
+TARGET_LABELS = {
+    "enemy": "Enemigo",
+    "self": "Sí mismo",
+    **{f"slot_{n}": f"Mercenario {n}" for n in range(1, 10)},
+}
 
 
 @dataclass(frozen=True)
@@ -25,16 +30,20 @@ class Mercenary:
     enabled: bool = True
     action: str = "basic"
     fallback_basic: bool = True
+    target: str = "enemy"
 
 
 @dataclass(frozen=True)
 class BotProfile:
     number: int
     mercenaries: tuple[Mercenary, ...]
+    magic_first_turn_only: bool = True
 
     def validate(self) -> None:
         if type(self.number) is not int or self.number not in (1, 2, 3):
             raise DiagnosticError("Elige uno de los tres perfiles.")
+        if type(self.magic_first_turn_only) is not bool:
+            raise DiagnosticError("Revisa la configuración de magia del primer turno.")
         if (
             len(self.mercenaries) != 9
             or any(type(merc.slot) is not int for merc in self.mercenaries)
@@ -53,15 +62,18 @@ class BotProfile:
                 type(merc.action) is not str
                 or merc.action not in ACTION_LABELS
                 or type(merc.fallback_basic) is not bool
+                or type(merc.target) is not str
+                or merc.target not in TARGET_LABELS
             ):
                 raise DiagnosticError("Elige ataque básico o una magia Q/W/E/R/T por puesto.")
 
     def summary(self) -> dict:
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
-            "turn_execution_available": False,
+            "magic_first_turn_only": self.magic_first_turn_only,
+            "turn_execution_available": True,
         }
 
     @classmethod
@@ -99,7 +111,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2)
+                or payload["schema_version"] not in (1, 2, 3)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -110,10 +122,16 @@ class ProfileStore:
                 if payload["schema_version"] == 1:
                     if set(entry) - {"slot", "name", "enabled"}:
                         raise ValueError
-                elif set(entry) != {"slot", "name", "enabled", "action", "fallback_basic"}:
+                elif set(entry) != {"slot", "name", "enabled", "action", "fallback_basic"} | (
+                    {"target"} if payload["schema_version"] == 3 else set()
+                ):
                     raise ValueError
             mercenaries = tuple(Mercenary(**entry) for entry in payload["mercenaries"])
-            profile = BotProfile(number, mercenaries)
+            profile = BotProfile(
+                number,
+                mercenaries,
+                payload["magic_first_turn_only"] if payload["schema_version"] == 3 else True,
+            )
             profile.validate()
             return profile
         except (ValueError, TypeError, KeyError, UnicodeError) as exc:

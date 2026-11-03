@@ -115,7 +115,7 @@ def test_battle_frame_separates_own_members_enemies_allies_and_dead_units(battle
     trial.validate()
     assert trial.arguments()["turn-tick"] == 123450
     assert trial.arguments()["mercenary"] == 1
-    assert not view.summary()["turn_execution_available"]
+    assert view.summary()["turn_execution_available"]
     assert not view.summary()["keyboard_slot_mapping_verified"]
 
 

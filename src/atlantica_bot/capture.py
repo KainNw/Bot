@@ -195,8 +195,18 @@ def _bot_context(session: GameSession, report: dict | None) -> dict | None:
         "pending_attack",
         "transport",
         "approach",
+        "combat",
     )
-    payload = json.dumps({key: report[key] for key in allowed if key in report}, ensure_ascii=False)
+    exported = {key: report[key] for key in allowed if key in report}
+    if isinstance(exported.get("combat"), dict):
+        exported["combat"] = {
+            **exported["combat"],
+            "roster": [
+                {key: value for key, value in row.items() if key != "name"}
+                for row in exported["combat"].get("roster", [])
+            ],
+        }
+    payload = json.dumps(exported, ensure_ascii=False)
     if len(payload.encode("utf-8")) > 128 * 1024:
         raise DiagnosticError("El contexto del bot supera el límite del diagnóstico.")
     return json.loads(payload)

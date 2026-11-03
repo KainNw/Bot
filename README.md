@@ -1,14 +1,16 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.10.0** añade selección nativa del mercenario
-y pruebas individuales de **magia Q/W/E/R/T** en **Ver mercenarios**. Pulsa
-**Seleccionar en juego**, elige la acción y el objetivo y pulsa **Probar acción
-(experimental)**. Se usa la barra del cliente y su función de magia.
-Permite guardar ataque básico o magia Q/W/E/R/T por mercenario.
-El ciclo todavía espera a que juegues los turnos. La prueba individual requiere
-**Parar bot** durante la batalla. El usuario confirmó el golpe del primer básico
-nativo en 0.9; la selección y la magia de 0.10 siguen pendientes de prueba en el juego.
+con Auto Battle apagado. La versión **0.11.0** añade **Ejecutar turnos según el
+perfil (experimental)** y la pestaña **Mercenarios**, con los nueve puestos,
+participación real en batalla, selección en el perfil, prioridad y última orden.
+Solo ordena actuar a los miembros presentes y habilitados. Puedes llevar dos
+miembros sin esperar a los otros siete. Configura básico o **Magia Q/W/E/R/T**
+por mercenario, en el orden del perfil; por defecto usa la magia en el primer
+turno propio y básicos después. Deja de enviar órdenes al no observar enemigos vivos.
+El usuario confirmó visualmente el básico de 0.9 y la magia Q de 0.10.
+La secuencia automática nueva requiere su primera prueba en el juego.
+Las pruebas individuales siguen en **Ver mercenarios** y requieren **Parar bot**.
 Conserva **Ataque nativo por radio (experimental)**, **Calibrar combate**,
 observaciones y tres perfiles. Al conectar con la compilación
 compatible vincula el detector local ya comprobado a ese PID y fecha de creación.
@@ -23,7 +25,7 @@ Detalles y resultados en [ataque nativo por radio](docs/native-attack.md).
 La captura 0.7.0 del usuario confirmó seis solicitudes y seis combates, con Auto
 Battle apagado, cuatro persecuciones nativas sin fallos y parada normal sin exigir
 reconexión. También inició combate con el objetivo que fallaba antes. La versión
-0.8 conserva ese sistema y sus tiempos de persecución y ataque.
+0.11 conserva ese sistema y sus tiempos de persecución y ataque.
 
 **Comprobado por el usuario:** la prueba individual 0.3 inició el ataque con Auto Battle
 desactivado. También confirmó un combate iniciado por 0.4 que el detector no reconoció.
@@ -71,11 +73,15 @@ Detalles y límites en [caza independiente](docs/independent-hunt.md).
 **Configurar mercenarios** guarda los nueve puestos, sus nombres, participación y
 orden de prioridad en el perfil elegido. Cada puesto admite **Ataque básico** o
 **Magia Q/W/E/R/T**, con **Básico alternativo** para el plan de respaldo si la magia
-no está disponible. Esta configuración todavía no ejecuta turnos.
+no está disponible. Elige también el objetivo de magia: enemigo, el propio lanzador
+o un puesto de tu equipo. **Magia configurada solo en primer turno; básicos después**
+viene marcado; desmárcalo para repetir la acción configurada cada turno.
 Se conserva en `%LOCALAPPDATA%/AtlanticaPanel/profiles`, fuera de la carpeta del juego.
-El perfil activo queda fijado al iniciar el ciclo. Detalles de uso y diagnóstico:
+Guardar no envía acciones. Para ejecutarlo, activa **Ejecutar turnos según el perfil
+(experimental)** antes de **Iniciar bot**. El perfil activo queda fijado al iniciar.
+Detalles de uso y diagnóstico:
 [calibración y perfiles](docs/combat-calibration.md).
-El análisis pendiente y la captura necesaria se describen en
+La secuencia, sus límites y la captura necesaria se describen en
 [turnos de mercenarios](docs/mercenary-turns.md).
 La prueba individual todavía no ejecuta el perfil ni recoge botín. Las instrucciones
 están en [prueba de básico](docs/basic-battle-trial.md) y
@@ -90,7 +96,7 @@ personaje se detenga antes de moverlo. Una orden de ataque ya aceptada puede ter
 en combate. Detalles: [ataque nativo](docs/native-attack.md). El análisis del
 [acercamiento anterior](docs/native-approach.md) queda como referencia de 0.6.
 
-No hay automatización de turnos. El control
+Si no marcas **Ejecutar turnos**, los turnos siguen siendo manuales. El control
 nativo anterior sigue en **Más controles** y utiliza `HuntingMode.txt` y Auto Battle.
 El ciclo nuevo no modifica ese archivo ni activa Auto Battle.
 
@@ -125,9 +131,11 @@ py -3 panel_caza.py
    al mismo PID antes de iniciar el ciclo.
 4. Deja marcado **Ataque nativo por radio (experimental)** y elige el radio
    (60 casillas inicialmente). El punto actual será el centro del área de selección.
-5. Pulsa **Iniciar bot**. Busca un mob y solicita persecución o ataque según el
+5. Para jugar los turnos con el bot, configura el perfil y activa **Ejecutar turnos
+   según el perfil (experimental)**. Comprueba en **Mercenarios** los presentes
+   cuando empiece la batalla. Pulsa **Iniciar bot**: busca un mob y solicita persecución o ataque según el
    alcance nativo. El cliente ejecuta el desplazamiento.
-   Juega los turnos manualmente.
+   El perfil se aplica en orden durante la batalla; sin esa opción, juega manualmente.
 6. Al regresar al mapa, el bot vuelve a buscar. Para moverte o cambiar de cliente,
    pulsa **Parar bot** y espera el estado detenido.
 
@@ -135,7 +143,8 @@ py -3 panel_caza.py
 primera observación, últimas 24 observaciones y resultado de las solicitudes.
 El apartado `native_attack` incluye el destino, identidad, solicitudes nativas,
 fallos y respuesta de parada. Los estados de navegación anteriores siguen disponibles
-en el diagnóstico. Una cola confirmada no
+en el diagnóstico. `combat` incluye equipo, órdenes, selección, resultado nativo y
+una solicitud pendiente como máximo. Una cola confirmada no
 demuestra por sí sola que empezó un combate. Si la calibración no encuentra una
 señal, usa **Copiar calibración** para revisar los tres grupos antes de cambiar el detector.
 

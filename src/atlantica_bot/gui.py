@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import queue
 import sys
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -17,8 +18,9 @@ from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
 from .native_action import try_attack, try_battle_action
 from .navigation import ApproachSettings
-from .profiles import ACTION_LABELS, BotProfile, Mercenary, ProfileStore
+from .profiles import ACTION_LABELS, TARGET_LABELS, BotProfile, Mercenary, ProfileStore
 from .session import GameSession, LiveState
+from .turns import roster_rows
 from .world import observe_scene, scan_world
 
 
@@ -59,6 +61,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 value="Detector de combate: conecta con el cliente."
             )
             self.native_attack_enabled = tk.BooleanVar(value=True)
+            self.turns_enabled = tk.BooleanVar(value=False)
+            self.team_status = tk.StringVar(value="Conecta para consultar el equipo.")
             self.search_radius = tk.StringVar(value="60")
             self.bot_status = tk.StringVar(value="Bot detenido.")
             self.pid = tk.StringVar()
@@ -67,8 +71,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.status = tk.StringVar(value="Cliente: sin conexión")
             self.detail = tk.StringVar(value="El panel abre sin activar la caza.")
             self.scope_status = tk.StringVar()
-            frame = ttk.Frame(self.root, padding=18)
-            frame.pack(fill="both", expand=True)
+            self.tabs = ttk.Notebook(self.root)
+            self.tabs.pack(fill="both", expand=True)
+            frame = ttk.Frame(self.tabs, padding=18)
+            self.tabs.add(frame, text="Control")
+            self.team_tab = ttk.Frame(self.tabs, padding=18)
+            self.tabs.add(self.team_tab, text="Mercenarios")
+            self.build_team_tab()
             ttk.Label(frame, text="Control de caza", font=("Segoe UI", 18)).pack(anchor="w")
             ttk.Label(
                 frame,
@@ -129,6 +138,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             )
             self.profile_button.pack(side="left")
             ttk.Label(frame, textvariable=self.profile_status, wraplength=760).pack(anchor="w")
+            self.turns_check = ttk.Checkbutton(
+                frame,
+                text="Ejecutar turnos según el perfil (experimental)",
+                variable=self.turns_enabled,
+            )
+            self.turns_check.pack(anchor="w", pady=4)
             row = ttk.Frame(frame)
             row.pack(fill="x", pady=6)
             self.native_attack_check = ttk.Checkbutton(
@@ -222,7 +237,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Label(
                 frame,
                 text="Para moverte, pulsa Parar bot y espera a que se detenga.\n"
-                "Durante el combate, el bot espera: los turnos siguen siendo manuales.",
+                "Activa Ejecutar turnos para aplicar el perfil durante el combate.",
                 wraplength=680,
             ).pack(anchor="w", pady=10)
             self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -232,6 +247,162 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.root.after(100, self.list_windows)
             self.root.after(750, self.poll)
             self.root.after(100, self.poll_bot)
+            if not smoke_test:
+                self.root.after(1000, self.poll_team)
+
+        def build_team_tab(self) -> None:
+            ttk.Label(self.team_tab, text="Equipo y órdenes", font=("Segoe UI", 18)).pack(
+                anchor="w"
+            )
+            ttk.Label(
+                self.team_tab,
+                text="En combate indica los miembros publicados por el juego. "
+                "Usar bot indica tu selección en el perfil.",
+                wraplength=900,
+            ).pack(anchor="w", pady=6)
+            ttk.Label(self.team_tab, textvariable=self.team_status, wraplength=1000).pack(
+                anchor="w", pady=6
+            )
+            columns = (
+                "number",
+                "name",
+                "present",
+                "enabled",
+                "priority",
+                "opening",
+                "later",
+                "target",
+                "order",
+            )
+            self.team_tree = ttk.Treeview(self.team_tab, columns=columns, show="headings", height=9)
+            for key, label, width in (
+                ("number", "Mercenario", 105),
+                ("name", "Nombre del perfil", 135),
+                ("present", "En combate", 95),
+                ("enabled", "Usar bot", 75),
+                ("priority", "Orden", 55),
+                ("opening", "Primer turno", 125),
+                ("later", "Después", 125),
+                ("target", "Objetivo de magia", 135),
+                ("order", "Última orden", 250),
+            ):
+                self.team_tree.heading(key, text=label)
+                self.team_tree.column(key, width=width, minwidth=50)
+            self.team_tree.pack(fill="both", expand=True, pady=8)
+            scrollbar = ttk.Scrollbar(
+                self.team_tab, orient="horizontal", command=self.team_tree.xview
+            )
+            scrollbar.pack(fill="x")
+            self.team_tree.configure(xscrollcommand=scrollbar.set)
+            buttons = ttk.Frame(self.team_tab)
+            buttons.pack(fill="x", pady=8)
+            ttk.Button(buttons, text="Actualizar equipo", command=self.refresh_team).pack(
+                side="left"
+            )
+            ttk.Button(
+                buttons, text="Usar/omitir seleccionado en bot", command=self.toggle_team_member
+            ).pack(side="left", padx=8)
+            ttk.Button(buttons, text="Configurar mercenarios", command=self.edit_profile).pack(
+                side="left"
+            )
+            ttk.Button(buttons, text="Prueba individual", command=self.show_members).pack(
+                side="left", padx=8
+            )
+            self.paint_team(
+                roster_rows(BotProfile.default(1), None),
+                "Conecta con el cliente para leer la batalla.",
+            )
+
+        def paint_team(self, rows: list[dict], message: str) -> None:
+            self.team_status.set(message)
+            for row in rows:
+                present = (
+                    "Sin batalla"
+                    if row["present"] is None
+                    else "No presente"
+                    if not row["present"]
+                    else "Caído"
+                    if not row["alive"]
+                    else "Sí"
+                )
+                values = (
+                    row["label"],
+                    row["name"],
+                    present,
+                    "Sí" if row["enabled"] else "No",
+                    row["priority"],
+                    row["opening_action"],
+                    row["later_action"],
+                    row["target"],
+                    row["last_order"],
+                )
+                item = f"merc_{row['slot']}"
+                if self.team_tree.exists(item):
+                    self.team_tree.item(item, values=values)
+                else:
+                    self.team_tree.insert("", "end", iid=item, values=values)
+
+        def refresh_team(self) -> None:
+            profile = self.profile or BotProfile.default(1)
+            try:
+                if self.session is None:
+                    self.paint_team(
+                        roster_rows(profile, None),
+                        "Conecta con el cliente para consultar el equipo.",
+                    )
+                    return
+                if self.bot_worker is not None and self.bot_worker.engine.execute_turns:
+                    combat = self.bot_report.get("combat", {})
+                    rows = (
+                        combat.get("roster") if self.bot_report.get("phase") == "battle" else None
+                    )
+                    self.paint_team(
+                        rows or roster_rows(profile, None),
+                        combat.get("message", "Esperando equipo."),
+                    )
+                    return
+                observation = observe_scene(self.session)
+                view = (
+                    read_battle_frame(self.session)
+                    if self.detector and self.detector.classify(observation) == "battle"
+                    else None
+                )
+                rows = roster_rows(profile, view)
+                count = sum(row["present"] is True for row in rows)
+                self.paint_team(
+                    rows,
+                    f"PID {self.session.process.pid}: {count} presentes en batalla. "
+                    "El bot usa los presentes que estén habilitados en el perfil.",
+                )
+            except (DiagnosticError, OSError) as exc:
+                self.paint_team(roster_rows(profile, None), f"Lectura de equipo pendiente: {exc}")
+
+        def poll_team(self) -> None:
+            if self.closing:
+                return
+            if self.tabs.select() == str(self.team_tab):
+                self.refresh_team()
+            self.root.after(1000, self.poll_team)
+
+        def toggle_team_member(self) -> None:
+            try:
+                self.require_idle_bot()
+                selected = self.team_tree.selection()
+                if not selected or self.profile is None:
+                    raise DiagnosticError("Selecciona un mercenario de la tabla.")
+                slot = int(selected[0].removeprefix("merc_"))
+                profile = replace(
+                    self.profile,
+                    mercenaries=tuple(
+                        replace(m, enabled=not m.enabled) if m.slot == slot else m
+                        for m in self.profile.mercenaries
+                    ),
+                )
+                self.profile_store.save(profile)
+                self.load_profile()
+                self.refresh_team()
+            except (DiagnosticError, OSError, ValueError) as exc:
+                self.error(exc)
 
         def disconnect(self) -> None:
             self.stop_bot()
@@ -272,6 +443,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.pid_entry,
                 self.profile_button,
                 self.native_attack_check,
+                self.turns_check,
                 self.radius_entry,
             ):
                 button.configure(state="disabled" if active else "normal")
@@ -334,6 +506,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     self.profile,
                     ApproachSettings(False, int(self.search_radius.get())),
                     native_attack=self.native_attack_enabled.get(),
+                    execute_turns=self.turns_enabled.get(),
+                    battle_ledger=self.battle_trials,
                 )
                 self.bot_report = worker.engine.summary()
                 self.bot_worker = worker
@@ -401,8 +575,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     merc.enabled and merc.action != "basic" for merc in self.profile.mercenaries
                 )
                 self.profile_status.set(
-                    f"Perfil {self.profile.number}: {count} puestos, {magic_count} con magia. "
-                    "Plan guardado; la ejecución de turnos aún no está habilitada."
+                    f"Perfil {self.profile.number}: {count} habilitados, {magic_count} con magia. "
+                    + (
+                        "Magia solo en primer turno; básicos después."
+                        if self.profile.magic_first_turn_only
+                        else "Repetir la acción configurada por turno."
+                    )
                 )
             except (DiagnosticError, OSError, ValueError) as exc:
                 self.profile = None
@@ -427,9 +605,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 frame,
                 text="Selecciona los puestos de tu equipo y ordénalos por prioridad.\n"
                 "Elige ataque básico o la magia Q/W/E/R/T de cada mercenario.\n"
-                "Básico alternativo: usar ataque normal cuando la magia no esté disponible.",
+                "Objetivo de magia: enemigo, sí mismo o un puesto de tu equipo.\n"
+                "Usar bot solo afecta al perfil; el equipo que llevas se elige en el juego.",
                 wraplength=820,
             ).pack(anchor="w", pady=6)
+            first_turn = tk.BooleanVar(value=profile.magic_first_turn_only)
+            ttk.Checkbutton(
+                frame,
+                text="Magia configurada solo en primer turno; básicos después",
+                variable=first_turn,
+            ).pack(anchor="w", pady=4)
             order = [merc.slot for merc in profile.mercenaries]
             names = {merc.slot: tk.StringVar(value=merc.name) for merc in profile.mercenaries}
             enabled = {merc.slot: tk.BooleanVar(value=merc.enabled) for merc in profile.mercenaries}
@@ -439,6 +624,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             }
             fallback = {
                 merc.slot: tk.BooleanVar(value=merc.fallback_basic) for merc in profile.mercenaries
+            }
+            targets = {
+                m.slot: tk.StringVar(value=TARGET_LABELS[m.target]) for m in profile.mercenaries
             }
             body = ttk.Frame(frame)
             body.pack(fill="x", pady=8)
@@ -462,7 +650,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 row = rows[slot] = ttk.Frame(body)
                 priorities[slot] = ttk.Label(row, width=3)
                 priorities[slot].pack(side="left")
-                ttk.Checkbutton(row, text=f"Puesto {slot}", variable=enabled[slot]).pack(
+                ttk.Checkbutton(row, text=f"Mercenario {slot}", variable=enabled[slot]).pack(
                     side="left"
                 )
                 ttk.Entry(row, textvariable=names[slot], width=18).pack(side="left", padx=8)
@@ -476,12 +664,27 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 action.pack(side="left", padx=(0, 8))
                 alternate = ttk.Checkbutton(row, text="Básico alternativo", variable=fallback[slot])
                 alternate.pack(side="left", padx=(0, 8))
+                target_list = ttk.Combobox(
+                    row,
+                    textvariable=targets[slot],
+                    values=tuple(TARGET_LABELS.values()),
+                    state="readonly",
+                    width=14,
+                )
+                target_list.pack(side="left", padx=4)
 
-                def update_fallback(event=None, slot=slot, alternate=alternate) -> None:
+                def update_fallback(
+                    event=None, slot=slot, alternate=alternate, target_list=target_list
+                ) -> None:
                     alternate.configure(
                         state="disabled"
                         if actions[slot].get() == ACTION_LABELS["basic"]
                         else "normal"
+                    )
+                    target_list.configure(
+                        state="disabled"
+                        if actions[slot].get() == ACTION_LABELS["basic"]
+                        else "readonly"
                     )
 
                 action.bind("<<ComboboxSelected>>", update_fallback)
@@ -494,8 +697,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 ).pack(side="left", padx=4)
             render()
             status = tk.StringVar(
-                value="Este plan se guarda para la futura ejecución de turnos. "
-                "Todavía no envía órdenes a los mercenarios."
+                value="Guardar configura el perfil. Iniciar bot y Ejecutar turnos aplican el orden "
+                "solo a los miembros presentes en la batalla."
             )
             ttk.Label(frame, textvariable=status, wraplength=640).pack(anchor="w", pady=8)
 
@@ -519,15 +722,21 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                                     if label == actions[slot].get()
                                 ),
                                 fallback[slot].get(),
+                                next(
+                                    key
+                                    for key, label in TARGET_LABELS.items()
+                                    if label == targets[slot].get()
+                                ),
                             )
                             for slot in order
                         ),
+                        first_turn.get(),
                     )
                     self.profile_store.save(updated)
                     self.load_profile()
                     status.set(
-                        f"Perfil {number} guardado con selección, prioridad y acciones. "
-                        "Los turnos siguen siendo manuales hasta validar las órdenes de combate."
+                        f"Perfil {number} guardado. Revisa el equipo en la pestaña Mercenarios "
+                        "y activa Ejecutar turnos para usar la secuencia."
                     )
                 except (DiagnosticError, OSError) as exc:
                     status.set(str(exc))
@@ -1030,7 +1239,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             trial_status = tk.StringVar(
                 value="Para el bot antes de la prueba. Seleccionar en juego cambia el mercenario "
                 "activo y permite leer su barra Q/W/E/R/T. Probar acción solicita un solo básico "
-                "o magia; el perfil todavía no ejecuta turnos automáticamente."
+                "o magia. Activa Ejecutar turnos en Control para aplicar el perfil."
             )
             ttk.Label(frame, textvariable=trial_status, wraplength=680).pack(anchor="w", pady=6)
 
@@ -1418,6 +1627,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
     panel = Panel()
     if smoke_test:
         # Exercise the real packaged GUI without connecting or changing any files.
+        assert tuple(panel.tabs.tab(tab, "text") for tab in panel.tabs.tabs()) == (
+            "Control",
+            "Mercenarios",
+        )
+        panel.tabs.select(panel.team_tab)
+        assert len(panel.team_tree.get_children()) == 9
+        panel.root.update_idletasks()
+        panel.tabs.select(0)
         panel.toggle_advanced()
         panel.edit_profile()
         panel.profile_editor.destroy()

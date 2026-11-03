@@ -1,20 +1,81 @@
-# Turnos de mercenarios 0.10.0
+# Turnos de mercenarios 0.11.0
 
-El panel guarda el plan de cada mercenario: puesto, nombre, participación, prioridad,
-ataque básico o magia Q/W/E/R/T y la preferencia de usar básico si la magia no está
-disponible. El ciclo todavía no ejecuta el plan; pausa durante la batalla para que
-juegues los turnos. En 0.9 se añade una prueba de un básico con mercenario y enemigo
-elegidos desde **Ver mercenarios**, después de **Parar bot**. El usuario confirmó
-que ese básico ejecutó el golpe. En 0.10 se añaden selección nativa y una prueba
-de magia Q/W/E/R/T usando la barra del mercenario seleccionado. La prueba real de
-esa selección y magia sigue pendiente. El botín y el ciclo de turnos quedan pendientes.
-El delay de persecución y ataque de 0.7 se conserva.
+El panel puede aplicar el perfil durante las batallas con Auto Battle apagado.
+Ordena una acción por mercenario y turno, siguiendo la prioridad configurada y
+usando solo los miembros presentes y vivos. Si llevas dos miembros, omite los otros
+siete. Cuando no observa enemigos vivos, deja de enviar acciones, aunque todavía
+queden mercenarios sin actuar. Espera el final real del combate y el regreso estable
+al mapa para reanudar la caza. Los tiempos de persecución y ataque de 0.7 se conservan.
 
-Para la prueba nueva, consulta [ataque básico individual](basic-battle-trial.md).
-**Actualizar** y **Copiar mercenarios** solo leen; **Probar acción (experimental)**
-sí solicita un básico o magia. **Seleccionar en juego** cambia el mercenario activo
-sin lanzar un ataque. El panel no ejecuta automáticamente el perfil guardado.
-Las instrucciones nuevas están en [selección y magia](magic-battle-trial.md).
+El usuario confirmó visualmente el básico individual de 0.9 y la magia Q de 0.10.
+La secuencia automática de 0.11 todavía requiere una prueba en el cliente real.
+No se ha comprobado una batalla con solo dos miembros ni varias ventanas simultáneas.
+La recogida con X sigue pendiente.
+
+## Configurar y empezar
+
+1. Con el bot detenido, abre **Configurar mercenarios** en el perfil elegido.
+2. Habilita los puestos que quieras usar. Los miembros que llevas se eligen dentro
+   del juego; el perfil no añade ni retira mercenarios de la batalla.
+3. Elige **Ataque básico** o **Magia Q/W/E/R/T** por miembro. Para magia, elige
+   **Enemigo**, **Sí mismo** o un puesto de tu equipo como objetivo. Solo usa vivos.
+4. Usa **Subir/Bajar** para ordenar las filas. Primero solicita la acción de la
+   primera fila habilitada y presente, después la siguiente.
+5. Mantén **Magia configurada solo en primer turno; básicos después** para lanzar
+   la magia en el primer turno propio de cada batalla y básicos en los posteriores.
+   Desmarca esa opción para repetir la acción configurada cada turno.
+6. Guarda el perfil. En **Control**, activa **Ejecutar turnos según el perfil
+   (experimental)** y pulsa **Iniciar bot**, con Auto Battle y caza nativa apagados.
+7. Abre **Mercenarios** durante el combate: muestra siempre los puestos 1–9,
+   presencia, estado vivo/caído, **Usar bot**, prioridad, acciones y última orden.
+   **Actualizar equipo** consulta; **Usar/omitir seleccionado en bot** modifica
+   el perfil solo con el bot detenido. Los nombres son los del perfil, no nombres
+   de clase reconocidos automáticamente. La numeración es la del registro nativo.
+8. Tras una batalla, pulsa **Parar bot**, comprueba el orden en pantalla y comparte
+   **Copiar estado PID …**. No hace falta adjuntar x32dbg.
+
+Ejemplo: coloca Mercenario 2 primero con Q y objetivo Enemigo; Mercenario 1 después
+con básico. Si ambos están presentes, solicita Q del 2 y luego básico del 1; en los
+turnos siguientes, básicos en ese mismo orden. Si el primer ataque elimina al último
+enemigo, no solicita la segunda acción.
+
+## Disponibilidad, espera y parada
+
+La ejecución espera el turno del grupo y el estado nativo del mercenario. Para magia,
+selecciona ese miembro con el selector del cliente, lee su barra actual y solicita
+la tecla configurada. No usa teclas globales ni cambia el foco entre ventanas.
+El cliente comprueba puntos de acción, coste, recarga y objetivo; el bot no modifica
+esos valores ni obliga a actuar a los nueve puestos.
+
+Hay como máximo una orden pendiente. Una respuesta de cola no confirma un golpe:
+se esperan cambios observables de animación, vida, valor del miembro o turno antes
+de continuar. Esos cambios tampoco se etiquetan como impacto confirmado. Si no hay
+progreso en doce segundos, se detiene sin repetir la solicitud y exige reconectar.
+También se detiene ante selección cambiada durante la solicitud o resultados inciertos.
+
+**Básico alternativo** se aplica si falta la magia de esa tecla/objetivo o si la
+función nativa rechaza la magia sin enviarla. Si lo desmarcas, omite ese mercenario
+durante ese turno. No usa básico alternativo después de un envío incierto. Los
+rechazos de básico se acotan a cada par mercenario/objetivo; no repite ese par en
+el mismo turno. La reserva de una orden por miembro/turno se comparte con las pruebas
+individuales y los reinicios del bot dentro de la conexión.
+
+Si inicias el bot en mitad de una batalla avanzada, usa básicos hasta la siguiente
+batalla en modo de magia inicial; no lanza tarde la apertura. Si el enemigo actúa
+primero en una batalla que el bot vio empezar, espera el primer turno propio.
+La opción queda desmarcada al abrir el panel. Guardar el perfil no activa acciones.
+Parar bot cancela nuevas solicitudes; una ya aceptada puede terminar.
+
+`combat` en **Copiar estado** contiene el equipo, última orden por puesto, historial
+acotado, respuestas nativas y acción pendiente. La exportación de código incluye
+ese diagnóstico sin los nombres personales del perfil. El perfil usa esquema 3;
+carga los esquemas 1/2 sin reescribirlos hasta que guardes. Se conservan sus nombres,
+orden, acciones y selección, añadiendo enemigo y magia de primer turno por defecto.
+
+Las pruebas individuales siguen disponibles tras **Parar bot**:
+[básico](basic-battle-trial.md) y [selección/magia](magic-battle-trial.md).
+Actualizar, elegir listas y copiar solo leen; **Probar acción (experimental)** sí
+solicita la acción. **Seleccionar en juego** cambia el miembro activo sin atacar.
 
 ## Controles comunicados por el usuario
 
@@ -32,10 +93,10 @@ todavía requieren análisis. Tampoco se ha implementado la recogida automática
 
 ## Exportar el código de combate
 
-1. Abre el panel 0.10.0 y conecta con la ventana elegida.
+1. Abre el panel 0.11.0 y conecta con la ventana elegida.
 2. Mantén Auto Battle y caza nativa apagados.
 3. Entra en combate manualmente o con el ciclo de caza que ya funciona. El panel
-   permite exportar mientras el ciclo está pausado dentro de la batalla.
+   permite exportar en batalla. Para facilitar la captura, para el bot antes.
 4. Durante el combate, pulsa **Exportar combate** y guarda un archivo nuevo.
 5. Adjunta al chat el ZIP `Atlantica-PID…-combate-….zip`.
 
@@ -61,10 +122,12 @@ py -3 diagnosticar.py capture --pid 1234 --combat --output combate.zip
 El manifiesto de combate usa esquema 4 y contiene PID/creación, hash de la
 compilación, observaciones antes/después, detector y los controles comunicados.
 Cada bloque indica `kind=code` o `kind=readonly_constants`.
-Conserva `turn_state_verified=false` y `turn_execution_available=false`: detectar
-la batalla no identifica por sí sola la disponibilidad del mercenario. El visor
-ampliado compara además el grupo local y el grupo que tiene turno; el puente
-comprueba la disponibilidad y el ataque mediante las funciones del cliente.
+El contexto básico de la exportación conserva `turn_state_verified=false` y
+`turn_execution_available=false`: resolver ese contexto por sí solo no establece
+disponibilidad para actuar. El visor ampliado y el ejecutor leen además unidades,
+grupos y turno; el puente comprueba la disponibilidad y el ataque con las funciones
+del cliente. El perfil y el visor ampliado anuncian la capacidad nueva; la opción
+**Ejecutar turnos** es la que permite usarla durante la ejecución.
 
 Añade estos bloques a la exportación normal de hasta 100 KiB:
 

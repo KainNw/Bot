@@ -19,7 +19,7 @@ def test_persists_selection_names_and_priority_without_touching_other_profiles(t
     assert store.load(1) == updated
     assert store.load(2) == BotProfile.default(2)
     assert [path.name for path in tmp_path.iterdir()] == ["profile-1.json"]
-    assert store.load(1).summary()["turn_execution_available"] is False
+    assert store.load(1).summary()["turn_execution_available"] is True
 
 
 def test_magic_actions_and_fallback_are_saved_per_mercenary_in_priority_order(tmp_path):
@@ -34,9 +34,9 @@ def test_magic_actions_and_fallback_are_saved_per_mercenary_in_priority_order(tm
     store.save(updated)
     assert store.load(1) == updated
     payload = json.loads((tmp_path / "profile-1.json").read_text())
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert [m["action"] for m in payload["mercenaries"]] == list(reversed(actions))
-    assert payload["turn_execution_available"] is False
+    assert payload["turn_execution_available"] is True
 
 
 def test_legacy_profile_migrates_in_memory_without_rewriting_or_losing_settings(tmp_path):
@@ -58,7 +58,7 @@ def test_legacy_profile_migrates_in_memory_without_rewriting_or_losing_settings(
     assert all(m.action == "basic" and m.fallback_basic for m in loaded.mercenaries)
     assert path.read_bytes() == saved
     store.save(loaded)
-    assert json.loads(path.read_bytes())["schema_version"] == 2
+    assert json.loads(path.read_bytes())["schema_version"] == 3
     assert store.load(1) == loaded
 
 
@@ -75,7 +75,7 @@ def test_invalid_actions_preserve_existing_profile(tmp_path, action, fallback):
     assert store.load(1) == profile
 
 
-@pytest.mark.parametrize("missing", ["action", "fallback_basic"])
+@pytest.mark.parametrize("missing", ["action", "fallback_basic", "target"])
 def test_incomplete_new_schema_is_rejected_instead_of_silently_changing_actions(tmp_path, missing):
     payload = BotProfile.default(1).summary()
     del payload["mercenaries"][0][missing]
@@ -83,6 +83,61 @@ def test_incomplete_new_schema_is_rejected_instead_of_silently_changing_actions(
     path = tmp_path / "profile-1.json"
     path.write_bytes(saved)
     with pytest.raises(DiagnosticError, match="archivo se conserva"):
+        ProfileStore(tmp_path).load(1)
+    assert path.read_bytes() == saved
+
+
+def test_schema_two_preserves_order_actions_and_fallback_without_rewriting(tmp_path):
+    payload = BotProfile.default(1).summary()
+    payload["schema_version"] = 2
+    del payload["magic_first_turn_only"]
+    payload["mercenaries"].reverse()
+    for merc in payload["mercenaries"]:
+        del merc["target"]
+    payload["mercenaries"][0].update(action="W", fallback_basic=False, enabled=False)
+    saved = json.dumps(payload).encode()
+    path = tmp_path / "profile-1.json"
+    path.write_bytes(saved)
+    profile = ProfileStore(tmp_path).load(1)
+    assert profile.mercenaries[0] == Mercenary(9, "Puesto 9", False, "W", False)
+    assert profile.magic_first_turn_only
+    assert all(m.target == "enemy" for m in profile.mercenaries)
+    assert path.read_bytes() == saved
+
+
+def test_magic_target_and_repeat_mode_survive_roundtrip(tmp_path):
+    original = BotProfile.default(1)
+    mercs = list(original.mercenaries)
+    mercs[0] = replace(mercs[0], action="Q", target="self")
+    mercs[1] = replace(mercs[1], action="W", target="slot_1")
+    profile = replace(original, mercenaries=tuple(mercs), magic_first_turn_only=False)
+    store = ProfileStore(tmp_path)
+    store.save(profile)
+    assert store.load(1) == profile
+
+
+@pytest.mark.parametrize("target", ["slot_0", "slot_10", "everyone", 1, []])
+def test_invalid_targets_preserve_saved_profile(tmp_path, target):
+    original = BotProfile.default(1)
+    store = ProfileStore(tmp_path)
+    store.save(original)
+    bad = replace(original.mercenaries[0], target=target)
+    with pytest.raises(DiagnosticError):
+        store.save(replace(original, mercenaries=(bad, *original.mercenaries[1:])))
+    assert store.load(1) == original
+
+
+@pytest.mark.parametrize("mode", [None, 1, "true"])
+def test_invalid_or_missing_first_turn_setting_does_not_rewrite_file(tmp_path, mode):
+    payload = BotProfile.default(1).summary()
+    if mode is None:
+        del payload["magic_first_turn_only"]
+    else:
+        payload["magic_first_turn_only"] = mode
+    saved = json.dumps(payload).encode()
+    path = tmp_path / "profile-1.json"
+    path.write_bytes(saved)
+    with pytest.raises(DiagnosticError):
         ProfileStore(tmp_path).load(1)
     assert path.read_bytes() == saved
 

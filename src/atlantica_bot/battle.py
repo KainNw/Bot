@@ -88,7 +88,7 @@ class BattleFrame:
             and bool(self.sources)
             and bool(self.enemies),
             "native_eligibility_fully_validated": False,
-            "turn_execution_available": False,
+            "turn_execution_available": True,
             "keyboard_slot_mapping_verified": False,
             "magic_shortcuts": dict(zip("QWERT", self.magic_actions, strict=False)),
             "magic_mapping_source": "004F44FF_QWERT_and_manager_25e8_25ec_for_selected_unit",
