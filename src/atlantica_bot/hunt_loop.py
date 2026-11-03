@@ -7,7 +7,7 @@ import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
 
-from .battle import read_battle_frame
+from .battle import BattleFrame, read_battle_frame
 from .clients import ClientWindow
 from .combat import CombatDetector
 from .errors import DiagnosticError, SceneChanged
@@ -978,6 +978,25 @@ class HuntWorker:
                 pass
         self.events.put_nowait(report)
 
+    def _poll_delay(self, *, transient_read: bool = False) -> float:
+        if (
+            not transient_read
+            and self.turns is not None
+            and self.engine.phase in ("confirming_battle", "battle")
+            and self.turns.pending is None
+        ):
+            frame = self.turns.last_frame
+            waiting_opening = self.turns.opening_turn is None and not self.turns.finished_opening
+            if (
+                frame is None
+                or waiting_opening
+                and (frame.phase != 3 or frame.turn_number == 0xFFFFFFFF)
+                or frame.enemies
+                and (frame.own_turn or waiting_opening)
+            ):
+                return 0.1
+        return 0.25 if self.engine.deadline is not None or self.engine.route else 0.5
+
     def _run(self) -> None:
         try:
             with BotLease(self.window.pid), Cancellation(self.window.pid) as signal:
@@ -987,10 +1006,12 @@ class HuntWorker:
                         signal.cancel()
                     consecutive_changes = 0
                     while not self.stop_event.is_set() and self.engine.running:
+                        transient_read = False
                         try:
                             self._iteration()
                             consecutive_changes = 0
                         except SceneChanged:
+                            transient_read = True
                             self.engine.transient_reads += 1
                             consecutive_changes += 1
                             self.engine.message = (
@@ -999,9 +1020,7 @@ class HuntWorker:
                             if consecutive_changes >= 3:
                                 self.engine.stop("La escena no se estabiliza; bot detenido.")
                         self._publish()
-                        self.stop_event.wait(
-                            0.25 if self.engine.deadline is not None or self.engine.route else 0.5
-                        )
+                        self.stop_event.wait(self._poll_delay(transient_read=transient_read))
                     if self.stop_event.is_set():
                         self.engine.stop("Bot detenido; no se enviarán más solicitudes.")
                 finally:
@@ -1083,29 +1102,29 @@ class HuntWorker:
                     self.engine.record(candidate, report, time.monotonic())
         if self.turns is not None and self.engine.running:
             if self.engine.phase == "battle":
-                try:
-                    frame = read_battle_frame(self.session)
-                except DiagnosticError:
-                    fresh = observe_scene(
-                        self.session,
-                        include_navigation=self.engine.uses_radius,
-                        allow_player_movement=True,
-                    )
-                    if self.engine.detector.classify(fresh) != "battle":
-                        self.engine.observe(fresh, time.monotonic())
-                        self.engine.combat = self.turns.summary()
-                        return
-                    raise
-                self.turns.enter(fresh=self.seen_map)
-                trial = self.turns.next(frame, time.monotonic())
-                if trial is not None and not self.stop_event.is_set():
+                # A successful selection rebuilds the bar synchronously. Read it again
+                # immediately; never wait a polling interval or reuse the previous bar.
+                # At most one selection and one action, or two selections if plans change.
+                for _ in range(2):
+                    if self.stop_event.is_set():
+                        break
+                    frame = self._read_combat_frame()
+                    if frame is None:
+                        break
+                    self.turns.enter(fresh=self.seen_map)
+                    trial = self.turns.next(frame, time.monotonic())
+                    if trial is None or self.stop_event.is_set():
+                        break
                     self.engine.combat = self.turns.summary()
                     self._publish()
                     report = try_battle_action(
                         self.session, self.window, trial, cancellation=self.cancellation
                     )
                     self.turns.record(trial, report, time.monotonic())
-                self.engine.message = self.turns.message
+                    if report["status"] != 31 or trial.operation != 7 or not self.turns.running:
+                        break
+                if self.engine.phase == "battle":
+                    self.engine.message = self.turns.message
                 if not self.turns.running:
                     self.engine.stop(self.turns.message, reconnect=self.turns.needs_reconnect)
             elif not self.engine.battle_active:
@@ -1119,6 +1138,20 @@ class HuntWorker:
         if self.engine.deadline is not None and now >= self.next_transport_sample:
             self.engine.record_transport(observe_transport(self.session), time.monotonic())
             self.next_transport_sample = now + 1
+
+    def _read_combat_frame(self) -> BattleFrame | None:
+        try:
+            return read_battle_frame(self.session)
+        except DiagnosticError:
+            fresh = observe_scene(
+                self.session,
+                include_navigation=self.engine.uses_radius,
+                allow_player_movement=True,
+            )
+            if self.engine.detector.classify(fresh) != "battle":
+                self.engine.observe(fresh, time.monotonic())
+                return None
+            raise
 
     def _stop_route(self, *, cleanup: bool = False) -> None:
         if self.engine.route is None or self.stop_attempted:

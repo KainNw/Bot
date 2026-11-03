@@ -1,15 +1,21 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.11.0** añade **Ejecutar turnos según el
+con Auto Battle apagado. La versión **0.11.1** reduce la espera antes de lanzar
+la magia: después de seleccionar al mercenario, relee su barra y solicita la acción
+sin esperar otro ciclo. Comprueba la preparación del combate cada 100 ms mientras
+hay una orden que preparar. Conserva **Ejecutar turnos según el
 perfil (experimental)** y la pestaña **Mercenarios**, con los nueve puestos,
 participación real en batalla, selección en el perfil, prioridad y última orden.
 Solo ordena actuar a los miembros presentes y habilitados. Puedes llevar dos
 miembros sin esperar a los otros siete. Configura básico o **Magia Q/W/E/R/T**
 por mercenario, en el orden del perfil; por defecto usa la magia en el primer
 turno propio y básicos después. Deja de enviar órdenes al no observar enemigos vivos.
-El usuario confirmó visualmente el básico de 0.9 y la magia Q de 0.10.
-La secuencia automática nueva requiere su primera prueba en el juego.
+El usuario confirmó visualmente el básico de 0.9 y la magia Q de 0.10. En la primera
+prueba automática de 0.11, Q del puesto 1 derrotó a todos y el bot omitió las órdenes
+restantes. La secuencia entre varios miembros y los básicos posteriores siguen
+pendientes de prueba. La reducción de espera de 0.11.1 busca dejar más tiempo al
+NeoACA para recoger en el primer turno; su resultado requiere comprobarse en el juego.
 Las pruebas individuales siguen en **Ver mercenarios** y requieren **Parar bot**.
 Conserva **Ataque nativo por radio (experimental)**, **Calibrar combate**,
 observaciones y tres perfiles. Al conectar con la compilación

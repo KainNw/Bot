@@ -51,8 +51,14 @@ primero con el inicio de encuentros. Después confirmó el básico nativo de 0.9
 la magia Q de 0.10. La versión 0.11 añade ejecución opcional en orden, solo con
 miembros presentes/habilitados, magia en el primer turno propio y básicos después,
 y estado de los nueve puestos en el panel. Deja de enviar órdenes sin enemigos
-vivos. Queda la primera validación de la secuencia completa en el cliente, incluido
-un equipo de dos miembros. El botín con X sigue pendiente.
+vivos. La primera prueba automática confirmó Q del miembro 1, derrota de todos los
+enemigos y omisión de las órdenes restantes. Quedan la secuencia entre varios
+miembros, los básicos posteriores y un equipo de dos miembros.
+
+La versión 0.11.1 elimina la pausa entre selección y magia, relee inmediatamente
+la barra y revisa la preparación del combate cada 100 ms. Busca dejar más tiempo al
+NeoACA para recoger y terminar en el primer turno. Ese resultado todavía requiere
+comprobación con el robot; el botín con X sigue pendiente.
 
 ## Velocidad — etapa posterior
 

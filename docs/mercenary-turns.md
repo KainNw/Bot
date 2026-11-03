@@ -1,4 +1,4 @@
-# Turnos de mercenarios 0.11.0
+# Turnos de mercenarios 0.11.1
 
 El panel puede aplicar el perfil durante las batallas con Auto Battle apagado.
 Ordena una acción por mercenario y turno, siguiendo la prioridad configurada y
@@ -8,8 +8,12 @@ queden mercenarios sin actuar. Espera el final real del combate y el regreso est
 al mapa para reanudar la caza. Los tiempos de persecución y ataque de 0.7 se conservan.
 
 El usuario confirmó visualmente el básico individual de 0.9 y la magia Q de 0.10.
-La secuencia automática de 0.11 todavía requiere una prueba en el cliente real.
-No se ha comprobado una batalla con solo dos miembros ni varias ventanas simultáneas.
+En la primera prueba automática de 0.11, PID 21076, el cliente seleccionó al miembro
+1 y encoló Q (acción 207) en el turno 0, sin excepción. Se leyeron nueve miembros
+presentes. El usuario confirmó que Q derrotó a todos los enemigos; el bot omitió las
+órdenes de los otros ocho y quedó esperando el final real de la batalla, sin exigir
+reconexión. Esa captura aún no comprueba el regreso al mapa, una secuencia entre
+varios miembros, los básicos posteriores, un equipo de dos ni varias ventanas.
 La recogida con X sigue pendiente.
 
 ## Configurar y empezar
@@ -40,6 +44,23 @@ turnos siguientes, básicos en ese mismo orden. Si el primer ataque elimina al �
 enemigo, no solicita la segunda acción.
 
 ## Disponibilidad, espera y parada
+
+Desde 0.11.1, después de seleccionar al mercenario se releen de inmediato el turno,
+las unidades y la barra, y se puede pedir Q/W/E/R/T en esa misma iteración. Se elimina
+la pausa de un ciclo que separaba selección y magia; el registro de 0.11 mostraba
+563 ms entre ambas. Nunca se usa la barra anterior a la selección.
+
+La revisión pasa a 100 ms cuando se espera la preparación del combate o una orden
+propia; las solicitudes pendientes, los turnos enemigos posteriores y la espera sin
+enemigos conservan la frecuencia anterior. Cada iteración ejecuta como máximo dos
+llamadas: selección y acción, o dos selecciones si cambia la disponibilidad del plan.
+La primera acción encolada termina esa iteración. Las lecturas inestables conservan
+la pausa de recuperación anterior, para que el sondeo más frecuente no acorte la
+tolerancia a transiciones. Los tiempos de caza en el mapa no cambian.
+
+El objetivo de adelantar Q es dejar más tiempo al robot NeoACA de la formación para
+recoger dentro del primer turno. La animación, recogida y cierre del combate siguen
+dependiendo del juego; esta mejora debe comprobarse con el robot en una batalla real.
 
 La ejecución espera el turno del grupo y el estado nativo del mercenario. Para magia,
 selecciona ese miembro con el selector del cliente, lee su barra actual y solicita
@@ -93,7 +114,7 @@ todavía requieren análisis. Tampoco se ha implementado la recogida automática
 
 ## Exportar el código de combate
 
-1. Abre el panel 0.11.0 y conecta con la ventana elegida.
+1. Abre el panel 0.11.1 y conecta con la ventana elegida.
 2. Mantén Auto Battle y caza nativa apagados.
 3. Entra en combate manualmente o con el ciclo de caza que ya funciona. El panel
    permite exportar en batalla. Para facilitar la captura, para el bot antes.
