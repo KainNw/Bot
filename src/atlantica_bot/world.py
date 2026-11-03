@@ -139,12 +139,40 @@ def _world_position(reader: Reader, actor: int) -> tuple[float, float, float]:
 
 
 @dataclass(frozen=True)
+class LocalState:
+    state: int
+    context_a: int
+    context_b: int
+    flags: int
+    linked_state: int | None = None
+
+
+@dataclass(frozen=True)
 class Observation:
     pid: int
     creation_time: int | None
     scene_code: int
     player: GridPosition | None
     native_active: bool = False
+    local: LocalState | None = None
+
+    def summary(self) -> dict:
+        return asdict(self)
+
+
+def _local_state(reader: Reader, actor: int) -> LocalState:
+    linked = reader.u32(actor + 0x14)
+    try:
+        linked_state = reader.i32(linked + 0x380) if linked else None
+    except (DiagnosticError, OSError):
+        linked_state = None  # Optional diagnostic; never used to classify combat.
+    return LocalState(
+        reader.byte(actor + 0x38),
+        reader.i32(actor + 0x318),
+        reader.i32(actor + 0x254),
+        reader.u32(actor + 0x388),
+        linked_state,
+    )
 
 
 def observe_scene(session: GameSession) -> Observation:
@@ -154,7 +182,7 @@ def observe_scene(session: GameSession) -> Observation:
     if not owner:
         raise DiagnosticError("El cliente todavía no publica una escena válida.")
     scene = reader.i32(owner + 0xB98)
-    player = None
+    player = local = None
     if scene == 2:
         manager = reader.u32(owner + 0x828)
         if not manager:
@@ -163,6 +191,16 @@ def observe_scene(session: GameSession) -> Observation:
         if not actor or reader.u32(actor + 0x200) != 1:
             raise DiagnosticError("No se pudo validar el personaje del mapa.")
         player = _grid(reader, actor)
+        local = _local_state(reader, actor)
+        if (
+            reader.u32(owner + 0x828) != manager
+            or reader.u32(manager + TABLE_OFFSET + 4) != actor
+            or reader.u32(actor + 0x200) != 1
+            or _grid(reader, actor) != player
+            or reader.i32(actor + 0x318) != local.context_a
+            or reader.i32(actor + 0x254) != local.context_b
+        ):
+            raise SceneChanged("El personaje cambió durante la observación.")
     session.snapshot()
     if reader.u32(OWNER_ADDRESS) != owner or reader.i32(owner + 0xB98) != scene:
         raise SceneChanged("La escena cambió durante la observación.")
@@ -172,6 +210,7 @@ def observe_scene(session: GameSession) -> Observation:
         scene,
         player,
         state.auto_battle or state.hunting or state.files.marker_present,
+        local,
     )
 
 

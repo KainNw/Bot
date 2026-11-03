@@ -9,12 +9,14 @@ from pathlib import Path
 from . import __version__
 from .capture import export_code_context
 from .clients import control_native_marker, marker_scope
+from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
 from .errors import DiagnosticError
 from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
 from .native_action import try_attack
+from .profiles import BotProfile, Mercenary, ProfileStore
 from .session import GameSession, LiveState
-from .world import scan_world
+from .world import observe_scene, scan_world
 
 
 def launch_panel(*, smoke_test: bool = False) -> None:
@@ -29,7 +31,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def __init__(self) -> None:
             self.root = tk.Tk()
             self.root.title(f"Atlantica — Control de caza {__version__}")
-            self.root.minsize(800, 520)
+            self.root.minsize(840, 630)
             self.directory: Path | None = None
             self.session: GameSession | None = None
             self.last_state: LiveState | None = None
@@ -41,6 +43,15 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.bot_worker: HuntWorker | None = None
             self.bot_report = {}
             self.closing = False
+            self.calibrating = False
+            self.calibration_window = None
+            self.profile_editor = None
+            self.detector: CombatDetector | None = None
+            self.profile_store = ProfileStore.for_windows()
+            self.profile: BotProfile | None = None
+            self.profile_number = tk.StringVar(value="1")
+            self.profile_status = tk.StringVar()
+            self.detector_status = tk.StringVar(value="Detector de combate: falta calibrar.")
             self.bot_status = tk.StringVar(value="Bot detenido.")
             self.pid = tk.StringVar()
             self.folder = tk.StringVar(value="Conecta con el juego o selecciona su carpeta.")
@@ -93,6 +104,23 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Label(
                 frame, textvariable=self.bot_status, font=("Segoe UI", 12, "bold"), wraplength=760
             ).pack(anchor="w", pady=4)
+            row = ttk.Frame(frame)
+            row.pack(fill="x", pady=4)
+            ttk.Label(row, text="Perfil:").pack(side="left")
+            self.profile_list = ttk.Combobox(
+                row,
+                textvariable=self.profile_number,
+                values=("1", "2", "3"),
+                state="readonly",
+                width=4,
+            )
+            self.profile_list.pack(side="left", padx=8)
+            self.profile_list.bind("<<ComboboxSelected>>", self.load_profile)
+            self.profile_button = ttk.Button(
+                row, text="Configurar mercenarios", command=self.edit_profile
+            )
+            self.profile_button.pack(side="left")
+            ttk.Label(frame, textvariable=self.profile_status, wraplength=760).pack(anchor="w")
             read_row = ttk.Frame(frame)
             read_row.pack(fill="x", pady=6)
             self.advanced = ttk.Frame(frame)
@@ -120,6 +148,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 read_row, text="Ver objetivos", command=self.show_targets, state="disabled"
             )
             self.targets_button.pack(side="left")
+            self.calibration_button = ttk.Button(
+                read_row,
+                text="Calibrar combate",
+                command=self.calibrate_combat,
+                state="disabled",
+            )
+            self.calibration_button.pack(side="left", padx=10)
+            ttk.Label(frame, textvariable=self.detector_status, wraplength=760).pack(anchor="w")
             row = ttk.Frame(self.advanced)
             row.pack(fill="x", pady=4)
             self.trial_button = ttk.Button(
@@ -149,6 +185,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ).pack(anchor="w", pady=10)
             self.root.protocol("WM_DELETE_WINDOW", self.close)
             self.pid.trace_add("write", self.pid_changed)
+            self.load_profile()
             if not smoke_test:
                 self.root.after(100, self.list_windows)
             self.root.after(750, self.poll)
@@ -164,6 +201,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.targets_button.configure(state="disabled")
             self.trial_button.configure(state="disabled")
             self.bot_start_button.configure(state="disabled")
+            self.calibration_button.configure(state="disabled")
+            self.detector_status.set("Detector de combate: conecta con la ventana elegida.")
             self.status.set("Cliente: sin conexión; selecciona y pulsa Conectar")
             self.folder.set("Selecciona una ventana y pulsa Conectar.")
             self.scope_status.set("")
@@ -178,14 +217,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.advanced.pack(fill="x", pady=6, after=self.more_button)
 
         def lock_target_controls(self) -> None:
-            active = self.bot_worker is not None or self.closing
+            active = self.bot_worker is not None or self.closing or self.calibrating
             self.window_list.configure(state="disabled" if active else "readonly")
+            self.profile_list.configure(state="disabled" if active else "readonly")
             for button in (
                 self.list_button,
                 self.pick_button,
                 self.browse_button,
                 self.connect_button,
                 self.pid_entry,
+                self.profile_button,
             ):
                 button.configure(state="disabled" if active else "normal")
             self.bot_stop_button.configure(
@@ -196,15 +237,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.start_button.configure(state="disabled")
                 self.stop_button.configure(state="disabled")
                 self.trial_button.configure(state="disabled")
+                self.calibration_button.configure(state="disabled")
 
         def require_idle_bot(self) -> None:
-            if self.bot_worker is not None or self.closing:
+            if self.bot_worker is not None or self.closing or self.calibrating:
                 raise DiagnosticError(
                     "Espera a que Parar bot termine antes de cambiar el cliente o modo."
                 )
 
         def target_is_editable(self) -> bool:
-            if self.bot_worker is not None or self.closing:
+            if self.bot_worker is not None or self.closing or self.calibrating:
                 self.detail.set(
                     "Pulsa Parar bot y espera a que termine antes de cambiar el cliente."
                 )
@@ -233,7 +275,15 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     raise DiagnosticError(
                         "Deja Auto Battle y caza nativa apagados para iniciar el bot."
                     )
-                worker = HuntWorker(session, self.selected_window(session))
+                if self.detector is None or not self.detector.matches(
+                    session.process.pid, session.creation_time
+                ):
+                    raise DiagnosticError("Usa Calibrar combate antes de iniciar el ciclo.")
+                if self.profile is None:
+                    raise DiagnosticError("Revisa la configuración del perfil antes de iniciar.")
+                worker = HuntWorker(
+                    session, self.selected_window(session), self.detector, self.profile
+                )
                 self.bot_report = worker.engine.summary()
                 self.bot_worker = worker
                 self.bot_status.set(f"PID {session.process.pid}: iniciando bot...")
@@ -290,6 +340,267 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         indent=2,
                     )
                 )
+
+        def load_profile(self, event=None) -> None:
+            try:
+                self.require_idle_bot()
+                self.profile = self.profile_store.load(int(self.profile_number.get()))
+                count = sum(merc.enabled for merc in self.profile.mercenaries)
+                self.profile_status.set(
+                    f"Perfil {self.profile.number}: {count} puestos seleccionados. "
+                    "Los turnos siguen siendo manuales."
+                )
+            except (DiagnosticError, OSError, ValueError) as exc:
+                self.profile = None
+                self.profile_status.set(f"No se pudo cargar el perfil: {exc}")
+
+        def edit_profile(self) -> None:
+            try:
+                self.require_idle_bot()
+                number = int(self.profile_number.get())
+            except (DiagnosticError, ValueError) as exc:
+                self.error(exc)
+                return
+            if self.profile_editor is not None and self.profile_editor.winfo_exists():
+                self.profile_editor.lift()
+                return
+            profile = self.profile or BotProfile.default(number)
+            window = self.profile_editor = tk.Toplevel(self.root)
+            window.title(f"Perfil {number} — mercenarios")
+            frame = ttk.Frame(window, padding=16)
+            frame.pack(fill="both", expand=True)
+            ttk.Label(
+                frame,
+                text="Selecciona los puestos de tu equipo y ordénalos por prioridad.\n"
+                "Puedes asignar un nombre a cada puesto para identificarlo.",
+                wraplength=640,
+            ).pack(anchor="w", pady=6)
+            order = [merc.slot for merc in profile.mercenaries]
+            names = {merc.slot: tk.StringVar(value=merc.name) for merc in profile.mercenaries}
+            enabled = {merc.slot: tk.BooleanVar(value=merc.enabled) for merc in profile.mercenaries}
+            body = ttk.Frame(frame)
+            body.pack(fill="x", pady=8)
+            rows, priorities = {}, {}
+
+            def render() -> None:
+                for row in rows.values():
+                    row.pack_forget()
+                for priority, slot in enumerate(order, 1):
+                    priorities[slot].configure(text=f"{priority}.")
+                    rows[slot].pack(fill="x", pady=2)
+
+            def move(slot: int, delta: int) -> None:
+                index = order.index(slot)
+                target = index + delta
+                if 0 <= target < len(order):
+                    order[index], order[target] = order[target], order[index]
+                    render()
+
+            for slot in order:
+                row = rows[slot] = ttk.Frame(body)
+                priorities[slot] = ttk.Label(row, width=3)
+                priorities[slot].pack(side="left")
+                ttk.Checkbutton(row, text=f"Puesto {slot}", variable=enabled[slot]).pack(
+                    side="left"
+                )
+                ttk.Entry(row, textvariable=names[slot], width=28).pack(side="left", padx=12)
+                ttk.Button(
+                    row, text="Subir", width=6, command=lambda slot=slot: move(slot, -1)
+                ).pack(side="left")
+                ttk.Button(
+                    row, text="Bajar", width=6, command=lambda slot=slot: move(slot, 1)
+                ).pack(side="left", padx=4)
+            render()
+            status = tk.StringVar(
+                value="Este plan se guarda para la futura ejecución de turnos. "
+                "Todavía no envía órdenes a los mercenarios."
+            )
+            ttk.Label(frame, textvariable=status, wraplength=640).pack(anchor="w", pady=8)
+
+            def save() -> None:
+                try:
+                    self.require_idle_bot()
+                    if self.profile_number.get() != str(number):
+                        raise DiagnosticError(
+                            "El perfil seleccionado cambió; vuelve a abrir el editor."
+                        )
+                    updated = BotProfile(
+                        number,
+                        tuple(
+                            Mercenary(slot, names[slot].get().strip(), enabled[slot].get())
+                            for slot in order
+                        ),
+                    )
+                    self.profile_store.save(updated)
+                    self.load_profile()
+                    status.set(
+                        f"Perfil {number} guardado. La selección y el orden se conservarán "
+                        "al abrir el panel; los turnos siguen siendo manuales."
+                    )
+                except (DiagnosticError, OSError) as exc:
+                    status.set(str(exc))
+
+            buttons = ttk.Frame(frame)
+            buttons.pack(fill="x", pady=4)
+            ttk.Button(buttons, text="Guardar perfil", command=save).pack(side="left")
+            ttk.Button(buttons, text="Cerrar", command=window.destroy).pack(side="left", padx=8)
+
+        def calibrate_combat(self) -> None:
+            try:
+                self.require_idle_bot()
+                session = self.session
+                if session is None or session.creation_time is None:
+                    raise DiagnosticError("Conecta con la ventana elegida antes de calibrar.")
+            except DiagnosticError as exc:
+                self.error(exc)
+                return
+            if self.calibration_window is not None and self.calibration_window.winfo_exists():
+                self.calibration_window.lift()
+                return
+            self.detector = None
+            self.bot_start_button.configure(state="disabled")
+            self.detector_status.set("Detector de combate: calibración pendiente.")
+            calibration = CombatCalibration(session.process.pid, session.creation_time)
+            capture_times = {}
+            last_error = ""
+            window = self.calibration_window = tk.Toplevel(self.root)
+            window.title(f"PID {session.process.pid} — calibración de combate")
+            frame = ttk.Frame(window, padding=16)
+            frame.pack(fill="both", expand=True)
+            ttk.Label(
+                frame,
+                text="1. Fuera de combate, deja el personaje quieto y captura el mapa.\n"
+                "2. Inicia un combate y captura mientras lo estás viendo.\n"
+                "3. Termina el combate, vuelve al mismo mapa y captura el regreso.\n\n"
+                "Mantén Auto Battle apagado. La captura solo consulta el estado. "
+                "Puedes usar la prueba individual para iniciar el combate.",
+                wraplength=640,
+            ).pack(anchor="w", pady=8)
+            status = tk.StringVar(value="Paso 1: personaje quieto en el mapa, fuera de combate.")
+            ttk.Label(frame, textvariable=status, wraplength=640).pack(anchor="w", pady=8)
+            labels = {
+                "map_before": "1. Capturar mapa",
+                "battle": "2. Capturar combate",
+                "map_after": "3. Capturar regreso",
+            }
+            prompts = {
+                "battle": "Paso 2: entra en combate y captura mientras esté activo.",
+                "map_after": "Paso 3: termina el combate y captura al regresar al mismo mapa.",
+            }
+
+            def finish_capture() -> None:
+                self.calibrating = False
+                self.lock_target_controls()
+                try:
+                    self.refresh()
+                except (DiagnosticError, OSError) as exc:
+                    self.detail.set(str(exc))
+                stage = calibration.next_stage
+                capture.configure(
+                    state="normal" if stage is not None else "disabled",
+                    text=labels.get(stage, "Capturas completas"),
+                )
+                copy.configure(state="normal" if calibration.samples else "disabled")
+                reset.configure(state="normal")
+
+            def collect() -> None:
+                nonlocal last_error
+                try:
+                    self.require_idle_bot()
+                    if self.session is not session:
+                        raise DiagnosticError(
+                            "La conexión cambió; cierra y vuelve a abrir la calibración."
+                        )
+                    stage = calibration.next_stage
+                    if stage is None:
+                        return
+                except DiagnosticError as exc:
+                    status.set(str(exc))
+                    return
+                self.calibrating = True
+                self.lock_target_controls()
+                capture.configure(state="disabled")
+                reset.configure(state="disabled")
+                samples, times = [], []
+
+                def sample() -> None:
+                    nonlocal last_error
+                    try:
+                        if self.session is not session or self.closing:
+                            raise DiagnosticError("La conexión cambió durante la captura.")
+                        samples.append(observe_scene(session))
+                        times.append(datetime.now().astimezone().isoformat())
+                        status.set(
+                            f"Capturando {len(samples)}/{SAMPLES_PER_STAGE}; espera un momento."
+                        )
+                        if len(samples) < SAMPLES_PER_STAGE:
+                            self.root.after(300, sample)
+                            return
+                        calibration.capture(stage, tuple(samples))
+                        capture_times[stage] = times
+                        last_error = ""
+                        if calibration.next_stage is not None:
+                            status.set(prompts[calibration.next_stage])
+                        else:
+                            self.detector = calibration.detector()
+                            status.set(
+                                "Detector calibrado para esta instancia. "
+                                "Copia la calibración para contrastarla. "
+                                "Si usaste Probar un ataque, "
+                                "reconecta al mismo PID antes de iniciar el bot."
+                            )
+                    except (DiagnosticError, OSError) as exc:
+                        last_error = str(exc)
+                        status.set(last_error)
+                    finish_capture()
+
+                sample()
+
+            def copy_calibration() -> None:
+                detector = self.detector
+                if detector is not None and not detector.matches(
+                    calibration.pid, calibration.creation_time
+                ):
+                    detector = None
+                report = {
+                    "tool_version": __version__,
+                    **calibration.summary(),
+                    "capture_times": capture_times,
+                    "detector": detector.summary() if detector else None,
+                    "error": last_error or None,
+                }
+                self.root.clipboard_clear()
+                self.root.clipboard_append(json.dumps(report, ensure_ascii=False, indent=2))
+
+            def restart() -> None:
+                nonlocal calibration, last_error
+                if self.calibrating:
+                    return
+                calibration = CombatCalibration(session.process.pid, session.creation_time)
+                capture_times.clear()
+                last_error = ""
+                self.detector = None
+                status.set("Paso 1: personaje quieto en el mapa, fuera de combate.")
+                finish_capture()
+
+            def close() -> None:
+                if self.calibrating:
+                    status.set("Espera a que termine esta captura antes de cerrar.")
+                    return
+                window.destroy()
+
+            buttons = ttk.Frame(frame)
+            buttons.pack(fill="x", pady=8)
+            capture = ttk.Button(buttons, text=labels["map_before"], command=collect)
+            capture.pack(side="left")
+            copy = ttk.Button(
+                buttons, text="Copiar calibración", command=copy_calibration, state="disabled"
+            )
+            copy.pack(side="left", padx=8)
+            reset = ttk.Button(buttons, text="Reiniciar", command=restart)
+            reset.pack(side="left")
+            ttk.Button(buttons, text="Cerrar", command=close).pack(side="left", padx=8)
+            window.protocol("WM_DELETE_WINDOW", close)
 
         def pid_changed(self, *args) -> None:
             selected = self.windows.get(self.window_choice.get())
@@ -416,6 +727,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.targets_button.configure(state="disabled")
             self.trial_button.configure(state="disabled")
             self.bot_start_button.configure(state="disabled")
+            self.calibration_button.configure(state="disabled")
             self.refresh_files()
             if self.session is None:
                 self.lock_target_controls()
@@ -424,6 +736,15 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.last_state = state
             self.capture_button.configure(state="normal")
             self.targets_button.configure(state="normal")
+            self.calibration_button.configure(state="normal")
+            calibrated = self.detector is not None and self.detector.matches(
+                self.session.process.pid, self.session.creation_time
+            )
+            self.detector_status.set(
+                f"Detector de combate calibrado para PID {self.session.process.pid}."
+                if calibrated
+                else "Detector de combate: usa Calibrar combate antes de iniciar el ciclo."
+            )
             if not (
                 state.auto_battle
                 or state.hunting
@@ -431,7 +752,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 or self.trial_unknown
             ):
                 self.trial_button.configure(state="normal")
-                self.bot_start_button.configure(state="normal")
+                if calibrated and self.profile is not None:
+                    self.bot_start_button.configure(state="normal")
             self.status.set(f"PID {self.session.process.pid}: {state.label}")
             scope = marker_scope(self.system, self.directory)
             if (
@@ -597,10 +919,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             frame.pack(fill="both", expand=True)
             summary = tk.StringVar(value="Consultando...")
             ttk.Label(frame, textvariable=summary, wraplength=650).pack(anchor="w", pady=6)
-            columns = ("slot", "kind", "map", "x", "y", "distance")
+            columns = ("slot", "kind", "map", "x", "y", "distance", "in_range")
             table = ttk.Treeview(frame, columns=columns, show="headings", height=10)
             for key, title in zip(
-                columns, ("N.º", "ID observado", "Mapa", "X", "Y", "Distancia rejilla"), strict=True
+                columns,
+                ("N.º", "ID observado", "Mapa", "X", "Y", "Distancia rejilla", "En alcance"),
+                strict=True,
             ):
                 table.heading(key, text=title)
                 table.column(key, width=100, anchor="center")
@@ -614,9 +938,19 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                             "La conexión cambió. Cierra este visor y abre el del cliente elegido."
                         )
                     view = scan_world(selected_session)
+                    observation = observe_scene(selected_session)
+                    if (view.scene_code, view.player) != (
+                        observation.scene_code,
+                        observation.player,
+                    ):
+                        raise DiagnosticError(
+                            "La escena cambió; vuelve a actualizar los objetivos."
+                        )
                     last.clear()
                     last.update(view.summary())
                     last["pid"] = selected_session.process.pid
+                    last["observation"] = observation.summary()
+                    last["captured_at"] = datetime.now().astimezone().isoformat()
                     table.delete(*table.get_children())
                     if view.player is None:
                         summary.set(
@@ -642,6 +976,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                                 candidate.x,
                                 candidate.y,
                                 candidate.grid_distance,
+                                "Sí"
+                                if (
+                                    view.range_limit_squared is not None
+                                    and candidate.distance_squared is not None
+                                    and candidate.distance_squared <= view.range_limit_squared
+                                )
+                                else "No",
                             ),
                         )
                 except (DiagnosticError, OSError) as exc:
@@ -662,7 +1003,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             )
             ttk.Label(
                 frame,
-                text="Son candidatos; falta validar la acción de ataque.",
+                text="El alcance se compara con la distancia 3D del cliente, no con la rejilla. "
+                "Para objetivos lejanos todavía debes parar el bot y acercarte.",
                 wraplength=650,
             ).pack(anchor="w")
             refresh_targets()
@@ -671,6 +1013,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
     if smoke_test:
         # Exercise the real packaged GUI without connecting or changing any files.
         panel.toggle_advanced()
+        panel.edit_profile()
+        panel.profile_editor.destroy()
+        from types import SimpleNamespace
+
+        panel.session = SimpleNamespace(process=SimpleNamespace(pid=1), creation_time=1)
+        panel.calibrate_combat()
+        panel.calibration_window.destroy()
+        panel.session = None
         panel.root.update_idletasks()
         panel.toggle_advanced()
         panel.root.after(500, panel.root.destroy)

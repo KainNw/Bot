@@ -1,13 +1,16 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques a mobs cercanos
-con Auto Battle apagado. La versión 0.4 añade **Iniciar bot / Parar bot**, espera durante
-el combate y vuelve a buscar al regresar al mapa. No mueve al personaje ni juega los
-turnos de los mercenarios. El ciclo completo requiere validación en el cliente real.
+con Auto Battle apagado. La versión 0.5 añade **Calibrar combate**, observaciones en el
+informe y tres perfiles para guardar la selección y prioridad de mercenarios. Antes de
+usar **Iniciar bot**, hay que distinguir mapa/combate/regreso en esa instancia. Si las
+capturas no ofrecen una señal válida, el ciclo permanece bloqueado y permite copiar
+los datos. No mueve al personaje ni juega los turnos de los mercenarios.
 
 **Comprobado por el usuario:** la prueba individual 0.3 inició el ataque con Auto Battle
-desactivado. El resultado indicó solicitud encolada, sin excepción y dentro del alcance
-nativo. Solo había una ventana abierta; la prueba real con varios clientes sigue pendiente.
+desactivado. También confirmó un combate iniciado por 0.4 que el detector no reconoció.
+La siguiente captura mostró `scene_code=2`: ese valor solo no distingue el combate.
+Solo había una ventana abierta; la prueba real con varios clientes sigue pendiente.
 
 **Comprobado por el usuario:** tras activar Auto Battle y crear el marcador, el cliente
 mostró HUNT=1 y el personaje atacó mobs. También se comunicó un cierre al moverlo
@@ -27,11 +30,19 @@ Solo se admite la compilación cuyo SHA-256 es
 
 ## Mejoras solicitadas y límites actuales
 
-El ciclo 0.4 usa el envío individual ya confirmado y selecciona candidatos dentro
-del alcance 3D del cliente. Envía una solicitud y espera la escena de combate antes
-de permitir otra. Al volver al mismo mapa, exige una posición estable durante dos
-segundos. Si no observa el combate en diez segundos, se detiene sin repetir el envío.
+El ciclo usa el envío individual ya confirmado y selecciona candidatos dentro
+del alcance 3D del cliente. Envía una solicitud y espera dos observaciones de combate
+según el detector calibrado antes de permitir otra. Al volver al mismo mapa, exige
+una posición estable durante dos segundos. Si no observa el combate en treinta
+segundos, se detiene sin repetir el envío. El aumento de espera no sustituye la
+calibración y no se presenta como una corrección ya validada en el juego.
 Detalles y límites en [caza independiente](docs/independent-hunt.md).
+
+**Configurar mercenarios** guarda los nueve puestos, sus nombres, participación y
+orden de prioridad en el perfil elegido. Esta configuración todavía no ejecuta turnos.
+Se conserva en `%LOCALAPPDATA%/AtlanticaPanel/profiles`, fuera de la carpeta del juego.
+El perfil activo queda fijado al iniciar el ciclo. Detalles de uso y diagnóstico:
+[calibración y perfiles](docs/combat-calibration.md).
 
 No hay desplazamiento hacia mobs lejanos ni automatización de turnos. El control
 nativo anterior sigue en **Más controles** y utiliza `HuntingMode.txt` y Auto Battle.
@@ -63,13 +74,18 @@ py -3 panel_caza.py
 
 1. Elige la ventana y pulsa **Conectar**. Con varios procesos no se elige el primero.
 2. Mantén Auto Battle y caza nativa apagados y deja el personaje quieto cerca de mobs.
-3. Pulsa **Iniciar bot**. Busca objetivos cercanos, solicita un ataque y espera el combate.
-4. Juega los turnos manualmente. Al regresar al mapa, el bot vuelve a buscar.
-5. Para moverte o cambiar de cliente, pulsa **Parar bot** y espera el estado detenido.
+3. Pulsa **Calibrar combate** y captura mapa → combate → regreso al mismo mapa. Puedes
+   iniciar ese combate con **Más controles → Probar un ataque** y jugar los turnos.
+   Tras esa prueba, reconecta al mismo PID; el detector se conserva para esa instancia.
+4. Cuando la calibración sea válida, pulsa **Iniciar bot**. Busca objetivos cercanos,
+   solicita un ataque y espera el combate. Juega los turnos manualmente.
+5. Al regresar al mapa, el bot vuelve a buscar. Para moverte o cambiar de cliente,
+   pulsa **Parar bot** y espera el estado detenido.
 
-**Copiar estado del bot** copia el PID, fase, contadores y resultado de la última
-solicitud. Una cola confirmada no demuestra por sí sola que empezó un combate;
-el ciclo registra la escena observada por separado.
+**Copiar estado del bot** copia el PID, fase, contadores, detector, perfil, alcance,
+últimas 24 observaciones y resultado de la última solicitud. Una cola confirmada no
+demuestra por sí sola que empezó un combate. Si la calibración no encuentra una
+señal, usa **Copiar calibración** para revisar los tres grupos antes de cambiar el detector.
 
 La selección de cliente queda bloqueada mientras termina el trabajador. Si se cierra
 el juego, se detiene; abrir otro cliente exige Conectar. Cambios de mapa, movimiento

@@ -1,4 +1,4 @@
-# Ciclo de ataque cercano 0.4
+# Ciclo de ataque cercano 0.5
 
 El usuario confirmó que la prueba 0.3 inició el ataque con Auto Battle desactivado.
 Su resultado: PID 16244, hilo 18440, objetivo 8, status=1, excepción=0,
@@ -6,10 +6,16 @@ distancia 3D al cuadrado 1.45173 y umbral 20. `battle_confirmed=false` era un ca
 sin observación automática en esa versión. El usuario solo tenía un cliente abierto;
 no se da por validada una prueba real con tres ventanas.
 
+También confirmó que 0.4 inició el combate aunque el panel agotara su espera sin
+observarlo. Una captura posterior siguió mostrando contexto 2. El detector anterior
+asumía contexto 1; 0.5 sustituye esa suposición por una
+[calibración mapa → combate → mapa](combat-calibration.md) ligada a la instancia.
+
 ## Comportamiento
 
 Iniciar bot crea un trabajador ligado a la sesión, HWND e hilo elegidos. Requiere
-Auto Battle, caza nativa y marcador apagados; no cambia esos controles. Consulta la
+Auto Battle, caza nativa y marcador apagados y un detector calibrado para esa
+instancia; no cambia esos controles. Consulta la
 lista activa, identidad, filtros conocidos y distancia 3D. El cliente vuelve a validar
 el objetivo y el alcance cuando ejecuta la solicitud. No se emiten clics ni teclas.
 
@@ -18,17 +24,20 @@ el objetivo y el alcance cuando ejecuta la solicitud. No se emiten clics ni tecl
 | Esperando mapa | Observa; no solicita ataques fuera de escena 2. |
 | Estabilizando | Exige el mismo mapa y posición estable durante dos segundos. |
 | Buscando | Consulta candidatos y elige uno dentro del umbral nativo. |
-| Solicitud enviada | Espera escena 1; no duplica la solicitud. |
+| Solicitud enviada | Espera dos observaciones de combate según la calibración; no duplica la solicitud. |
 | Combate | Pausa solicitudes; los turnos son manuales. |
 | Regreso al mapa | Vuelve a estabilizar y buscar en el mismo mapa. |
 | Detenido | No inicia más solicitudes. |
 
-La interpretación de escena 1 procede de los caminos de combate analizados del
-cliente. El detector y el ciclo completo todavía requieren la prueba del usuario.
-`battle_confirmed` pasa a true tras observar esa escena después de una solicitud,
-no por el incremento de bytes en cola. No confirma victoria, daño o finalización de turnos.
+La calibración requiere una diferencia en los tres grupos etiquetados y un retorno
+al mismo mapa; si no la encuentra, permite copiar los datos y bloquea el ciclo.
+Puede usar la transición global 2/1/2 o el predicado de contexto local, si se observa
+solo en combate y desaparece al regresar. Los demás valores se tratan como desconocidos.
+`battle_confirmed` pasa a true tras dos observaciones de combate después de una
+solicitud. No confirma victoria, daño o finalización de turnos. La señal del cliente
+real y el ciclo completo todavía requieren la prueba del usuario.
 
-Si no se observa el combate en diez segundos, se detiene y exige comprobar el
+Si no se observa el combate en treinta segundos, se detiene y exige comprobar el
 cliente/reconectar antes de otra solicitud. Los rechazos de objetivo, cambios de
 identidad y movimientos de rango tienen una espera antes de probar de nuevo con
 datos frescos. Nunca se reenvía una solicitud cuyo resultado sea incierto.
@@ -76,3 +85,6 @@ sin ejecutar código del juego. El smoke test empaquetado repite ese self-test.
 
 El ataque individual está confirmado por el usuario. El ciclo de varios encuentros,
 su detector y las varias ventanas siguen pendientes de validación en el cliente real.
+Los informes incluyen las últimas 24 observaciones y sus contadores, alcance y
+perfil. Los tres perfiles guardan puestos, nombres, participación y prioridad de
+mercenarios; el ciclo sigue esperando turnos manuales.

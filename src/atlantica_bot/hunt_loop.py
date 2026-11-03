@@ -4,12 +4,15 @@ import math
 import queue
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 from .clients import ClientWindow
+from .combat import CombatDetector
 from .errors import DiagnosticError, SceneChanged
 from .ipc import BotLease, Cancellation
 from .native_action import try_attack
+from .profiles import BotProfile
 from .session import GameSession
 from .world import Candidate, GridPosition, Observation, WorldView, observe_scene, scan_world
 
@@ -22,6 +25,8 @@ def target_key(candidate: Candidate) -> tuple:
 class HuntEngine:
     pid: int
     creation_time: int
+    detector: CombatDetector
+    profile: BotProfile = field(default_factory=lambda: BotProfile.default(1))
     running: bool = True
     phase: str = "waiting_map"
     message: str = "Esperando mapa."
@@ -39,6 +44,19 @@ class HuntEngine:
     transient_reads: int = 0
     needs_reconnect: bool = False
     last_attack: dict = field(default_factory=dict)
+    observation_count: int = 0
+    scene_counts: dict[int, int] = field(default_factory=dict)
+    classification_counts: dict[str, int] = field(default_factory=dict)
+    observations: deque = field(default_factory=lambda: deque(maxlen=24))
+    started_at: float | None = None
+    battle_samples: int = 0
+    battle_active: bool = False
+    range_diagnostic: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.detector.matches(self.pid, self.creation_time):
+            raise DiagnosticError("Calibra el detector para esta instancia antes de iniciar.")
+        self.profile.validate()
 
     def stop(self, reason: str, *, reconnect: bool = False) -> None:
         self.running = False
@@ -50,25 +68,50 @@ class HuntEngine:
         """Return True only when a fresh world scan may select a new target."""
         if not self.running:
             return False
+        classification = self.detector.classify(observation)
+        if self.started_at is None:
+            self.started_at = now
+        self.observation_count += 1
+        self.scene_counts[observation.scene_code] = (
+            self.scene_counts.get(observation.scene_code, 0) + 1
+        )
+        self.classification_counts[classification] = (
+            self.classification_counts.get(classification, 0) + 1
+        )
+        self.observations.append(
+            {
+                "elapsed_seconds": round(now - self.started_at, 3),
+                "classification": classification,
+                **observation.summary(),
+            }
+        )
         if (observation.pid, observation.creation_time) != (self.pid, self.creation_time):
             self.stop("La instancia cambió; vuelve a conectar.", reconnect=True)
             return False
         if observation.native_active:
             self.stop("Se activó Auto Battle o caza nativa; bot detenido.")
             return False
-        if observation.scene_code == 1:
-            if self.phase != "battle":
+        if classification == "battle":
+            self.battle_samples += 1
+            if self.battle_samples < 2:
+                self.phase, self.message = "confirming_battle", "Comprobando la entrada en combate."
+                self.anchor = None
+                return False
+            if not self.battle_active:
                 self.battles += 1
+                self.battle_active = True
             if self.deadline is not None:
                 self.last_attack = {
                     **self.last_attack,
                     "battle_confirmed": True,
-                    "confirmation_scene": 1,
+                    "confirmation_scene": observation.scene_code,
+                    "confirmation_signal": self.detector.signal,
                 }
             self.deadline = None
             self.phase, self.message = "battle", "Combate: solicitudes en pausa; juega los turnos."
             self.anchor = None
             return False
+        self.battle_samples = 0
         if (
             observation.player is not None
             and self.map_id is not None
@@ -85,7 +128,7 @@ class HuntEngine:
             else:
                 self.phase, self.message = "waiting_battle", "Solicitud enviada; esperando combate."
             return False
-        if observation.scene_code != 2 or observation.player is None:
+        if classification != "map" or observation.player is None:
             self.phase, self.message = "waiting_map", "Esperando una escena de mapa estable."
             self.anchor = None
             return False
@@ -95,7 +138,7 @@ class HuntEngine:
         if position.map_id != self.map_id:
             self.stop("Cambió el mapa; bot detenido.")
             return False
-        if self.phase in ("battle", "waiting_map", "resuming"):
+        if self.phase in ("battle", "confirming_battle", "waiting_map", "resuming"):
             if self.anchor != position:
                 self.anchor = position
                 self.resume_at = now + 2
@@ -106,6 +149,7 @@ class HuntEngine:
             if now < self.resume_at or self.stable_samples < 2:
                 return False
             self.phase = "searching"
+            self.battle_active = False
         elif self.anchor != position:
             self.stop("El personaje se movió; pulsa Iniciar bot cuando esté quieto.")
             return False
@@ -126,6 +170,7 @@ class HuntEngine:
             self.stop("No se pudo validar el alcance nativo; bot detenido.", reconnect=True)
             return None
         self.cooldowns = {key: until for key, until in self.cooldowns.items() if until > now}
+        available = []
         for candidate in view.candidates:
             distance = candidate.distance_squared
             if (
@@ -135,13 +180,32 @@ class HuntEngine:
                 and len(candidate.identity) == 3
                 and target_key(candidate) not in self.cooldowns
             ):
-                self.phase, self.message = (
-                    "requesting",
-                    f"Solicitando ataque al objetivo {candidate.slot}.",
-                )
-                return candidate
-        self.message = "Sin mobs cercanos disponibles; esperando."
-        return None
+                available.append(candidate)
+        measured = [
+            candidate
+            for candidate in view.candidates
+            if candidate.distance_squared is not None
+            and math.isfinite(candidate.distance_squared)
+            and candidate.distance_squared >= 0
+        ]
+        nearest = min(measured, key=lambda candidate: candidate.distance_squared, default=None)
+        self.range_diagnostic = {
+            "limit_squared": limit,
+            "nearest_slot": nearest.slot if nearest else None,
+            "nearest_distance_squared": nearest.distance_squared if nearest else None,
+            "available_in_range": len(available),
+            "automatic_approach": False,
+        }
+        if not available:
+            self.message = (
+                "Los mobs están fuera de alcance. Para el bot y acércate antes de iniciar."
+                if nearest and nearest.distance_squared > limit
+                else "Sin mobs cercanos disponibles; esperando."
+            )
+            return None
+        candidate = min(available, key=lambda candidate: candidate.distance_squared)
+        self.phase, self.message = "requesting", f"Solicitando ataque al objetivo {candidate.slot}."
+        return candidate
 
     def record(self, candidate: Candidate, report: dict, now: float) -> None:
         if report.get("pid") != self.pid or report.get("slot") != candidate.slot:
@@ -153,7 +217,7 @@ class HuntEngine:
         self.next_scan = now + 1.5
         if code == 1:
             self.queued += 1
-            self.deadline = now + 10
+            self.deadline = now + 30
             self.cooldowns[target_key(candidate)] = now + 10
             self.phase, self.message = "waiting_battle", "Solicitud enviada; esperando combate."
         elif code in (2, 3, 6):
@@ -180,15 +244,30 @@ class HuntEngine:
             "transient_reads": self.transient_reads,
             "needs_reconnect": self.needs_reconnect,
             "last_attack": dict(self.last_attack),
+            "detector": self.detector.summary(),
+            "observation_count": self.observation_count,
+            "scene_counts": dict(self.scene_counts),
+            "classification_counts": dict(self.classification_counts),
+            "recent_observations": list(self.observations),
+            "range": dict(self.range_diagnostic),
+            "profile": self.profile.summary(),
         }
 
 
 class HuntWorker:
-    def __init__(self, session: GameSession, window: ClientWindow):
+    def __init__(
+        self,
+        session: GameSession,
+        window: ClientWindow,
+        detector: CombatDetector,
+        profile: BotProfile | None = None,
+    ):
         if session.creation_time is None or window.pid != session.process.pid:
             raise DiagnosticError("Conecta con una instancia de Windows válida antes de iniciar.")
         self.session, self.window = session, window
-        self.engine = HuntEngine(session.process.pid, session.creation_time)
+        self.engine = HuntEngine(
+            session.process.pid, session.creation_time, detector, profile or BotProfile.default(1)
+        )
         self.events: queue.Queue[dict] = queue.Queue(maxsize=20)
         self.stop_event = threading.Event()
         self.cancellation: Cancellation | None = None
@@ -254,7 +333,7 @@ class HuntWorker:
                         if consecutive_changes >= 3:
                             self.engine.stop("La escena no se estabiliza; bot detenido.")
                     self._publish()
-                    self.stop_event.wait(0.5)
+                    self.stop_event.wait(0.25 if self.engine.deadline is not None else 0.5)
                 if self.stop_event.is_set():
                     self.engine.stop("Bot detenido; no se enviarán más solicitudes.")
         except (DiagnosticError, OSError) as exc:

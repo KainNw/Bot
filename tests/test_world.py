@@ -140,6 +140,37 @@ def test_observer_does_not_read_map_actor_objects_during_battle(session):
     assert result.pid == session.process.pid and not result.native_active
 
 
+def test_observer_reads_local_context_even_when_scene_code_remains_two(session):
+    memory = session.system
+    actor = 0x30010000
+    memory.write(actor + 0x318, struct.pack("<i", 7))
+    memory.write(actor + 0x254, struct.pack("<i", 3))
+    result = observe_scene(session)
+    assert result.scene_code == 2
+    assert result.local.context_a == 7 and result.local.context_b == 3
+    assert result.summary()["local"]["context_a"] == 7
+
+
+def test_observer_rejects_local_context_changed_during_observation(session):
+    memory = session.system
+    address = 0x30010000 + 0x318
+
+    def change_context(read_address, size):
+        if read_address == address:
+            memory.write(address, struct.pack("<i", 7))
+
+    memory.after_read = change_context
+    with pytest.raises(DiagnosticError, match="cambió durante la observación"):
+        observe_scene(session)
+
+
+def test_optional_link_diagnostic_can_be_unavailable_without_losing_valid_context(session):
+    session.system.write(0x30010000 + 0x14, struct.pack("<I", 0x55550000))
+    result = observe_scene(session)
+    assert result.local.context_a == result.local.context_b == -1
+    assert result.local.linked_state is None
+
+
 def test_nonfinite_range_is_not_presented_as_attackable(session):
     session.system.write(0x045079EC, struct.pack("<f", float("nan")))
     assert scan_world(session).range_limit_squared is None
