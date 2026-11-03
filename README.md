@@ -243,7 +243,7 @@ También se puede compilar localmente en Windows:
 
 ```powershell
 uv sync --frozen --group build
-cmake -S native -B build/native -G "Visual Studio 17 2022" -A Win32
+cmake -S native -B build/native -A Win32
 cmake --build build/native --config Release
 ctest --test-dir build/native -C Release --output-on-failure
 uv run --frozen --group build pyinstaller --noconfirm --clean --onefile --windowed --noupx --name AtlanticaPanel --paths src --add-binary "build/native/Release/AtlanticaBridge.exe;native" --add-binary "build/native/Release/AtlanticaHook.dll;native" panel_caza.py
