@@ -13,6 +13,12 @@ Cambiar la selección desconecta los controles. Un visor de objetivos abierto pa
 otro cliente no cambia de destino: exige abrir un nuevo visor. Los resúmenes y
 exportaciones identifican el PID.
 
+Cada panel controla una instancia. Para ejecutar tres bots simultáneos, abre tres
+copias del panel y conecta cada una al PID de su juego. Activa **Ejecutar turnos del
+perfil** en cada panel que deba jugar las batallas. Mover un personaje no pausa los
+otros PIDs. En 0.12.1, caminar pone en pausa la búsqueda de esa instancia y la
+reanuda cuando queda quieta. Las entradas en batalla interrumpen esa pausa.
+
 En 0.4, mientras el trabajador esté activo, la selección queda bloqueada hasta que
 Parar bot termine. También se vincula el hilo de la ventana y se comprueba en cada
 solicitud. Un mutex por PID evita dos ciclos/controladores simultáneos del mismo
@@ -44,6 +50,9 @@ individual por PID impide dos pruebas simultáneas del panel sobre el mismo clie
 
 El usuario confirmó el inicio del ataque individual con Auto Battle apagado y una
 sola ventana. El ciclo 0.4 añade Iniciar bot/Parar bot usando la misma ruta y sin
-modificar marcadores. La prueba real con varios clientes continúa pendiente.
-Una solicitud encolada no demuestra por sí sola que empezó un combate. No hay
-movimiento ni turnos automáticos; véase [el ciclo](independent-hunt.md).
+modificar marcadores. El usuario ya empezó las pruebas con varias ventanas y reportó
+lag, recogida variable del NeoACA y pausas al caminar. La versión 0.12.1 mejora la
+recuperación y el diagnóstico; no se dispone de una captura del fallo con lag para
+confirmar su causa concreta. Una solicitud encolada no demuestra por sí sola que
+empezó un combate. La persecución nativa y los turnos opcionales se explican en
+[el ciclo](independent-hunt.md) y [los turnos](mercenary-turns.md).

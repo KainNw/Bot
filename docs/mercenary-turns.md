@@ -1,4 +1,4 @@
-# Turnos de mercenarios 0.12.0
+# Turnos de mercenarios 0.12.1
 
 El panel puede aplicar el perfil durante las batallas con Auto Battle apagado.
 Ordena una acción por mercenario y turno, siguiendo la prioridad configurada y
@@ -51,6 +51,13 @@ enemigo, no solicita la segunda acción.
 
 ## Disponibilidad, espera y parada
 
+La [recuperación de 0.12.1](recovery.md) prioriza el combate durante un desplazamiento,
+consulta el índice actual del contexto normal en lugar de fijarlo a cero y permite
+comprobar de nuevo los estados nativos 27–29, que retornan antes del envío. Son como
+máximo tres comprobaciones por miembro y turno, separadas por al menos 250 ms y una
+lectura nueva. Los envíos aceptados y los resultados inciertos conservan la política
+de no duplicar la orden.
+
 Desde 0.11.1, después de seleccionar al mercenario se releen de inmediato el turno,
 las unidades y la barra, y se puede pedir Q/W/E/R/T en esa misma iteración. Se elimina
 la pausa de un ciclo que separaba selección y magia; el registro de 0.11 mostraba
@@ -60,9 +67,11 @@ La revisión pasa a 100 ms cuando se espera la preparación del combate o una or
 propia; las solicitudes pendientes, los turnos enemigos posteriores y la espera sin
 enemigos conservan la frecuencia anterior. Cada iteración ejecuta como máximo dos
 llamadas: selección y acción, o dos selecciones si cambia la disponibilidad del plan.
-La primera acción encolada termina esa iteración. Las lecturas inestables conservan
-la pausa de recuperación anterior, para que el sondeo más frecuente no acorte la
-tolerancia a transiciones. Los tiempos de caza en el mapa no cambian.
+La primera acción encolada termina esa iteración. Desde 0.12.1, la carga inicial de
+enemigos y las lecturas transitorias de combate también pueden recuperarse a 100 ms.
+La tolerancia de lectura se mide en tiempo: con turnos automáticos, no se detiene
+tras solo tres intentos rápidos; permite hasta tres segundos de lecturas fallidas
+consecutivas. Los tiempos normales de caza en el mapa no cambian.
 
 El objetivo de adelantar Q es dejar más tiempo al robot NeoACA de la formación para
 recoger dentro del primer turno. El registro de 0.11.1 mostró 63 ms entre selección y
@@ -124,7 +133,7 @@ todavía requieren análisis. Tampoco se ha implementado la recogida automática
 
 ## Exportar el código de combate
 
-1. Abre el panel 0.12.0 y conecta con la ventana elegida.
+1. Abre el panel 0.12.1 y conecta con la ventana elegida.
 2. Mantén Auto Battle y caza nativa apagados.
 3. Entra en combate manualmente o con el ciclo de caza que ya funciona. El panel
    permite exportar en batalla. Para facilitar la captura, para el bot antes.

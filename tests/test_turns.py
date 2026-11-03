@@ -245,3 +245,43 @@ def test_wrong_response_operation_stops_without_consuming_member(turn_frame):
     trial = bot.next(turn_frame, 0)
     bot.record(trial, {"pid": 100, "operation": 8, "status": 32}, 0)
     assert not bot.running and not bot.ledger and bot.queued == 0
+
+
+@pytest.mark.parametrize("code", [27, 28, 29])
+def test_explicit_no_send_state_change_allows_bounded_fresh_recheck(turn_frame, code):
+    bot = engine(profile(magic={1: "Q"}))
+    trial = bot.next(turn_frame, 0)
+    reply(bot, trial, code)
+    assert bot.next(turn_frame, 0.1) is None
+    fresh_trial = bot.next(turn_frame, 0.3)
+    assert fresh_trial.action == "Q" and fresh_trial.source.member_slot == 1
+    reply(bot, fresh_trial, 32, now=0.4)
+    assert bot.next(turn_frame, 0.5) is None
+    assert bot.queued == 1 and bot.attempts == 2
+
+
+def test_repeated_native_not_ready_is_bounded_and_yields_to_next_member(turn_frame):
+    bot = engine(profile(magic={1: "Q"}))
+    for now in (0, 0.3, 0.6):
+        trial = bot.next(turn_frame, now)
+        assert trial.source.member_slot == 1
+        reply(bot, trial, 27, now=now)
+    assert bot.next(turn_frame, 0.9).source.member_slot == 2
+    assert bot.unready_attempts == {1: 3} and bot.queued == 0
+
+
+def test_initial_empty_unit_collection_is_loading_not_a_defeated_enemy_group(turn_frame):
+    bot = engine(profile(magic={1: "Q"}))
+    empty = replace(turn_frame, units=turn_frame.sources)
+    assert bot.next(empty, 0) is None
+    assert not bot.seen_enemy and "publique los enemigos" in bot.message
+    trial = bot.next(turn_frame, 0.2)
+    assert trial.action == "Q" and bot.seen_enemy
+    reply(bot, trial, 32, now=0.3)
+    assert bot.next(empty, 1) is None
+    bot.note_map(2)
+    summary = bot.summary()
+    assert summary["frame"]["enemy_count"] == 0
+    assert summary["timing_seconds"]["first_order_queued"] == 0.3
+    assert summary["timing_seconds"]["first_no_enemies_after_seen"] == 1
+    assert summary["timing_seconds"]["first_map_observed"] == 2

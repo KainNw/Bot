@@ -3,7 +3,12 @@ from __future__ import annotations
 import struct
 from dataclasses import asdict, dataclass
 
-from .battle_context import MEMBER_STRIDE, NormalBattleContext, read_normal_battle
+from .battle_context import (
+    CONTEXT_DIAGNOSTIC_LIMIT,
+    MEMBER_STRIDE,
+    NormalBattleContext,
+    read_normal_battle,
+)
 from .errors import DiagnosticError, SceneChanged
 from .session import GameSession
 from .world import OWNER_ADDRESS, Reader
@@ -115,7 +120,7 @@ class BattleTrial:
     def validate(self) -> None:
         if (
             self.source not in self.frame.sources
-            or self.frame.context.index != 0
+            or not 0 <= self.frame.context.index < CONTEXT_DIAGNOSTIC_LIMIT
             or self.frame.phase != 3
         ):
             raise DiagnosticError("Actualiza el combate y elige un mercenario y enemigo vivos.")
@@ -210,7 +215,10 @@ def read_battle_frame(session: GameSession) -> BattleFrame:
     """Read the normal client's bounded unit collection; execute no client functions."""
     context = read_normal_battle(session)
     reader = Reader(session)
-    if context.index != 0 or context.method_table_candidate != 0x042D8AA4:
+    if (
+        not 0 <= context.index < CONTEXT_DIAGNOSTIC_LIMIT
+        or context.method_table_candidate != 0x042D8AA4
+    ):
         raise DiagnosticError("La prueba requiere el gestor de combate normal identificado.")
     if (
         reader.read(0x005A4519, len(UNIT_LOOKUP_ANCHOR)) != UNIT_LOOKUP_ANCHOR

@@ -79,7 +79,11 @@ antes de confirmar batalla. Si observa combate durante la persecución, pausa si
 fabricar una confirmación de ataque enviado. La propiedad del destino se retira
 tras dos muestras, para tolerar una muestra transitoria.
 
-Un destino o personaje cambiado fuera del bot detiene la ejecución sin sustituirlo.
+Desde 0.12.1, un destino sustituido por un movimiento manual pone la búsqueda en
+pausa y libera la referencia del recorrido anterior, sin cancelar la ruta nueva.
+Tras dos segundos quieto, reanuda desde la nueva posición y centra allí el radio.
+Un personaje/instancia cambiado sigue deteniendo la ejecución. Los estados de
+movimiento que no pueden identificarse no se sustituyen por una ruta del bot.
 La parada nativa utiliza un canal de cancelación nuevo después de cancelar el de
 la ejecución. Compara objeto, mapa y los tres floats del destino dentro del cliente
 antes de solicitar el punto actual. El estado `23` solo confirma que se copió esa
@@ -93,7 +97,8 @@ ataque ya aceptado ni repite una parada incierta.
 Se conservan las comprobaciones de hash, PID, creación, HWND, hilo, actor, índice,
 identidad, mapa, estado, alcance y cola. Un mutex por PID abarca la ejecución y
 su limpieza. No usa entradas globales del teclado/ratón ni controles de otras
-ventanas. La prueba real con varios clientes sigue pendiente.
+ventanas. El usuario inició pruebas con varias ventanas y comunicó incidencias de
+lag y movimiento; la [recuperación de 0.12.1](recovery.md) incorpora esos casos.
 
 En 0.7 el protocolo helper/DLL pasó a versión 5, mensaje de 312 bytes, con operaciones
 `NativeAttack=4` y `StopNativePursuit=5`. La respuesta incluye un descriptor

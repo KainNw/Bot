@@ -248,7 +248,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Label(frame, textvariable=self.detail, wraplength=680).pack(anchor="w", pady=8)
             ttk.Label(
                 frame,
-                text="Para moverte, pulsa Parar bot y espera a que se detenga.\n"
+                text="Caminar manualmente pausa la búsqueda y la reanuda al quedar quieto.\n"
                 "Activa Ejecutar turnos para aplicar el perfil durante el combate.",
                 wraplength=680,
             ).pack(anchor="w", pady=10)

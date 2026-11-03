@@ -69,6 +69,23 @@ que ya publica el trabajador, sin seleccionar unidades ni añadir lecturas del j
 Las columnas de maná, máximos y experiencia de la imagen de referencia requieren
 identificar sus lecturas antes de incorporarlas.
 
+## Recuperación y movimiento 0.12.1
+
+El usuario reportó que un clic de movimiento detenía el bot, que a veces no respondía
+al ser atacado durante lag y que la recogida del NeoACA no siempre terminaba en el
+primer turno al usar varias ventanas. No pudo reproducir el caso con lag para copiarlo.
+
+Se cambia la parada por una pausa de búsqueda al caminar, con reanudación y nuevo
+centro tras dos segundos quieto. La batalla se procesa antes que los recorridos. El
+ejecutor usa el índice de contexto normal publicado por el personaje, y consulta
+de nuevo los rechazos explícitos sin envío con un límite por miembro/turno. La carga
+de enemigos y recuperación de lecturas usan sondeo rápido con tolerancia por tiempo.
+
+Se añaden unidades, grupo/turno, origen de batalla, errores recuperados y tiempos
+entre preparación, solicitud, ausencia de enemigos y mapa. La recogida sigue siendo
+del cliente: no se ha modificado el temporizador interno ni enviado una orden al
+NeoACA. Falta comprobar estas mejoras de recuperación y la recogida variable en el juego.
+
 ## Velocidad — etapa posterior
 
 Se solicitó estudiar una velocidad configurable durante batallas y restaurarla al

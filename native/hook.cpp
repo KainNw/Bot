@@ -243,11 +243,12 @@ static uint32_t InvokeBattle(uint32_t owner, uint32_t world, uint32_t player,
     if (!BattleSupported()) return Unsupported;
     const auto manager = Read<uint32_t>(owner + 0x91c);
     const auto client = Read<uint32_t>(owner + 0x16358);
-    if (Read<int>(player + 0x318) != 0 || Read<int>(player + 0x254) >= 0
+    const int context_index = Read<int>(player + 0x318);
+    if (context_index < 0 || context_index >= 128 || Read<int>(player + 0x254) >= 0
         || !manager || manager != cmd->battle_manager || !client || client != cmd->battle_client
         || Read<uint32_t>(manager) != 0x042d8aa4 || Read<uint32_t>(manager + 0x25e0) != client
         || Read<int>(manager + 0x234c) != 3) return BattleNotReady;
-    const auto context = Read<uint32_t>(manager + 8);
+    const auto context = Read<uint32_t>(manager + 8 + static_cast<uint32_t>(context_index) * 4);
     if (!context || context != cmd->battle_context
         || Read<uint32_t>(context + 0x6c74) != cmd->turn_number
         || Read<uint32_t>(context + 0x6c60) != cmd->turn_tick) return BattleTurnChanged;

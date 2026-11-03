@@ -159,6 +159,28 @@ def test_other_group_turn_is_read_but_cannot_create_an_attack_trial(battle_memor
         BattleTrial(view, view.sources[0], view.enemies[0]).validate()
 
 
+@pytest.mark.parametrize("index", [1, 127])
+def test_verified_normal_collection_uses_actual_context_index(battle_memory, monkeypatch, index):
+    session, _ = battle_memory
+    frame = read_battle_frame(session)
+    context = replace(frame.context, index=index)
+    monkeypatch.setattr("atlantica_bot.battle.read_normal_battle", lambda _: context)
+    actual = read_battle_frame(session)
+    trial = BattleTrial(actual, actual.sources[0], actual.enemies[0])
+    trial.validate()
+    assert actual.context.index == index
+    assert trial.arguments()["battle-context"] == context.context
+
+
+@pytest.mark.parametrize("index", [-1, 128])
+def test_out_of_range_normal_context_cannot_be_dispatched(battle_memory, index):
+    session, _ = battle_memory
+    frame = read_battle_frame(session)
+    bad = replace(frame, context=replace(frame.context, index=index))
+    with pytest.raises(DiagnosticError):
+        BattleTrial(bad, bad.sources[0], bad.enemies[0]).validate()
+
+
 def test_an_ally_can_never_be_submitted_as_the_enemy(battle_memory):
     session, _ = battle_memory
     view = read_battle_frame(session)

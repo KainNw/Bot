@@ -120,6 +120,16 @@ def test_reused_context_pointer_is_not_reported_as_a_coherent_snapshot(normal):
         read_normal_battle(session)
 
 
+@pytest.mark.parametrize("index", [1, 127])
+def test_context_pointer_follows_local_index_instead_of_the_first_entry(normal, index):
+    session, memory = normal
+    memory.word(0x500318, index)
+    memory.word(0x600008, 0)  # A stale/empty first context is not the current battle.
+    memory.word(0x600008 + index * 4, 0x700000)
+    context = read_normal_battle(session)
+    assert context.index == index and context.context == 0x700000
+
+
 def test_member_data_must_belong_to_local_actor_and_native_member_collection(normal):
     session, memory = normal
     memory.word(0x500030, 0x10215BC)

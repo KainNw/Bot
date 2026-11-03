@@ -286,7 +286,11 @@ def test_no_progress_or_total_timeout_requests_stop_without_attacking(elapsed, r
 def test_changed_route_is_not_followed_or_replaced(field, value):
     engine = moving_engine()
     assert not engine.observe(observation(ORIGIN, replace(ROUTE, **{field: value})), 3)
-    assert not engine.running and engine.attempts == 0
+    assert engine.attempts == 0
+    if field == "player_address":
+        assert not engine.running and engine.needs_reconnect
+    else:
+        assert engine.running and engine.manual_active and engine.route is None
 
 
 def test_target_disappearance_stops_before_selecting_a_different_target():
@@ -306,7 +310,10 @@ def test_leaving_search_area_or_entering_battle_during_approach_never_sends_atta
     assert not engine.running and engine.attempts == 0
     engine = moving_engine()
     assert not engine.observe(observation(ORIGIN, ROUTE, battle=True), 3)
-    assert not engine.running and engine.needs_reconnect and engine.attempts == 0
+    assert engine.running and engine.phase == "confirming_battle" and engine.route is not None
+    assert not engine.observe(observation(ORIGIN, ROUTE, battle=True), 3.25)
+    assert engine.running and not engine.needs_reconnect and engine.attempts == 0
+    assert engine.phase == "battle" and engine.route is None and engine.battles == 1
 
 
 def test_invalid_or_failed_stop_prevents_a_new_attack():
@@ -319,7 +326,8 @@ def test_invalid_or_failed_stop_prevents_a_new_attack():
 def test_starting_with_a_foreign_route_does_not_attack_or_replace_it():
     engine = HuntEngine(100, 777, DETECTOR, approach=ApproachSettings(True))
     assert not engine.observe(observation(ORIGIN, ROUTE), 0)
-    assert not engine.running and engine.route is None and engine.attempts == engine.moves == 0
+    assert engine.running and engine.manual_active and engine.route is None
+    assert engine.attempts == engine.moves == 0
 
 
 def test_unknown_movement_flag_is_reported_and_only_fresh_route_can_be_selected():
@@ -339,7 +347,7 @@ def test_unknown_movement_flag_does_not_prove_a_foreign_route_finished():
     changed = replace(IDLE, tick=9999, moving=None, moving_raw=255)
     assert not engine.observe(observation(ORIGIN, changed), 3)
     assert not engine.running and engine.move_reason != "route_finished"
-    assert engine.route == ROUTE
+    assert engine.route is None  # The old ownership is released without stopping the foreign route.
 
 
 def test_route_revision_rejection_does_not_register_a_movement_or_an_attack():

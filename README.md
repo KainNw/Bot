@@ -1,7 +1,12 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.12.0** añade **Vista general**, una ventana
+con Auto Battle apagado. La versión **0.12.1** pausa la búsqueda al caminar manualmente
+y la reanuda tras dos segundos quieto, tomando el punto actual como centro del radio.
+Prioriza las batallas que interrumpen un desplazamiento y mejora la recuperación de
+lecturas durante lag y carga de enemigos. Consulta [movimiento y recuperación](docs/recovery.md).
+
+Incluye **Vista general**, una ventana
 flotante oscura con **Main (1)** fijo y **Mercenarios 2–9**. Muestra vida actual en
 combate, presencia, habilitación en el perfil, prioridad y acciones, con controles
 para iniciar, parar y configurar. Se abre desde **Control** o **Mercenarios**.
@@ -104,8 +109,9 @@ están en [prueba de básico](docs/basic-battle-trial.md) y
 El radio va de 5 a 120 casillas alrededor del inicio de esa ejecución, con valor
 inicial 60. Si lo desmarcas, conserva el ciclo cercano. El panel no utiliza las
 rutas por rejilla del modo anterior. **Parar bot** cancela nuevas órdenes y solicita
-parar una persecución que todavía pueda identificar como propia. Espera a que el
-personaje se detenga antes de moverlo. Una orden de ataque ya aceptada puede terminar
+parar una persecución que todavía pueda identificar como propia. Un clic de movimiento
+pausa la búsqueda hasta que el personaje queda quieto; entonces centra el radio en
+su nueva posición. Una orden de ataque ya aceptada puede terminar
 en combate. Detalles: [ataque nativo](docs/native-attack.md). El análisis del
 [acercamiento anterior](docs/native-approach.md) queda como referencia de 0.6.
 
@@ -149,7 +155,8 @@ py -3 panel_caza.py
    cuando empiece la batalla. Pulsa **Iniciar bot**: busca un mob y solicita persecución o ataque según el
    alcance nativo. El cliente ejecuta el desplazamiento.
    El perfil se aplica en orden durante la batalla; sin esa opción, juega manualmente.
-6. Al regresar al mapa, el bot vuelve a buscar. Para moverte o cambiar de cliente,
+6. Al regresar al mapa, el bot vuelve a buscar. Caminar manualmente pausa esa búsqueda
+   y la reanuda tras dos segundos quieto. Para cambiar de cliente o terminar la ejecución,
    pulsa **Parar bot** y espera el estado detenido.
 
 **Copiar estado del bot** copia el PID, fase, contadores, detector, perfil, alcance,
@@ -187,8 +194,9 @@ a sus 13 entradas comprobadas, antes de una cadena UTF-16 que parecía código p
 su valor numérico. Detalles: [prueba de básico en combate](docs/basic-battle-trial.md).
 
 La selección de cliente queda bloqueada mientras termina el trabajador. Si se cierra
-el juego, se detiene; abrir otro cliente exige Conectar. Cambios de mapa, movimiento
-manual mientras busca, activación de Auto Battle o errores inciertos detienen el ciclo.
+el juego, se detiene; abrir otro cliente exige Conectar. Cambios de mapa,
+activación de Auto Battle o errores inciertos detienen el ciclo. El movimiento manual
+pone la búsqueda en pausa; una entrada en combate tiene prioridad sobre esa pausa.
 Cerrar el panel solicita parar y espera al trabajador. Una solicitud ya encolada
 puede completarse; Parar bot no cancela un combate que ya empezó.
 

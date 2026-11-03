@@ -72,6 +72,11 @@ class TurnEngine:
         self.skipped = set()
         self.rejected = set()
         self.fallback = set()
+        self.deferred_until = {}
+        self.unready_attempts = {}
+        self.seen_enemy = False
+        self.timeline = {}
+        self.observed_at: float | None = None
         self.pending: PendingTurn | None = None
         self.inflight: BattleTrial | None = None
         self.last_frame: BattleFrame | None = None
@@ -93,6 +98,11 @@ class TurnEngine:
             self.skipped.clear()
             self.rejected.clear()
             self.fallback.clear()
+            self.deferred_until.clear()
+            self.unready_attempts.clear()
+            self.seen_enemy = False
+            self.timeline.clear()
+            self.observed_at = None
             self.orders.clear()
             self.pending = self.inflight = None
 
@@ -106,6 +116,27 @@ class TurnEngine:
         self.running = False
         self.needs_reconnect |= uncertain
         self.message = message
+
+    def _mark(self, event: str, now: float) -> None:
+        self.observed_at = now
+        self.timeline.setdefault(event, now)
+
+    def note_map(self, now: float) -> None:
+        if self.active and self.timeline:
+            self._mark("first_map_observed", now)
+
+    def _defer_unready(self, trial: BattleTrial, now: float) -> None:
+        # InvokeBattle returns 27–29 before its send path. Other outcomes never use this retry.
+        slot = trial.source.member_slot
+        count = self.unready_attempts.get(slot, 0) + 1
+        self.unready_attempts[slot] = count
+        if count >= 3:
+            self.skipped.add(slot)
+            message = "No disponible tras tres comprobaciones sin envío; omitido en este turno"
+        else:
+            self.deferred_until[slot] = now + 0.25
+            message = "Cliente no listo; esperando una lectura nueva antes de solicitar otra vez"
+        self._order(slot, trial.action, message, now)
 
     def _order(self, slot: int, action: str, message: str, now: float) -> None:
         value = {"slot": slot, "action": action, "message": message, "time": round(now, 3)}
@@ -182,6 +213,7 @@ class TurnEngine:
             self.stop("La lectura de turnos pertenece a otra instancia.", uncertain=True)
             return None
         self.last_frame = frame
+        self._mark("first_frame", now)
         prefix = (
             self.pid,
             self.creation_time,
@@ -209,11 +241,22 @@ class TurnEngine:
             self.skipped.clear()
             self.rejected.clear()
             self.fallback.clear()
+            self.deferred_until.clear()
+            self.unready_attempts.clear()
+        if frame.own_turn:
+            self._mark("first_own_turn", now)
+        if frame.enemies:
+            self.seen_enemy = True
+            self._mark("first_enemies", now)
         if not frame.enemies:
             if self.pending is not None:
                 self.observed += 1
             self.pending = None
-            self.message = "Sin enemigos vivos; esperando el final de la batalla."
+            if self.seen_enemy:
+                self._mark("first_no_enemies_after_seen", now)
+                self.message = "Sin enemigos vivos; esperando el final de la batalla."
+            else:
+                self.message = "Esperando que el cliente publique los enemigos del combate."
             return None
         if self.pending is not None and not self._observe_pending(frame, now):
             return None
@@ -233,6 +276,9 @@ class TurnEngine:
                 continue
             if (*prefix, plan.slot) in self.ledger:
                 continue
+            if now < self.deferred_until.get(plan.slot, 0):
+                self.message = f"{member_label(plan.slot)}: esperando que el cliente esté listo."
+                return None
             if source.action_state != 1:
                 self.message = f"{member_label(plan.slot)}: esperando que termine su animación."
                 return None
@@ -284,6 +330,7 @@ class TurnEngine:
             return
         self.inflight = None
         self.last_result = dict(report)
+        self.observed_at = now
         code = report["status"]
         if (
             code == 31
@@ -296,12 +343,14 @@ class TurnEngine:
             self.stop("La respuesta no corresponde al tipo de orden.", uncertain=True)
             return
         if code == 31:
+            self._mark("first_selection", now)
             self.selections += 1
             self._order(trial.source.member_slot, "select", "Seleccionado; leyendo su barra", now)
             return
         self.attempts += 1
         slot = trial.source.member_slot
         if code in (26, 32):
+            self._mark("first_order_queued", now)
             self.queued += 1
             self.consumed.add(slot)
             self.ledger.add(trial.key())
@@ -322,12 +371,9 @@ class TurnEngine:
                 self.skipped.add(slot)
             self._order(slot, trial.action, "Magia rechazada sin envío", now)
         elif code == 27:
-            self.skipped.add(slot)
-            self._order(slot, trial.action, "No disponible para actuar en este turno", now)
+            self._defer_unready(trial, now)
         elif code in (28, 29):
-            if trial.target is not None:
-                self.rejected.add((slot, trial.action, unit_key(trial.target)))
-            self.message = "El turno o la unidad cambiaron; leyendo otra vez."
+            self._defer_unready(trial, now)
         elif code == 33:
             self.stop("La selección del juego cambió; bot detenido para revisar el equipo.")
         elif code == 13:
@@ -348,6 +394,32 @@ class TurnEngine:
             "observed_changes": self.observed,
             "attempts": self.attempts,
             "selections": self.selections,
+            "unready_attempts": dict(self.unready_attempts),
+            "seen_enemy": self.seen_enemy,
+            "timing_seconds": {
+                key: round(value - self.timeline["first_frame"], 3)
+                for key, value in self.timeline.items()
+            }
+            if self.timeline
+            else {},
+            "last_observed_seconds": round(self.observed_at - self.timeline["first_frame"], 3)
+            if self.timeline and self.observed_at is not None
+            else None,
+            "frame": {
+                "phase": self.last_frame.phase,
+                "context_index": self.last_frame.context.index,
+                "turn_number": self.last_frame.turn_number,
+                "turn_tick": self.last_frame.turn_tick,
+                "turn_group": self.last_frame.turn_group,
+                "local_group": self.last_frame.local_group,
+                "own_turn": self.last_frame.own_turn,
+                "enemy_count": len(self.last_frame.enemies),
+                "selected_unit": self.last_frame.selected_unit,
+                "magic_error": self.last_frame.magic_error,
+                "units": [asdict(unit) for unit in self.last_frame.units],
+            }
+            if self.last_frame
+            else None,
             "opening_turn": self.opening_turn,
             "magic_first_turn_only": self.profile.magic_first_turn_only,
             "orders": dict(self.orders),

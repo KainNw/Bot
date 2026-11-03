@@ -1,4 +1,4 @@
-# Vista general 0.12.0
+# Vista general 0.12.1
 
 **Vista general** abre una ventana flotante oscura desde **Control** o **Mercenarios**.
 Se inspira en la distribución de la imagen aportada por el usuario y muestra los
@@ -40,6 +40,9 @@ vida ya comprobados y no asigna el nombre de maná a un campo todavía sin valid
 El selector de perfil, su editor y la opción de turnos quedan bloqueados durante
 la ejecución. La habilitación de Iniciar/Parar coincide con la del panel principal.
 Cerrar esta vista conserva el panel y el bot; utiliza **Parar bot** para detenerlo.
+Caminar en el juego pausa la búsqueda y la reanuda tras dos segundos quieto; una
+batalla tiene prioridad sobre el movimiento. **Copiar estado** incluye desde 0.12.1
+los estados de recuperación, las unidades, grupo/turno y tiempos de la batalla.
 Solo se abre una vista general: el botón recupera la existente, o crea otra si la
 cerraste. Cambiar de cliente o desconectar limpia la vida y los datos del anterior.
 

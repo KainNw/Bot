@@ -136,7 +136,7 @@ def test_changing_bar_defers_cast_until_a_fresh_coherent_read(combat_worker):
         worker._iteration()
     assert [t.operation for t in state.calls] == [7]
     assert worker.turns.inflight is None and worker.turns.queued == 0
-    assert worker._poll_delay(transient_read=True) == 0.5
+    assert worker._poll_delay() == 0.1
     state.unstable = False
     worker._iteration()
     assert [t.operation for t in state.calls] == [7, 8]
@@ -186,6 +186,8 @@ def test_fast_polling_covers_turn_setup_and_readiness_but_not_animations_or_vict
     assert worker._poll_delay() == 0.1
     worker.turns.last_frame = replace(state.frame, turn_number=0xFFFFFFFF)
     assert worker._poll_delay() == 0.1
+    worker.turns.last_frame = replace(state.frame, units=state.frame.sources)
+    assert worker._poll_delay() == 0.1  # Initial enemy publication is still loading.
     worker._iteration()
     assert worker._poll_delay() == 0.5  # A queued action is still pending.
     worker.turns.pending = None
@@ -212,9 +214,9 @@ def test_world_polling_intervals_are_preserved(combat_worker, phase, deadline, d
     assert worker._poll_delay() == delay
 
 
-def test_manual_turn_mode_and_transient_read_retries_preserve_previous_intervals(combat_worker):
+def test_manual_turn_mode_preserves_previous_intervals(combat_worker):
     worker, _ = combat_worker
-    assert worker._poll_delay(transient_read=True) == 0.5
+    assert worker._poll_delay() == 0.1
     worker.turns = None
     assert worker._poll_delay() == 0.5
     worker.engine.deadline = 20

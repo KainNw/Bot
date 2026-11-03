@@ -206,10 +206,14 @@ def test_instance_native_mode_and_map_changes_stop_the_run(changed):
     assert engine.attempts == 0
 
 
-def test_manual_movement_stops_ready_bot():
+def test_manual_movement_pauses_and_resumes_ready_bot_from_new_position():
     engine = ready_engine()
-    assert not engine.observe(observation(player=GridPosition(52, 194, 340)), 3)
-    assert not engine.running
+    moved = GridPosition(52, 194, 340)
+    assert not engine.observe(observation(player=moved), 3)
+    assert engine.running and engine.manual_active and engine.phase == "manual_movement"
+    assert not engine.observe(observation(player=moved), 4)
+    assert engine.observe(observation(player=moved), 5)
+    assert not engine.manual_active and engine.origin == moved and engine.attempts == 0
 
 
 def test_rejected_target_cooldown_allows_a_different_nearby_mob():
@@ -282,7 +286,7 @@ def test_stop_cancels_inflight_worker_and_no_second_request_is_sent(monkeypatch)
     monkeypatch.setattr("atlantica_bot.hunt_loop.time.monotonic", lambda: next(ticks))
     monkeypatch.setattr("atlantica_bot.hunt_loop.BotLease", lambda pid: nullcontext())
     monkeypatch.setattr("atlantica_bot.hunt_loop.Cancellation", Signal)
-    monkeypatch.setattr("atlantica_bot.hunt_loop.observe_scene", lambda session: observation())
+    monkeypatch.setattr("atlantica_bot.hunt_loop.observe_scene", lambda *a, **kw: observation())
     monkeypatch.setattr("atlantica_bot.hunt_loop.scan_world", lambda session: view(NEAR))
 
     def send(session, window, candidate, *, cancellation):

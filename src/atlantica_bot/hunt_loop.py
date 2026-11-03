@@ -123,6 +123,11 @@ class HuntEngine:
     native_failures: int = 0
     last_native_request: dict = field(default_factory=dict)
     last_native_stop: dict = field(default_factory=dict)
+    manual_active: bool = False
+    manual_pauses: int = 0
+    last_manual_reason: str = ""
+    battle_entry: dict = field(default_factory=dict)
+    last_read_error: dict = field(default_factory=dict)
 
     def _event(self, kind: str, now: float | None = None, **data) -> None:
         if now is not None:
@@ -187,11 +192,6 @@ class HuntEngine:
         if observation.native_active:
             self.stop("Se activó Auto Battle o caza nativa; bot detenido.")
             return False
-        if self.pursuit is not None and classification != "battle":
-            self.battle_samples = 0
-            return self._observe_native_pursuit(observation, classification, now)
-        if self.route is not None:
-            return self._observe_movement(observation, classification, now)
         if classification == "battle":
             self.battle_samples += 1
             if self.battle_samples < 2:
@@ -199,6 +199,14 @@ class HuntEngine:
                 self.anchor = None
                 return False
             self.pending_pursuit = None
+            if self.route is not None:
+                self._event(
+                    "battle_during_route",
+                    now,
+                    target=asdict(self.move_target) if self.move_target else None,
+                )
+                self.route = self.move_target = None
+                self.arrival_target, self.verify_arrival = None, False
             if self.pursuit is not None:
                 self._event("battle_during_native_pursuit", now, target=asdict(self.pursuit_target))
                 self.cooldowns[target_key(self.pursuit_target)] = now + 30
@@ -206,6 +214,11 @@ class HuntEngine:
             if not self.battle_active:
                 self.battles += 1
                 self.battle_active = True
+                self.battle_entry = {
+                    "source": "bot_request" if self.deadline is not None else "external",
+                    "observation": observation.summary(),
+                }
+                self._event("battle_entered", now, source=self.battle_entry["source"])
             if self.deadline is not None:
                 if self.pending_target is not None:
                     self.engaged_targets[self.pending_target.identity] = self.pending_target.slot
@@ -223,10 +236,26 @@ class HuntEngine:
                 )
             self.deadline = None
             self.pending_target = None
-            self.phase, self.message = "battle", "Combate: solicitudes en pausa; juega los turnos."
+            self.phase = "battle"
+            self.message = (
+                "Combate: preparando las órdenes del perfil."
+                if self.execute_turns
+                else "Combate: Ejecutar turnos está desactivado; juega los turnos manualmente."
+            )
             self.anchor = None
             return False
         self.battle_samples = 0
+        if classification == "unknown":
+            self.phase, self.message = (
+                "waiting_map",
+                "Esperando datos de escena después del cambio.",
+            )
+            self.anchor = None
+            return False
+        if self.pursuit is not None:
+            return self._observe_native_pursuit(observation, classification, now)
+        if self.route is not None:
+            return self._observe_movement(observation, classification, now)
         if (
             observation.player is not None
             and self.map_id is not None
@@ -257,19 +286,23 @@ class HuntEngine:
         if self.uses_radius and observation.world_position is None:
             self.stop("No se pudo comprobar la posición 3D del personaje.", reconnect=True)
             return False
-        if (
-            self.uses_radius
-            and observation.navigation is not None
-            and observation.navigation.active
-        ):
-            self.stop("Ya hay una ruta activa fuera del bot; detén al personaje antes de iniciar.")
-            return False
         if self.map_id is None:
             self.map_id = position.map_id
             self.origin = position
         if position.map_id != self.map_id:
             self.stop("Cambió el mapa; bot detenido.")
             return False
+        navigation = observation.navigation
+        walking = navigation is not None and (
+            navigation.active is True or navigation.moving is True
+        )
+        moved = self.phase == "searching" and (
+            self.anchor != position
+            or self.uses_radius
+            and not same_world_position(self.anchor_world_position, observation.world_position)
+        )
+        if self.manual_active or walking or moved:
+            return self._observe_manual_movement(observation, now, walking=walking)
         if (
             self.uses_radius
             and self.origin is not None
@@ -297,12 +330,64 @@ class HuntEngine:
             self.uses_radius
             and not same_world_position(self.anchor_world_position, observation.world_position)
         ):
-            self.stop("El personaje se movió; pulsa Iniciar bot cuando esté quieto.")
-            return False
+            return self._observe_manual_movement(observation, now)
         if now < self.next_scan:
             return False
         self.next_scan = now + 1
         self.phase, self.message = "searching", "Buscando mobs cercanos."
+        return True
+
+    def _observe_manual_movement(
+        self,
+        observation: Observation,
+        now: float,
+        *,
+        walking: bool = False,
+        reason: str = "manual_movement",
+    ) -> bool:
+        position = observation.player
+        if position is None or self.map_id is not None and position.map_id != self.map_id:
+            self.stop("Cambió el mapa durante el movimiento manual; bot detenido.")
+            return False
+        if not self.manual_active:
+            self.manual_active = True
+            self.manual_pauses += 1
+            self.last_manual_reason = reason
+            self._event(
+                "manual_movement_paused",
+                now,
+                reason=reason,
+                player=asdict(position) if position else None,
+            )
+            self.resume_at = now + 2
+            self.stable_samples = 0
+            self.arrival_target, self.verify_arrival = None, False
+        changed = (
+            self.anchor != position
+            or self.uses_radius
+            and not same_world_position(self.anchor_world_position, observation.world_position)
+        )
+        self.anchor, self.anchor_world_position = position, observation.world_position
+        if walking or changed:
+            self.resume_at = now + 2
+            self.stable_samples = 0
+        else:
+            self.stable_samples += 1
+        if now < self.resume_at or self.stable_samples < 2:
+            self.phase, self.message = (
+                "manual_movement",
+                "Movimiento manual: búsqueda en pausa hasta quedar quieto.",
+            )
+            return False
+        self.manual_active = False
+        self.origin = position
+        self.battle_active = False
+        self.next_scan = now + 1
+        self.phase, self.message = (
+            "searching",
+            "Movimiento terminado; buscando desde el punto actual.",
+        )
+        self._event("manual_movement_resumed", now, origin=asdict(position))
         return True
 
     def select(self, view: WorldView, now: float) -> Candidate | None:
@@ -493,16 +578,15 @@ class HuntEngine:
         if classification != "map" or position is None or observation.world_position is None:
             self.stop("Cambió el estado durante la persecución nativa.", reconnect=True)
             return False
-        if (
-            navigation is None
-            or navigation.player_address != self.pursuit.player_address
-            or observation.native_goal != self.pursuit.world_goal
-            or navigation.active
-        ):
+        if navigation is None or navigation.player_address != self.pursuit.player_address:
+            self.stop("Cambió el personaje de la persecución; vuelve a conectar.", reconnect=True)
+            return False
+        if observation.native_goal != self.pursuit.world_goal or navigation.active:
             self._event("native_pursuit_ownership_lost", now, pursuit=self.pursuit.summary())
             self.pursuit = self.pursuit_target = None
-            self.stop("El destino cambió fuera del bot; detenido sin modificarlo.")
-            return False
+            return self._observe_manual_movement(
+                observation, now, walking=True, reason="native_goal_overridden"
+            )
         if self.origin is None or not self.approach.contains(self.origin, position):
             self.pursuit_reason = "outside_area"
         elif now - self.pursuit_started >= self.approach.timeout:
@@ -647,8 +731,15 @@ class HuntEngine:
             if navigation.active is False and navigation.moving is False:
                 self.move_reason = "route_finished"
             else:
-                self.stop("El movimiento cambió fuera del bot; detenido sin sustituirlo.")
-                return False
+                self.route = self.move_target = None
+                if navigation.active is None or navigation.moving is None:
+                    self.stop(
+                        "El estado del movimiento externo no está identificado; bot detenido."
+                    )
+                    return False
+                return self._observe_manual_movement(
+                    observation, now, walking=True, reason="route_overridden"
+                )
         elif navigation.active is False and navigation.moving is False:
             self.move_reason = "route_finished"
         elif now - self.move_started >= self.approach.timeout:
@@ -888,6 +979,15 @@ class HuntEngine:
             ],
             "profile": self.profile.summary(),
             "combat": dict(self.combat),
+            "battle_entry": dict(self.battle_entry),
+            "last_read_error": dict(self.last_read_error),
+            "manual_control": {
+                "active": self.manual_active,
+                "pauses": self.manual_pauses,
+                "last_reason": self.last_manual_reason or None,
+                "resume_stable_seconds": 2,
+                "recenter_after_moving": True,
+            },
             "approach": {
                 **self.approach.summary(),
                 "origin": {"map_id": self.origin.map_id, "x": self.origin.x, "y": self.origin.y}
@@ -978,10 +1078,9 @@ class HuntWorker:
                 pass
         self.events.put_nowait(report)
 
-    def _poll_delay(self, *, transient_read: bool = False) -> float:
+    def _poll_delay(self) -> float:
         if (
-            not transient_read
-            and self.turns is not None
+            self.turns is not None
             and self.engine.phase in ("confirming_battle", "battle")
             and self.turns.pending is None
         ):
@@ -989,6 +1088,8 @@ class HuntWorker:
             waiting_opening = self.turns.opening_turn is None and not self.turns.finished_opening
             if (
                 frame is None
+                or waiting_opening
+                and not self.turns.seen_enemy
                 or waiting_opening
                 and (frame.phase != 3 or frame.turn_number == 0xFFFFFFFF)
                 or frame.enemies
@@ -1005,22 +1106,43 @@ class HuntWorker:
                     if self.stop_event.is_set():
                         signal.cancel()
                     consecutive_changes = 0
+                    changes_since = None
                     while not self.stop_event.is_set() and self.engine.running:
-                        transient_read = False
                         try:
                             self._iteration()
+                            if changes_since is not None:
+                                self.engine.last_read_error.update(
+                                    recovered=True,
+                                    recovered_after_seconds=round(
+                                        time.monotonic() - changes_since, 3
+                                    ),
+                                )
                             consecutive_changes = 0
-                        except SceneChanged:
-                            transient_read = True
+                            changes_since = None
+                        except SceneChanged as exc:
                             self.engine.transient_reads += 1
                             consecutive_changes += 1
+                            now = time.monotonic()
+                            if changes_since is None:
+                                changes_since = now
+                            self.engine.last_read_error = {
+                                "message": str(exc),
+                                "consecutive": consecutive_changes,
+                                "recovery_seconds": round(now - changes_since, 3),
+                                "recovered": False,
+                            }
                             self.engine.message = (
                                 "La escena cambió durante la lectura; esperando datos nuevos."
                             )
-                            if consecutive_changes >= 3:
-                                self.engine.stop("La escena no se estabiliza; bot detenido.")
+                            if consecutive_changes >= 3 and (
+                                self.turns is None or now - changes_since >= 3
+                            ):
+                                self.engine.stop(
+                                    "La escena no se estabiliza; bot detenido.",
+                                    reconnect=bool(self.turns and self.turns.pending),
+                                )
                         self._publish()
-                        self.stop_event.wait(self._poll_delay(transient_read=transient_read))
+                        self.stop_event.wait(self._poll_delay())
                     if self.stop_event.is_set():
                         self.engine.stop("Bot detenido; no se enviarán más solicitudes.")
                 finally:
@@ -1044,22 +1166,22 @@ class HuntWorker:
     def _iteration(self) -> None:
         pursuing = self.engine.pursuit is not None
         moving = self.engine.route is not None or pursuing
-        waiting_native_attack = self.engine.native_attack and self.engine.deadline is not None
-        settling = self.engine.phase in ("waiting_map", "resuming", "battle", "confirming_battle")
         observation = (
             observe_scene(
                 self.session,
                 include_navigation=True,
-                allow_player_movement=moving or settling or waiting_native_attack,
+                allow_player_movement=True,
                 **(
                     {"include_native_goal": True} if pursuing or self.engine.pending_pursuit else {}
                 ),
             )
             if self.engine.uses_radius
-            else observe_scene(self.session)
+            else observe_scene(self.session, allow_player_movement=True)
         )
         if self.engine.detector.classify(observation) == "map":
             self.seen_map = True
+            if self.turns is not None:
+                self.turns.note_map(time.monotonic())
         if self.engine.observe(observation, time.monotonic()):
             view = (
                 scan_world(self.session, allow_player_movement=True)
@@ -1142,7 +1264,7 @@ class HuntWorker:
     def _read_combat_frame(self) -> BattleFrame | None:
         try:
             return read_battle_frame(self.session)
-        except DiagnosticError:
+        except DiagnosticError as exc:
             fresh = observe_scene(
                 self.session,
                 include_navigation=self.engine.uses_radius,
@@ -1151,7 +1273,7 @@ class HuntWorker:
             if self.engine.detector.classify(fresh) != "battle":
                 self.engine.observe(fresh, time.monotonic())
                 return None
-            raise
+            raise SceneChanged(f"La lectura del combate aún no está lista: {exc}") from exc
 
     def _stop_route(self, *, cleanup: bool = False) -> None:
         if self.engine.route is None or self.stop_attempted:

@@ -196,6 +196,9 @@ def _bot_context(session: GameSession, report: dict | None) -> dict | None:
         "transport",
         "approach",
         "combat",
+        "manual_control",
+        "battle_entry",
+        "last_read_error",
     )
     exported = {key: report[key] for key in allowed if key in report}
     if isinstance(exported.get("combat"), dict):

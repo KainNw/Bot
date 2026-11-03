@@ -145,7 +145,11 @@ def test_reassigned_slot_uses_fresh_slot_for_the_same_identity():
 def test_foreign_goal_is_not_cancelled_or_replaced():
     engine = pursuing_engine()
     assert not engine.observe(observation(pursuit=PURSUIT, goal=(204.0, 0.0, 340.0)), 3)
-    assert not engine.running and engine.pursuit is None and engine.attempts == 0
+    assert engine.running and engine.pursuit is None and engine.attempts == 0
+    assert engine.manual_active and engine.phase == "manual_movement"
+    assert not engine.observe(observation(), 4)
+    assert engine.observe(observation(), 5)
+    assert not engine.manual_active
 
 
 @pytest.mark.parametrize("reason", ["target_changed", "stalled", "outside_area"])
