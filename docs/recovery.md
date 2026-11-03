@@ -33,6 +33,10 @@ Se libera el recorrido anterior y se aplica el perfil si está marcado **Ejecuta
 aunque el bot no haya solicitado ese encuentro. Si el enemigo tiene la iniciativa,
 espera el grupo propio; la primera magia sigue correspondiendo al primer turno propio
 observado de una batalla que el bot vio empezar desde el mapa.
+También conserva esa apertura si se inicia ya durante el turno inicial del enemigo:
+haber observado el turno 0 permite reconocer el primer turno propio siguiente. Empezar
+en una batalla avanzada sigue usando básicos hasta el próximo encuentro en el modo
+de magia inicial.
 
 El ejecutor ya no fija el contexto normal al índice cero. El código capturado
 `00431769` resuelve `gestor + 8 + índice*4`, usando el índice de `actor+318`.

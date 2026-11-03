@@ -75,6 +75,7 @@ class TurnEngine:
         self.deferred_until = {}
         self.unready_attempts = {}
         self.seen_enemy = False
+        self.observed_initial_turn = False
         self.timeline = {}
         self.observed_at: float | None = None
         self.pending: PendingTurn | None = None
@@ -101,6 +102,7 @@ class TurnEngine:
             self.deferred_until.clear()
             self.unready_attempts.clear()
             self.seen_enemy = False
+            self.observed_initial_turn = False
             self.timeline.clear()
             self.observed_at = None
             self.orders.clear()
@@ -229,6 +231,7 @@ class TurnEngine:
         if frame.phase != 3 or frame.turn_number == 0xFFFFFFFF:
             self.message = "Esperando la fase de combate."
             return None
+        self.observed_initial_turn |= frame.turn_number == 0
         turn = (frame.context.context, frame.turn_number, frame.turn_tick, frame.turn_group)
         if turn != self.turn:
             if self.pending is not None:
@@ -264,7 +267,7 @@ class TurnEngine:
             self.message = "Esperando el turno de tu grupo."
             return None
         if self.opening_turn is None and not self.finished_opening:
-            if self.fresh_battle or frame.turn_number == 0:
+            if self.fresh_battle or self.observed_initial_turn:
                 self.opening_turn = turn
             else:
                 self.finished_opening = True
@@ -396,6 +399,7 @@ class TurnEngine:
             "selections": self.selections,
             "unready_attempts": dict(self.unready_attempts),
             "seen_enemy": self.seen_enemy,
+            "observed_initial_turn": self.observed_initial_turn,
             "timing_seconds": {
                 key: round(value - self.timeline["first_frame"], 3)
                 for key, value in self.timeline.items()

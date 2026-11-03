@@ -106,8 +106,9 @@ def test_magic_first_own_turn_then_basic_and_magic_again_in_next_battle(turn_fra
     assert bot.next(replace(turn_frame, turn_tick=200000), 10).action == "Q"
 
 
-def test_enemy_initiative_waits_for_first_own_turn_to_use_opening_magic(turn_frame):
-    bot = engine(profile(magic={1: "W"}))
+@pytest.mark.parametrize("fresh", [False, True])
+def test_enemy_initiative_waits_for_first_own_turn_to_use_opening_magic(turn_frame, fresh):
+    bot = engine(profile(magic={1: "W"}), fresh=fresh)
     assert bot.next(replace(turn_frame, turn_group=1), 0) is None
     own = replace(turn_frame, turn_number=1, turn_tick=123480)
     assert bot.next(own, 1).action == "W"
