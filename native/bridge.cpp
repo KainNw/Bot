@@ -79,7 +79,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 2; command.pid = pid;
+        command.magic = kMagic; command.version = 3; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -93,12 +93,21 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
             if (!quiet) {
             std::cout << "{\"pid\":" << pid << ",\"status\":" << shared->result
                 << ",\"exception\":" << shared->exception << ",\"thread_id\":" << shared->thread_id
+                << ",\"operation\":" << shared->operation
                 << ",\"slot\":" << shared->slot << ",\"distance_squared\":";
             if (std::isfinite(shared->distance_squared)) std::cout << shared->distance_squared;
             else std::cout << "null";
             std::cout << ",\"range_limit_squared\":";
             if (std::isfinite(shared->range_limit_squared)) std::cout << shared->range_limit_squared;
             else std::cout << "null";
+            std::cout << ",\"navigation\":";
+            if (shared->result == ApproachRequested || shared->result == MovementStopped || shared->result == MovementNotConfirmed) {
+                std::cout << "{\"player_address\":" << shared->route_player
+                    << ",\"tick\":" << shared->route_tick << ",\"map_id\":" << shared->map_id
+                    << ",\"x\":" << shared->x << ",\"y\":" << shared->y
+                    << ",\"active\":" << (shared->route_active ? "true" : "false")
+                    << ",\"moving\":" << (shared->route_moving ? "true" : "false") << "}";
+            } else std::cout << "null";
             std::cout << "}" << std::endl;
             }
         } else {
@@ -138,22 +147,34 @@ static int SelfTest() {
     swprintf_s(cancel_name, L"Local\\AtlanticaPanel.Cancel.SelfTest.%lu", GetCurrentProcessId());
     auto cancellation = CreateEventW(nullptr, TRUE, TRUE, cancel_name);
     SharedCommand cancelled = {}, cancelled_response = {}, missing_response = {};
-    cancelled.attack = 1;
+    cancelled.operation = Attack;
     cancelled.slot = 2;
     wcscpy_s(cancelled.cancel_name, cancel_name);
     const int cancelled_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &cancelled_response, true) : 32;
+    SharedCommand move_response = {}, stop_response = {};
+    cancelled.operation = Approach;
+    const int move_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &move_response, true) : 32;
+    cancelled.operation = StopMovement;
+    const int stop_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &stop_response, true) : 32;
     if (cancellation) CloseHandle(cancellation);
     const int missing_code = Run(test.window, GetCurrentProcessId(), cancelled, &missing_response, true);
+    SharedCommand empty_channel = {}, empty_response = {};
+    empty_channel.operation = Approach;
+    const int empty_code = Run(test.window, GetCurrentProcessId(), empty_channel, &empty_response, true);
     PostThreadMessageW(tid, WM_QUIT, 0, 0);
     WaitForSingleObject(thread, 5000); CloseHandle(thread); CloseHandle(test.ready);
     // The bridge executable's base/build must be rejected before any client address is read.
     const int result = code ? code : (
         response.result == Unsupported && response.thread_id == tid
         && !cancelled_code && cancelled_response.result == Cancelled
-        && !missing_code && missing_response.result == CancellationUnavailable ? 0 : 31);
+        && !move_code && move_response.result == Cancelled
+        && !stop_code && stop_response.result == Cancelled
+        && !missing_code && missing_response.result == CancellationUnavailable
+        && !empty_code && empty_response.result == CancellationUnavailable ? 0 : 31);
     if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result
         << ", cancelled: " << cancelled_code << "/" << cancelled_response.result
-        << ", missing: " << missing_code << "/" << missing_response.result << std::endl;
+        << ", missing: " << missing_code << "/" << missing_response.result
+        << ", empty: " << empty_code << "/" << empty_response.result << std::endl;
     return result;
 }
 int wmain(int argc, wchar_t** argv) {
@@ -163,7 +184,12 @@ int wmain(int argc, wchar_t** argv) {
         bool operation = false;
         for (int i = 1; i < argc; ++i) {
             std::wstring key(argv[i]);
-            if (key == L"--attack" || key == L"--probe") { command.attack = key == L"--attack"; operation = true; continue; }
+            if (key == L"--attack" || key == L"--probe" || key == L"--approach" || key == L"--stop-move") {
+                if (operation) return 2;
+                command.operation = key == L"--attack" ? Attack : key == L"--probe" ? Probe
+                    : key == L"--approach" ? Approach : StopMovement;
+                operation = true; continue;
+            }
             if (i + 1 >= argc) return 2;
             if (key == L"--cancel-event") {
                 const auto name = argv[++i];
@@ -184,10 +210,23 @@ int wmain(int argc, wchar_t** argv) {
                 else if (key == L"--kind") command.identity[0] = small;
                 else if (key == L"--serial") command.identity[1] = small;
                 else if (key == L"--unique") command.identity[2] = small;
+                else if (key == L"--map" && small <= 0x157b) command.map_id = static_cast<int32_t>(small);
+                else if (key == L"--x" && small <= 32767) command.x = static_cast<int32_t>(small);
+                else if (key == L"--y" && small <= 32767) command.y = static_cast<int32_t>(small);
+                else if (key == L"--route-tick") command.route_tick = small;
+                else if (key == L"--route-player") command.route_player = small;
+                else if (key == L"--origin-map" && small <= 0x157b) command.origin_map = static_cast<int32_t>(small);
+                else if (key == L"--origin-x" && small <= 32767) command.origin_x = static_cast<int32_t>(small);
+                else if (key == L"--origin-y" && small <= 32767) command.origin_y = static_cast<int32_t>(small);
+                else if (key == L"--radius" && small >= 5 && small <= 120) command.radius = small;
                 else return 2;
             }
         }
-        if (!pid || !hwnd || !created || !expected_thread || !operation || command.slot < 2 || command.slot >= 450) return 2;
+        if (!pid || !hwnd || !created || !expected_thread || !operation) return 2;
+        if (command.operation == StopMovement) {
+            if (!command.route_player || !command.x || !command.y) return 2;
+        } else if (command.slot < 2 || command.slot >= 450) return 2;
+        if (command.operation == Approach && (!command.radius || !command.x || !command.y)) return 2;
         auto process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
         if (!process) return 3;
         FILETIME start, exit_time, kernel, user;

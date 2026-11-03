@@ -1,4 +1,4 @@
-# Ciclo de ataque cercano 0.5
+# Ciclo de ataque y acercamiento 0.6
 
 El usuario confirmó que la prueba 0.3 inició el ataque con Auto Battle desactivado.
 Su resultado: PID 16244, hilo 18440, objetivo 8, status=1, excepción=0,
@@ -11,11 +11,18 @@ observarlo. Una captura posterior siguió mostrando contexto 2. El detector ante
 asumía contexto 1; 0.5 sustituye esa suposición por una
 [calibración mapa → combate → mapa](combat-calibration.md) ligada a la instancia.
 
+El registro de 0.5 recibido después de calibrar tuvo `attempts=2`, `queued=2`,
+`battles_observed=2`, cero lecturas transitorias y `needs_reconnect=false`. Las 96
+observaciones mantuvieron `scene_code=2`, con 14 clasificadas como mapa y 82 como
+combate por el contexto local. El usuario confirmó el fin de batalla y la búsqueda
+siguiente. La parada registrada corresponde a la orden de parar/cerrar el panel.
+
 ## Comportamiento
 
 Iniciar bot crea un trabajador ligado a la sesión, HWND e hilo elegidos. Requiere
-Auto Battle, caza nativa y marcador apagados y un detector calibrado para esa
-instancia; no cambia esos controles. Consulta la
+Auto Battle, caza nativa y marcador apagados y un detector para esa
+instancia; en 0.6 la conexión compatible prepara la señal local ya comprobada y
+mantiene la calibración como diagnóstico opcional. No cambia esos controles. Consulta la
 lista activa, identidad, filtros conocidos y distancia 3D. El cliente vuelve a validar
 el objetivo y el alcance cuando ejecuta la solicitud. No se emiten clics ni teclas.
 
@@ -24,6 +31,8 @@ el objetivo y el alcance cuando ejecuta la solicitud. No se emiten clics ni tecl
 | Esperando mapa | Observa; no solicita ataques fuera de escena 2. |
 | Estabilizando | Exige el mismo mapa y posición estable durante dos segundos. |
 | Buscando | Consulta candidatos y elige uno dentro del umbral nativo. |
+| Acercándose (opcional) | Solicita una ruta normal dentro del radio y observa el progreso. |
+| Parando ruta | Comprueba la ruta propia, solicita detenerla y estabiliza antes de atacar. |
 | Solicitud enviada | Espera dos observaciones de combate según la calibración; no duplica la solicitud. |
 | Combate | Pausa solicitudes; los turnos son manuales. |
 | Regreso al mapa | Vuelve a estabilizar y buscar en el mismo mapa. |
@@ -34,8 +43,8 @@ al mismo mapa; si no la encuentra, permite copiar los datos y bloquea el ciclo.
 Puede usar la transición global 2/1/2 o el predicado de contexto local, si se observa
 solo en combate y desaparece al regresar. Los demás valores se tratan como desconocidos.
 `battle_confirmed` pasa a true tras dos observaciones de combate después de una
-solicitud. No confirma victoria, daño o finalización de turnos. La señal del cliente
-real y el ciclo completo todavía requieren la prueba del usuario.
+solicitud. No confirma victoria, daño o finalización de turnos. El ciclo cercano
+está observado en dos encuentros; el movimiento nuevo requiere su propia prueba.
 
 Si no se observa el combate en treinta segundos, se detiene y exige comprobar el
 cliente/reconectar antes de otra solicitud. Los rechazos de objetivo, cambios de
@@ -46,7 +55,9 @@ Cambiar de mapa, mover manualmente al personaje mientras busca, activar Auto Bat
 o caza nativa, perder la instancia o fallar la validación detiene el ciclo. Los datos
 interrumpidos por un cambio de escena se descartan; tras tres lecturas consecutivas
 sin estabilizar, se detiene. Una posición distinta al volver del combate se admite
-tras la estabilización. El bot no camina hacia objetivos fuera de alcance.
+tras la estabilización. Con acercamiento habilitado puede solicitar una ruta hacia
+objetivos fuera de alcance. Las condiciones de radio, atasco, parada y límites se
+explican en [acercamiento nativo](native-approach.md).
 
 ## Parada, cancelación y cierre
 
@@ -65,7 +76,10 @@ también cuando el auxiliar agota su tiempo de respuesta.
 Cada ejecución crea un evento nuevo; no se restablece un evento cancelado para otra
 ejecución. Así, un mensaje antiguo no se habilita al volver a iniciar el bot. La prueba
 individual también cancela su canal al terminar o fallar. El protocolo helper/DLL
-es versión 2 y comprueba su tamaño, identificador y PID.
+es versión 3 y comprueba su tamaño (300 bytes), identificador, operación y PID.
+Al parar con una ruta conocida, cancela primero nuevas solicitudes y utiliza un
+canal nuevo para detener esa ruta antes de liberar la reserva del PID. No repite
+una parada cuyo resultado sea incierto.
 
 ## Instancias y comprobaciones
 
@@ -83,8 +97,8 @@ El self-test C++ usa una ventana propia y exige rechazo de compilación, cancela
 de una solicitud marcada como ataque y rechazo de un canal de cancelación ausente,
 sin ejecutar código del juego. El smoke test empaquetado repite ese self-test.
 
-El ataque individual está confirmado por el usuario. El ciclo de varios encuentros,
-su detector y las varias ventanas siguen pendientes de validación en el cliente real.
+El ataque y el ciclo de dos encuentros están confirmados por el usuario. El
+acercamiento y las varias ventanas siguen pendientes de validación en el cliente real.
 Los informes incluyen las últimas 24 observaciones y sus contadores, alcance y
 perfil. Los tres perfiles guardan puestos, nombres, participación y prioridad de
 mercenarios; el ciclo sigue esperando turnos manuales.

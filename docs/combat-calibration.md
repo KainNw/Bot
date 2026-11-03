@@ -1,5 +1,10 @@
 # Calibración y perfiles 0.5
 
+Desde 0.6, conectar con la compilación compatible prepara automáticamente el
+detector local que se contrastó en mapa/combate/regreso y dos encuentros completos.
+Lo vincula al PID y fecha de creación nuevos; las instrucciones siguientes describen
+la calibración manual, que se conserva como diagnóstico opcional.
+
 El usuario confirmó que 0.4 inició un combate sin Auto Battle, pero el panel se detuvo
 con cero combates observados. El resultado fue `status=1`, sin excepción, distancia
 al cuadrado 13.8651 y límite 20. Una captura posterior comunicada durante el combate
@@ -82,7 +87,7 @@ La espera pasa de 0.5 s a 0.25 s mientras hay una solicitud pendiente. El auxili
 nativo puede bloquear hasta ocho segundos durante el envío; no se afirma que el
 registro capture cada transición breve que ocurra durante esa llamada.
 
-El panel todavía no mueve al personaje. Mantiene el umbral del cliente y la
-revalidación nativa. La ruta normal de navegación debe validarse y poder detenerse
-antes de integrar la aproximación automática. La selección de mercenarios, el
-acercamiento y una eventual velocidad de combate no se dan por ejecutados.
+En 0.5 se comprobó el ciclo cercano en dos combates. La versión 0.6 añade
+[acercamiento nativo opcional](native-approach.md), pendiente de prueba en el cliente.
+Mantiene el umbral de ataque y su revalidación nativa. Los turnos automáticos de
+mercenarios y una eventual velocidad de combate siguen sin implementarse.

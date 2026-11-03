@@ -11,10 +11,19 @@ from .clients import ClientWindow
 from .combat import CombatDetector
 from .errors import DiagnosticError, SceneChanged
 from .ipc import BotLease, Cancellation
-from .native_action import try_attack
+from .native_action import stop_movement, try_approach, try_attack
+from .navigation import ApproachSettings
 from .profiles import BotProfile
 from .session import GameSession
-from .world import Candidate, GridPosition, Observation, WorldView, observe_scene, scan_world
+from .world import (
+    Candidate,
+    GridPosition,
+    NavigationState,
+    Observation,
+    WorldView,
+    observe_scene,
+    scan_world,
+)
 
 
 def target_key(candidate: Candidate) -> tuple:
@@ -27,6 +36,7 @@ class HuntEngine:
     creation_time: int
     detector: CombatDetector
     profile: BotProfile = field(default_factory=lambda: BotProfile.default(1))
+    approach: ApproachSettings = field(default_factory=ApproachSettings)
     running: bool = True
     phase: str = "waiting_map"
     message: str = "Esperando mapa."
@@ -52,6 +62,19 @@ class HuntEngine:
     battle_samples: int = 0
     battle_active: bool = False
     range_diagnostic: dict = field(default_factory=dict)
+    origin: GridPosition | None = None
+    route: NavigationState | None = None
+    move_target: Candidate | None = None
+    move_started: float = 0
+    move_progress: float = 0
+    move_position: GridPosition | None = None
+    move_distance_squared: float | None = None
+    move_reason: str = ""
+    moves: int = 0
+    arrivals: int = 0
+    move_failures: int = 0
+    last_move: dict = field(default_factory=dict)
+    last_stop: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.detector.matches(self.pid, self.creation_time):
@@ -91,6 +114,8 @@ class HuntEngine:
         if observation.native_active:
             self.stop("Se activó Auto Battle o caza nativa; bot detenido.")
             return False
+        if self.route is not None:
+            return self._observe_movement(observation, classification, now)
         if classification == "battle":
             self.battle_samples += 1
             if self.battle_samples < 2:
@@ -133,10 +158,25 @@ class HuntEngine:
             self.anchor = None
             return False
         position = observation.player
+        if (
+            self.approach.enabled
+            and observation.navigation is not None
+            and observation.navigation.active
+        ):
+            self.stop("Ya hay una ruta activa fuera del bot; detén al personaje antes de iniciar.")
+            return False
         if self.map_id is None:
             self.map_id = position.map_id
+            self.origin = position
         if position.map_id != self.map_id:
             self.stop("Cambió el mapa; bot detenido.")
+            return False
+        if (
+            self.approach.enabled
+            and self.origin is not None
+            and not self.approach.contains(self.origin, position)
+        ):
+            self.stop("Se alcanzó el límite del área de búsqueda; bot detenido.")
             return False
         if self.phase in ("battle", "confirming_battle", "waiting_map", "resuming"):
             if self.anchor != position:
@@ -160,6 +200,10 @@ class HuntEngine:
         return True
 
     def select(self, view: WorldView, now: float) -> Candidate | None:
+        if self.running and self.route is not None and self.phase == "approaching":
+            self.scans += 1
+            self._inspect_approach(view, now)
+            return None
         if not self.running or self.deadline is not None or self.phase != "searching":
             return None
         self.scans += 1
@@ -194,11 +238,31 @@ class HuntEngine:
             "nearest_slot": nearest.slot if nearest else None,
             "nearest_distance_squared": nearest.distance_squared if nearest else None,
             "available_in_range": len(available),
-            "automatic_approach": False,
+            "automatic_approach": self.approach.enabled,
         }
         if not available:
+            if self.approach.enabled and self.origin is not None:
+                distant = [
+                    candidate
+                    for candidate in measured
+                    if len(candidate.identity) == 3
+                    and candidate.distance_squared > limit
+                    and 0 < candidate.x <= 32767
+                    and 0 < candidate.y <= 32767
+                    and self.approach.contains(
+                        self.origin, GridPosition(candidate.map_id, candidate.x, candidate.y)
+                    )
+                    and target_key(candidate) not in self.cooldowns
+                ]
+                if distant:
+                    candidate = min(distant, key=lambda candidate: candidate.distance_squared)
+                    self.phase = "requesting_approach"
+                    self.message = f"Solicitando acercamiento al objetivo {candidate.slot}."
+                    return candidate
             self.message = (
-                "Los mobs están fuera de alcance. Para el bot y acércate antes de iniciar."
+                "Sin objetivos disponibles dentro del radio de búsqueda."
+                if self.approach.enabled
+                else "Los mobs están fuera de alcance. Para el bot y acércate antes de iniciar."
                 if nearest and nearest.distance_squared > limit
                 else "Sin mobs cercanos disponibles; esperando."
             )
@@ -206,6 +270,127 @@ class HuntEngine:
         candidate = min(available, key=lambda candidate: candidate.distance_squared)
         self.phase, self.message = "requesting", f"Solicitando ataque al objetivo {candidate.slot}."
         return candidate
+
+    def _observe_movement(self, observation: Observation, classification: str, now: float) -> bool:
+        position, navigation = observation.player, observation.navigation
+        if classification != "map" or position is None:
+            self.stop("Cambió el estado durante el acercamiento; bot detenido.", reconnect=True)
+            return False
+        if self.origin is None or not self.approach.contains(self.origin, position):
+            self.move_reason = "outside_area"
+        elif navigation is None:
+            self.stop("No se pudo leer el desplazamiento; bot detenido.", reconnect=True)
+            return False
+        elif navigation.player_address != self.route.player_address:
+            self.stop(
+                "Cambió el personaje durante el acercamiento; vuelve a conectar.", reconnect=True
+            )
+            return False
+        elif navigation.key != self.route.key:
+            if not navigation.active and not navigation.moving:
+                self.move_reason = "route_finished"
+            else:
+                self.stop("El movimiento cambió fuera del bot; detenido sin sustituirlo.")
+                return False
+        elif now - self.move_started >= self.approach.timeout:
+            self.move_reason = "timeout"
+        else:
+            if position != self.move_position:
+                self.move_position, self.move_progress = position, now
+            if now - self.move_progress >= self.approach.stall_timeout:
+                self.move_reason = "stalled"
+        if self.move_reason:
+            self.phase, self.message = "stopping_move", "Deteniendo el acercamiento."
+            return False
+        self.phase, self.message = (
+            "approaching",
+            f"Acercándose al objetivo {self.move_target.slot}.",
+        )
+        if now < self.next_scan:
+            return False
+        self.next_scan = now + 0.5
+        return True
+
+    def _inspect_approach(self, view: WorldView, now: float) -> None:
+        if view.scene_code != 2 or view.player is None or view.player.map_id != self.map_id:
+            raise SceneChanged("Cambió el mapa durante el acercamiento.")
+        limit = view.range_limit_squared
+        if limit is None or not math.isfinite(limit) or not 0 < limit <= 1e8:
+            self.stop("No se pudo validar el alcance durante el acercamiento.", reconnect=True)
+            return
+        target = next(
+            (
+                candidate
+                for candidate in view.candidates
+                if target_key(candidate) == target_key(self.move_target)
+            ),
+            None,
+        )
+        self.move_distance_squared = target.distance_squared if target else None
+        if target is None:
+            self.move_reason = "target_changed"
+        elif target.distance_squared is not None and target.distance_squared <= limit * 0.8:
+            self.move_reason = "in_range"
+        elif abs(target.x - self.route.x) + abs(target.y - self.route.y) > 4:
+            self.move_reason = "target_moved"
+        if self.move_reason:
+            self.phase, self.message = "stopping_move", "Parando antes de comprobar el ataque."
+
+    def record_approach(self, candidate: Candidate, report: dict, now: float) -> None:
+        self.last_move = dict(report)
+        if report.get("pid") != self.pid or report.get("slot") != candidate.slot:
+            self.stop("Respuesta de acercamiento de otra instancia; detenido.", reconnect=True)
+            return
+        code = report["status"]
+        if code == 15:
+            route = NavigationState.from_report(report["navigation"])
+            if not route.active or (route.map_id, route.x, route.y) != (
+                candidate.map_id,
+                candidate.x,
+                candidate.y,
+            ):
+                self.stop("La ruta no corresponde al objetivo; detenido.", reconnect=True)
+                return
+            self.route, self.move_target = route, candidate
+            self.move_started = self.move_progress = now
+            self.move_position = self.anchor
+            self.move_distance_squared = candidate.distance_squared
+            self.move_reason = ""
+            self.moves += 1
+            self.phase, self.message = "approaching", f"Acercándose al objetivo {candidate.slot}."
+        elif code in (2, 3, 6, 18, 19):
+            self.cooldowns[target_key(candidate)] = now + (0 if code == 19 else 3)
+            self.phase, self.message = "waiting_map", report["message"]
+            self.anchor = None
+        elif code == 13:
+            self.stop("Bot detenido; acercamiento pendiente cancelado.")
+        else:
+            self.stop(report["message"], reconnect=code != 20)
+
+    def record_movement_stop(self, report: dict, now: float, *, cleanup: bool = False) -> None:
+        self.last_stop = dict(report)
+        if report.get("pid") != self.pid or report.get("status") != 16:
+            self.stop(
+                f"No se confirmó la parada del desplazamiento. {report.get('message', '')}",
+                reconnect=True,
+            )
+            return
+        if not cleanup and self.move_reason != "in_range":
+            if self.move_target is not None:
+                self.cooldowns[target_key(self.move_target)] = now + 30
+            self.move_failures += 1
+        elif not cleanup:
+            self.arrivals += 1
+        self.route = self.move_target = None
+        self.anchor = None
+        if not cleanup:
+            if self.move_failures >= 3:
+                self.stop("Tres acercamientos no completados; revisa el terreno antes de iniciar.")
+            elif self.move_reason == "outside_area":
+                self.stop("Se alcanzó el límite del área de búsqueda; bot detenido.")
+            else:
+                self.phase = "waiting_map"
+                self.message = "Desplazamiento parado; esperando una posición estable."
 
     def record(self, candidate: Candidate, report: dict, now: float) -> None:
         if report.get("pid") != self.pid or report.get("slot") != candidate.slot:
@@ -251,6 +436,20 @@ class HuntEngine:
             "recent_observations": list(self.observations),
             "range": dict(self.range_diagnostic),
             "profile": self.profile.summary(),
+            "approach": {
+                **self.approach.summary(),
+                "origin": {"map_id": self.origin.map_id, "x": self.origin.x, "y": self.origin.y}
+                if self.origin
+                else None,
+                "requests": self.moves,
+                "arrivals": self.arrivals,
+                "failed": self.move_failures,
+                "stop_reason": self.move_reason or None,
+                "current_distance_squared": self.move_distance_squared,
+                "route": self.route.summary() if self.route else None,
+                "last_request": dict(self.last_move),
+                "last_stop": dict(self.last_stop),
+            },
         }
 
 
@@ -261,16 +460,22 @@ class HuntWorker:
         window: ClientWindow,
         detector: CombatDetector,
         profile: BotProfile | None = None,
+        approach: ApproachSettings | None = None,
     ):
         if session.creation_time is None or window.pid != session.process.pid:
             raise DiagnosticError("Conecta con una instancia de Windows válida antes de iniciar.")
         self.session, self.window = session, window
         self.engine = HuntEngine(
-            session.process.pid, session.creation_time, detector, profile or BotProfile.default(1)
+            session.process.pid,
+            session.creation_time,
+            detector,
+            profile or BotProfile.default(1),
+            approach or ApproachSettings(),
         )
         self.events: queue.Queue[dict] = queue.Queue(maxsize=20)
         self.stop_event = threading.Event()
         self.cancellation: Cancellation | None = None
+        self.stop_attempted = False
         self.thread = threading.Thread(
             target=self._run, name=f"AtlanticaBot-{window.pid}", daemon=True
         )
@@ -305,37 +510,33 @@ class HuntWorker:
         try:
             with BotLease(self.window.pid), Cancellation(self.window.pid) as signal:
                 self.cancellation = signal
-                if self.stop_event.is_set():
-                    self.cancellation.cancel()
-                consecutive_changes = 0
-                while not self.stop_event.is_set() and self.engine.running:
-                    try:
-                        observation = observe_scene(self.session)
-                        if self.engine.observe(observation, time.monotonic()):
-                            view = scan_world(self.session)
-                            candidate = self.engine.select(view, time.monotonic())
-                            if candidate is not None and not self.stop_event.is_set():
-                                self._publish()
-                                report = try_attack(
-                                    self.session,
-                                    self.window,
-                                    candidate,
-                                    cancellation=self.cancellation,
-                                )
-                                self.engine.record(candidate, report, time.monotonic())
-                        consecutive_changes = 0
-                    except SceneChanged:
-                        self.engine.transient_reads += 1
-                        consecutive_changes += 1
-                        self.engine.message = (
-                            "La escena cambió durante la lectura; esperando datos nuevos."
+                try:
+                    if self.stop_event.is_set():
+                        signal.cancel()
+                    consecutive_changes = 0
+                    while not self.stop_event.is_set() and self.engine.running:
+                        try:
+                            self._iteration()
+                            consecutive_changes = 0
+                        except SceneChanged:
+                            self.engine.transient_reads += 1
+                            consecutive_changes += 1
+                            self.engine.message = (
+                                "La escena cambió durante la lectura; esperando datos nuevos."
+                            )
+                            if consecutive_changes >= 3:
+                                self.engine.stop("La escena no se estabiliza; bot detenido.")
+                        self._publish()
+                        self.stop_event.wait(
+                            0.25 if self.engine.deadline is not None or self.engine.route else 0.5
                         )
-                        if consecutive_changes >= 3:
-                            self.engine.stop("La escena no se estabiliza; bot detenido.")
-                    self._publish()
-                    self.stop_event.wait(0.25 if self.engine.deadline is not None else 0.5)
-                if self.stop_event.is_set():
-                    self.engine.stop("Bot detenido; no se enviarán más solicitudes.")
+                    if self.stop_event.is_set():
+                        self.engine.stop("Bot detenido; no se enviarán más solicitudes.")
+                finally:
+                    try:
+                        signal.cancel()
+                    finally:
+                        self._stop_route(cleanup=True)
         except (DiagnosticError, OSError) as exc:
             self.engine.stop(str(exc), reconnect=True)
         except Exception as exc:
@@ -344,3 +545,50 @@ class HuntWorker:
             )
         finally:
             self._publish()
+
+    def _iteration(self) -> None:
+        moving = self.engine.route is not None
+        observation = (
+            observe_scene(self.session, include_navigation=True, allow_player_movement=moving)
+            if self.engine.approach.enabled
+            else observe_scene(self.session)
+        )
+        if self.engine.observe(observation, time.monotonic()):
+            view = (
+                scan_world(self.session, allow_player_movement=True)
+                if moving
+                else scan_world(self.session)
+            )
+            candidate = self.engine.select(view, time.monotonic())
+            if candidate is not None and not self.stop_event.is_set():
+                self._publish()
+                if self.engine.phase == "requesting_approach":
+                    report = try_approach(
+                        self.session,
+                        self.window,
+                        candidate,
+                        self.engine.origin,
+                        self.engine.approach,
+                        cancellation=self.cancellation,
+                    )
+                    self.engine.record_approach(candidate, report, time.monotonic())
+                    if self.engine.route is not None:
+                        self.stop_attempted = False
+                else:
+                    report = try_attack(
+                        self.session, self.window, candidate, cancellation=self.cancellation
+                    )
+                    self.engine.record(candidate, report, time.monotonic())
+        if self.engine.route is not None and self.engine.phase == "stopping_move":
+            self._stop_route()
+
+    def _stop_route(self, *, cleanup: bool = False) -> None:
+        if self.engine.route is None or self.stop_attempted:
+            return
+        self.stop_attempted = True
+        try:
+            report = stop_movement(self.session, self.window, self.engine.route)
+            self.engine.record_movement_stop(report, time.monotonic(), cleanup=cleanup)
+        except (DiagnosticError, OSError) as exc:
+            self.engine.last_stop = {"pid": self.window.pid, "message": str(exc)}
+            self.engine.stop(f"Parada del desplazamiento sin confirmar: {exc}", reconnect=True)

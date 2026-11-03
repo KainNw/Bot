@@ -14,6 +14,7 @@ from .errors import DiagnosticError
 from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
 from .native_action import try_attack
+from .navigation import ApproachSettings
 from .profiles import BotProfile, Mercenary, ProfileStore
 from .session import GameSession, LiveState
 from .world import observe_scene, scan_world
@@ -51,7 +52,11 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.profile: BotProfile | None = None
             self.profile_number = tk.StringVar(value="1")
             self.profile_status = tk.StringVar()
-            self.detector_status = tk.StringVar(value="Detector de combate: falta calibrar.")
+            self.detector_status = tk.StringVar(
+                value="Detector de combate: conecta con el cliente."
+            )
+            self.approach_enabled = tk.BooleanVar(value=False)
+            self.approach_radius = tk.StringVar(value="60")
             self.bot_status = tk.StringVar(value="Bot detenido.")
             self.pid = tk.StringVar()
             self.folder = tk.StringVar(value="Conecta con el juego o selecciona su carpeta.")
@@ -64,7 +69,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Label(frame, text="Control de caza", font=("Segoe UI", 18)).pack(anchor="w")
             ttk.Label(
                 frame,
-                text="Iniciar bot ataca mobs cercanos con Auto Battle apagado.",
+                text="Iniciar bot busca mobs con Auto Battle apagado.",
             ).pack(anchor="w", pady=4)
             ttk.Label(frame, textvariable=self.folder, wraplength=680).pack(anchor="w", pady=8)
             row = ttk.Frame(frame)
@@ -121,6 +126,17 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             )
             self.profile_button.pack(side="left")
             ttk.Label(frame, textvariable=self.profile_status, wraplength=760).pack(anchor="w")
+            row = ttk.Frame(frame)
+            row.pack(fill="x", pady=6)
+            self.approach_check = ttk.Checkbutton(
+                row, text="Acercamiento automático (experimental)", variable=self.approach_enabled
+            )
+            self.approach_check.pack(side="left")
+            ttk.Label(row, text="Radio de búsqueda (casillas):").pack(side="left", padx=(12, 4))
+            self.approach_entry = ttk.Spinbox(
+                row, from_=5, to=120, textvariable=self.approach_radius, width=5
+            )
+            self.approach_entry.pack(side="left")
             read_row = ttk.Frame(frame)
             read_row.pack(fill="x", pady=6)
             self.advanced = ttk.Frame(frame)
@@ -227,6 +243,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.connect_button,
                 self.pid_entry,
                 self.profile_button,
+                self.approach_check,
+                self.approach_entry,
             ):
                 button.configure(state="disabled" if active else "normal")
             self.bot_stop_button.configure(
@@ -282,14 +300,18 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 if self.profile is None:
                     raise DiagnosticError("Revisa la configuración del perfil antes de iniciar.")
                 worker = HuntWorker(
-                    session, self.selected_window(session), self.detector, self.profile
+                    session,
+                    self.selected_window(session),
+                    self.detector,
+                    self.profile,
+                    ApproachSettings(self.approach_enabled.get(), int(self.approach_radius.get())),
                 )
                 self.bot_report = worker.engine.summary()
                 self.bot_worker = worker
                 self.bot_status.set(f"PID {session.process.pid}: iniciando bot...")
                 worker.start()
                 self.lock_target_controls()
-            except (DiagnosticError, OSError) as exc:
+            except (DiagnosticError, OSError, ValueError) as exc:
                 self.error(exc)
 
         def stop_bot(self) -> None:
@@ -688,6 +710,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             try:
                 pid = positive_pid(self.pid.get().strip()) if self.pid.get().strip() else None
                 session = GameSession.connect(self.system, pid)
+                if self.detector is None or not self.detector.matches(
+                    session.process.pid, session.creation_time
+                ):
+                    self.detector = CombatDetector.for_supported_session(session)
                 self.pid.set(str(session.process.pid))
                 self.session = session
                 self.trial_unknown = False
@@ -741,7 +767,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.session.process.pid, self.session.creation_time
             )
             self.detector_status.set(
-                f"Detector de combate calibrado para PID {self.session.process.pid}."
+                f"Detector de combate listo para PID {self.session.process.pid}."
                 if calibrated
                 else "Detector de combate: usa Calibrar combate antes de iniciar el ciclo."
             )
@@ -1004,7 +1030,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Label(
                 frame,
                 text="El alcance se compara con la distancia 3D del cliente, no con la rejilla. "
-                "Para objetivos lejanos todavía debes parar el bot y acercarte.",
+                "El acercamiento automático busca dentro del radio configurado.",
                 wraplength=650,
             ).pack(anchor="w")
             refresh_targets()

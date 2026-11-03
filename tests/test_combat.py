@@ -1,4 +1,6 @@
+import hashlib
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -91,3 +93,21 @@ def test_detector_does_not_transfer_to_a_reused_pid_or_classify_missing_context_
     assert detector.classify(replace(MAP, local=None)) == "unknown"
     assert detector.classify(replace(BATTLE, creation_time=888)) == "unknown"
     assert detector.classify(replace(MAP, pid=200)) == "unknown"
+
+
+def test_verified_default_is_bound_only_after_supported_build_validation(executable, monkeypatch):
+    digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+    monkeypatch.setattr("atlantica_bot.hunting.SUPPORTED_CLIENT_SHA256", digest)
+    session = SimpleNamespace(
+        process=SimpleNamespace(pid=100),
+        creation_time=777,
+        directory=executable.parent,
+        snapshot=lambda: None,
+    )
+    detector = CombatDetector.for_supported_session(session)
+    assert detector.classify(BATTLE) == "battle"
+    assert detector.summary()["source"] == "verified_local_context_for_supported_build"
+    assert not detector.matches(100, 888)
+    executable.write_bytes(b"another build")
+    with pytest.raises(DiagnosticError, match="compilación"):
+        CombatDetector.for_supported_session(session)

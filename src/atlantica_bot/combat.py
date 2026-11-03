@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .errors import DiagnosticError
+from .hunting import control_hunting
+from .session import GameSession
 from .world import Observation
 
 STAGES = ("map_before", "battle", "map_after")
@@ -23,6 +25,22 @@ class CombatDetector:
     pid: int
     creation_time: int
     signal: str
+    source: str = "labelled_map_battle_map_samples"
+
+    @classmethod
+    def for_supported_session(cls, session: GameSession) -> CombatDetector:
+        # Verified map -> battle -> map and two full encounters on this exact build.
+        # Each new binding still validates the disk build and process lifetime.
+        session.snapshot()
+        control_hunting(session.directory, "status")
+        if session.creation_time is None:
+            raise DiagnosticError("No se pudo identificar la instancia del cliente.")
+        return cls(
+            session.process.pid,
+            session.creation_time,
+            "local_context",
+            "verified_local_context_for_supported_build",
+        )
 
     def matches(self, pid: int, creation_time: int | None) -> bool:
         return (pid, creation_time) == (self.pid, self.creation_time)
@@ -48,7 +66,7 @@ class CombatDetector:
             "pid": self.pid,
             "instance_creation_time": self.creation_time,
             "signal": self.signal,
-            "source": "labelled_map_battle_map_samples",
+            "source": self.source,
         }
 
 

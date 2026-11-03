@@ -53,7 +53,7 @@ class WorldMemory:
     def actor(self, slot, kind, map_id, x, y, *, active=True):
         actor = 0x30000000 + slot * 0x10000
         info = 0x40000000 + slot * 0x10000
-        self.write(actor, bytes(0xC00))
+        self.write(actor, bytes(0x1100))
         self.write(self.manager + TABLE_OFFSET + slot * 4, struct.pack("<I", actor))
         self.write(actor + 0x200, struct.pack("<II", slot, kind))
         self.write(actor + 0x30, struct.pack("<I", info))
@@ -169,6 +169,31 @@ def test_optional_link_diagnostic_can_be_unavailable_without_losing_valid_contex
     result = observe_scene(session)
     assert result.local.context_a == result.local.context_b == -1
     assert result.local.linked_state is None
+
+
+def test_navigation_observation_reads_route_destination_and_flags(session):
+    actor = 0x30010000
+    session.system.write(actor + 0x1012, bytes([1, 0]) + struct.pack("<Ihhh", 1234, 8, 14, 25))
+    session.system.write(actor + 0xB78, bytes([1]))
+    result = observe_scene(session, include_navigation=True)
+    assert result.navigation.key == (actor, 1234, 8, 14, 25)
+    assert result.navigation.active and result.navigation.moving
+
+
+def test_moving_observation_allows_grid_progress_but_keeps_scene_validation(session):
+    info = 0x40010000
+    memory = session.system
+
+    def move_after_read(address, size):
+        if address == info + 0xCA:
+            memory.write(info + 0xCA, struct.pack("<hhh", 8, 11, 20))
+
+    memory.after_read = move_after_read
+    result = observe_scene(session, allow_player_movement=True)
+    assert result.player.map_id == 8
+    memory.write(info + 0xCA, struct.pack("<hhh", 8, 10, 20))
+    with pytest.raises(DiagnosticError, match="cambió durante la observación"):
+        observe_scene(session)
 
 
 def test_nonfinite_range_is_not_presented_as_attackable(session):

@@ -148,6 +148,43 @@ class LocalState:
 
 
 @dataclass(frozen=True)
+class NavigationState:
+    player_address: int
+    tick: int
+    map_id: int
+    x: int
+    y: int
+    active: bool
+    moving: bool
+
+    @property
+    def key(self) -> tuple[int, ...]:
+        return self.player_address, self.tick, self.map_id, self.x, self.y
+
+    def summary(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_report(cls, payload: dict) -> NavigationState:
+        try:
+            result = cls(**payload)
+            if (
+                any(type(value) is not int for value in result.key)
+                or not 0 < result.player_address <= 0xFFFFFFFF
+                or not 0 <= result.tick <= 0xFFFFFFFF
+                or not 0 <= result.map_id <= 0x157B
+                or not 0 < result.x <= 32767
+                or not 0 < result.y <= 32767
+                or type(result.active) is not bool
+                or type(result.moving) is not bool
+            ):
+                raise ValueError
+            return result
+        except (ValueError, TypeError) as exc:
+            raise DiagnosticError("La respuesta de desplazamiento no es válida.") from exc
+
+
+@dataclass(frozen=True)
 class Observation:
     pid: int
     creation_time: int | None
@@ -155,6 +192,7 @@ class Observation:
     player: GridPosition | None
     native_active: bool = False
     local: LocalState | None = None
+    navigation: NavigationState | None = None
 
     def summary(self) -> dict:
         return asdict(self)
@@ -175,14 +213,30 @@ def _local_state(reader: Reader, actor: int) -> LocalState:
     )
 
 
-def observe_scene(session: GameSession) -> Observation:
+def _navigation(reader: Reader, actor: int) -> NavigationState:
+    data = reader.read(actor + 0x1012, 12)
+    moving = reader.byte(actor + 0xB78)
+    if data[0] not in (0, 1) or moving not in (0, 1):
+        raise DiagnosticError("El estado de desplazamiento del cliente no es válido.")
+    return NavigationState(
+        actor,
+        struct.unpack_from("<I", data, 2)[0],
+        *struct.unpack_from("<hhh", data, 6),
+        bool(data[0]),
+        bool(moving),
+    )
+
+
+def observe_scene(
+    session: GameSession, *, include_navigation: bool = False, allow_player_movement: bool = False
+) -> Observation:
     state = session.snapshot()
     reader = Reader(session)
     owner = reader.u32(OWNER_ADDRESS)
     if not owner:
         raise DiagnosticError("El cliente todavía no publica una escena válida.")
     scene = reader.i32(owner + 0xB98)
-    player = local = None
+    player = local = navigation = None
     if scene == 2:
         manager = reader.u32(owner + 0x828)
         if not manager:
@@ -192,11 +246,14 @@ def observe_scene(session: GameSession) -> Observation:
             raise DiagnosticError("No se pudo validar el personaje del mapa.")
         player = _grid(reader, actor)
         local = _local_state(reader, actor)
+        navigation = _navigation(reader, actor) if include_navigation else None
+        current_position = _grid(reader, actor)
         if (
             reader.u32(owner + 0x828) != manager
             or reader.u32(manager + TABLE_OFFSET + 4) != actor
             or reader.u32(actor + 0x200) != 1
-            or _grid(reader, actor) != player
+            or current_position.map_id != player.map_id
+            or (not allow_player_movement and current_position != player)
             or reader.i32(actor + 0x318) != local.context_a
             or reader.i32(actor + 0x254) != local.context_b
         ):
@@ -211,10 +268,11 @@ def observe_scene(session: GameSession) -> Observation:
         player,
         state.auto_battle or state.hunting or state.files.marker_present,
         local,
+        navigation,
     )
 
 
-def scan_world(session: GameSession) -> WorldView:
+def scan_world(session: GameSession, *, allow_player_movement: bool = False) -> WorldView:
     """Read/rank candidate NPCs with no Auto Battle requirement and no game input."""
     session.snapshot()
     control_hunting(session.directory, "status")
@@ -300,6 +358,7 @@ def scan_world(session: GameSession) -> WorldView:
             errors += 1
             reject("read_error")
     session.snapshot()
+    current_position = _grid(reader, player_actor)
     if (
         reader.u32(OWNER_ADDRESS) != owner
         or reader.i32(owner + 0xB98) != scene
@@ -311,7 +370,8 @@ def scan_world(session: GameSession) -> WorldView:
     if (
         reader.u32(manager + TABLE_OFFSET + 4) != player_actor
         or reader.u32(player_actor + 0x200) != 1
-        or _grid(reader, player_actor) != player
+        or current_position.map_id != player.map_id
+        or (not allow_player_movement and current_position != player)
     ):
         raise SceneChanged(
             "El personaje cambió de posición durante la lectura; vuelve a consultar."

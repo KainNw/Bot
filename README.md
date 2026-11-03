@@ -1,15 +1,19 @@
 # Control de caza para Atlantica Online
 
-Panel para Windows 10/11 que selecciona un cliente y solicita ataques a mobs cercanos
-con Auto Battle apagado. La versión 0.5 añade **Calibrar combate**, observaciones en el
-informe y tres perfiles para guardar la selección y prioridad de mercenarios. Antes de
-usar **Iniciar bot**, hay que distinguir mapa/combate/regreso en esa instancia. Si las
-capturas no ofrecen una señal válida, el ciclo permanece bloqueado y permite copiar
-los datos. No mueve al personaje ni juega los turnos de los mercenarios.
+Panel para Windows 10/11 que selecciona un cliente y solicita ataques
+con Auto Battle apagado. La versión 0.6 añade **Acercamiento automático (experimental)**
+y radio de búsqueda. Conserva **Calibrar combate**, observaciones y tres perfiles para
+guardar la selección y prioridad de mercenarios. Al conectar con la compilación
+compatible vincula el detector local ya comprobado a ese PID y fecha de creación.
+**Calibrar combate** permite comparar manualmente las señales si hace falta.
+Los turnos de los mercenarios siguen siendo manuales.
 
 **Comprobado por el usuario:** la prueba individual 0.3 inició el ataque con Auto Battle
 desactivado. También confirmó un combate iniciado por 0.4 que el detector no reconoció.
 La siguiente captura mostró `scene_code=2`: ese valor solo no distingue el combate.
+En 0.5, la calibración observó contexto local −1 → 0 → −1. Un registro posterior
+mostró dos solicitudes y dos combates confirmados, sin errores de lectura ni necesidad
+de reconectar. El usuario confirmó que terminó la batalla y siguió buscando mobs cercanos.
 Solo había una ventana abierta; la prueba real con varios clientes sigue pendiente.
 
 **Comprobado por el usuario:** tras activar Auto Battle y crear el marcador, el cliente
@@ -22,8 +26,8 @@ cierre que permita identificar su causa.
 
 La lógica tiene pruebas automatizadas. El workflow de Windows prueba las APIs y
 sincronización sobre procesos/objetos propios, compila el puente x86 y comprueba el
-arranque del ejecutable empaquetado. Estos controles no sustituyen la prueba del
-ciclo y su detector de combate en el juego. Usa el cliente sin adjuntar x32dbg.
+arranque del ejecutable empaquetado. El acercamiento de 0.6 todavía necesita la
+prueba en el cliente real. Usa el cliente sin adjuntar x32dbg.
 
 Solo se admite la compilación cuyo SHA-256 es
 `BC87A0CC5826AA7FB5E4FF10B6B7C1A349962BD8B146AD28EC3FFA9453FE04E6`.
@@ -34,8 +38,8 @@ El ciclo usa el envío individual ya confirmado y selecciona candidatos dentro
 del alcance 3D del cliente. Envía una solicitud y espera dos observaciones de combate
 según el detector calibrado antes de permitir otra. Al volver al mismo mapa, exige
 una posición estable durante dos segundos. Si no observa el combate en treinta
-segundos, se detiene sin repetir el envío. El aumento de espera no sustituye la
-calibración y no se presenta como una corrección ya validada en el juego.
+segundos, se detiene sin repetir el envío. El ciclo cercano ya se observó en dos
+combates; el detector se sigue vinculando a cada instancia.
 Detalles y límites en [caza independiente](docs/independent-hunt.md).
 
 **Configurar mercenarios** guarda los nueve puestos, sus nombres, participación y
@@ -44,7 +48,14 @@ Se conserva en `%LOCALAPPDATA%/AtlanticaPanel/profiles`, fuera de la carpeta del
 El perfil activo queda fijado al iniciar el ciclo. Detalles de uso y diagnóstico:
 [calibración y perfiles](docs/combat-calibration.md).
 
-No hay desplazamiento hacia mobs lejanos ni automatización de turnos. El control
+**Acercamiento automático (experimental)** permite solicitar una ruta hacia un mob
+fuera de alcance, dentro de un radio de 5–120 casillas alrededor del inicio de esa
+ejecución. Pide parar al entrar en alcance, espera posición estable y vuelve a
+comprobar el ataque. **Parar bot** también solicita interrumpir su ruta. El movimiento
+está desactivado por defecto para conservar el modo cercano de 0.5 hasta que lo marques.
+Detalles y límites: [acercamiento nativo](docs/native-approach.md).
+
+No hay automatización de turnos. El control
 nativo anterior sigue en **Más controles** y utiliza `HuntingMode.txt` y Auto Battle.
 El ciclo nuevo no modifica ese archivo ni activa Auto Battle.
 
@@ -74,16 +85,19 @@ py -3 panel_caza.py
 
 1. Elige la ventana y pulsa **Conectar**. Con varios procesos no se elige el primero.
 2. Mantén Auto Battle y caza nativa apagados y deja el personaje quieto cerca de mobs.
-3. Pulsa **Calibrar combate** y captura mapa → combate → regreso al mismo mapa. Puedes
-   iniciar ese combate con **Más controles → Probar un ataque** y jugar los turnos.
-   Tras esa prueba, reconecta al mismo PID; el detector se conserva para esa instancia.
-4. Cuando la calibración sea válida, pulsa **Iniciar bot**. Busca objetivos cercanos,
-   solicita un ataque y espera el combate. Juega los turnos manualmente.
-5. Al regresar al mapa, el bot vuelve a buscar. Para moverte o cambiar de cliente,
+3. El detector queda listo al conectar. Si necesitas contrastarlo, **Calibrar combate**
+   permite capturar mapa → combate → regreso. Tras una prueba individual, reconecta
+   al mismo PID antes de iniciar el ciclo.
+4. Si quieres probar el movimiento, marca **Acercamiento automático (experimental)**
+   y elige el radio (60 casillas inicialmente). El punto actual será el centro del área.
+5. Pulsa **Iniciar bot**. Busca, se acerca si hace
+   falta y está habilitado, pide parar y solicita el ataque. Juega los turnos manualmente.
+6. Al regresar al mapa, el bot vuelve a buscar. Para moverte o cambiar de cliente,
    pulsa **Parar bot** y espera el estado detenido.
 
 **Copiar estado del bot** copia el PID, fase, contadores, detector, perfil, alcance,
-últimas 24 observaciones y resultado de la última solicitud. Una cola confirmada no
+últimas 24 observaciones y resultado de las solicitudes. El apartado `approach` incluye
+ruta, acercamientos, llegadas, causa de parada y resultado de cancelación. Una cola confirmada no
 demuestra por sí sola que empezó un combate. Si la calibración no encuentra una
 señal, usa **Copiar calibración** para revisar los tres grupos antes de cambiar el detector.
 
@@ -209,7 +223,8 @@ empaquetado/protección. Los resultados y sus límites están en
 [el informe de análisis](docs/client-analysis.md).
 
 La ruta encontrada permite aprovechar la caza nativa y consultar candidatos desde
-el panel. La llamada independiente experimental requiere validación en el juego. Las
+el panel. El ataque y el ciclo cercano se observaron en el cliente; el acercamiento
+experimental sigue pendiente de validación en el juego. Las
 actualizaciones del cliente requieren volver a comprobar la compilación, sus lecturas
 y el comportamiento del modo nativo antes de reutilizar este control.
 

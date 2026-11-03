@@ -8,9 +8,10 @@ import pytest
 from atlantica_bot.clients import ClientWindow
 from atlantica_bot.errors import DiagnosticError
 from atlantica_bot.hunting import HuntingResult
-from atlantica_bot.native_action import try_attack
+from atlantica_bot.native_action import stop_movement, try_approach, try_attack
+from atlantica_bot.navigation import ApproachSettings
 from atlantica_bot.session import LiveState
-from atlantica_bot.world import Candidate
+from atlantica_bot.world import Candidate, GridPosition, NavigationState
 
 
 @pytest.fixture
@@ -49,7 +50,14 @@ def test_one_request_targets_only_selected_pid_window_creation_and_identity(brid
         return SimpleNamespace(
             returncode=0,
             stdout=json.dumps(
-                {"pid": 200, "slot": 6, "status": 1, "thread_id": 1234, "exception": 0}
+                {
+                    "pid": 200,
+                    "slot": 6,
+                    "status": 1,
+                    "thread_id": 1234,
+                    "exception": 0,
+                    "operation": 1,
+                }
             ),
         )
 
@@ -115,6 +123,96 @@ def test_response_from_different_thread_is_not_accepted(bridge, monkeypatch):
         "atlantica_bot.native_action.subprocess.run",
         lambda *args, **kw: SimpleNamespace(
             returncode=0, stdout=json.dumps({"pid": 200, "slot": 6, "status": 1, "thread_id": 9999})
+        ),
+    )
+    with pytest.raises(DiagnosticError, match="respuesta no válida"):
+        try_attack(*bridge)
+
+
+def test_approach_supplies_selected_instance_origin_radius_and_target(bridge, monkeypatch):
+    calls = []
+    session, window, candidate = bridge
+    route = NavigationState(0x123456, 1010, candidate.map_id, candidate.x, candidate.y, True, True)
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "pid": 200,
+                    "slot": 6,
+                    "status": 15,
+                    "thread_id": 1234,
+                    "operation": 2,
+                    "navigation": route.summary(),
+                }
+            ),
+        )
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    result = try_approach(
+        session, window, candidate, GridPosition(52, 193, 300), ApproachSettings(True)
+    )
+    assert result["status"] == 15 and result["action"] == "approach"
+    assert len(calls) == 1
+    args = calls[0]
+    assert "--approach" in args
+    assert args[args.index("--radius") + 1] == "60"
+    assert args[args.index("--origin-x") + 1] == "193"
+    assert args[args.index("--x") + 1] == "202"
+
+
+def test_stop_uses_route_ownership_and_a_fresh_cancellation_channel(bridge, monkeypatch):
+    session, window, candidate = bridge
+    route = NavigationState(0x123456, 1010, 52, 202, 267, True, True)
+    calls, signals = [], []
+
+    def signal(pid):
+        value = SimpleNamespace(
+            name=f"Local\\AtlanticaPanel.Cancel.{pid}.fresh",
+            cancel=lambda: None,
+            close=lambda: None,
+        )
+        signals.append(value)
+        return value
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "pid": 200,
+                    "slot": 0,
+                    "status": 16,
+                    "thread_id": 1234,
+                    "operation": 3,
+                    "navigation": {"active": False, "moving": False},
+                }
+            ),
+        )
+
+    monkeypatch.setattr("atlantica_bot.native_action.Cancellation", signal)
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    assert stop_movement(session, window, route)["status"] == 16
+    assert len(calls) == len(signals) == 1
+    args = calls[0]
+    assert "--stop-move" in args and "--attack" not in args
+    assert args[args.index("--route-tick") + 1] == "1010"
+    assert args[args.index("--route-player") + 1] == str(0x123456)
+    assert args[args.index("--cancel-event") + 1] == signals[0].name
+
+
+@pytest.mark.parametrize("operation,status", [(2, 1), (1, 15)])
+def test_response_to_a_different_operation_is_rejected(bridge, monkeypatch, operation, status):
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {"pid": 200, "slot": 6, "thread_id": 1234, "operation": operation, "status": status}
+            ),
         ),
     )
     with pytest.raises(DiagnosticError, match="respuesta no válida"):
