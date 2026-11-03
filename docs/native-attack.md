@@ -95,7 +95,7 @@ identidad, mapa, estado, alcance y cola. Un mutex por PID abarca la ejecución y
 su limpieza. No usa entradas globales del teclado/ratón ni controles de otras
 ventanas. La prueba real con varios clientes sigue pendiente.
 
-El protocolo helper/DLL pasa a versión 5, mensaje de 312 bytes, con operaciones
+En 0.7 el protocolo helper/DLL pasó a versión 5, mensaje de 312 bytes, con operaciones
 `NativeAttack=4` y `StopNativePursuit=5`. La respuesta incluye un descriptor
 `pursuit`: actor local, tick informativo, mapa, casilla del objetivo, punto 3D y byte
 de destino pendiente. Este byte se conserva como dato; no prueba que el jugador

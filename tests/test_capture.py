@@ -284,6 +284,47 @@ def test_context_or_method_owner_replacement_during_capture_never_creates_a_vali
     assert not output.exists()
 
 
+def test_known_normal_table_stops_before_utf16_label_words_that_resemble_code_pointers(
+    session, normal_context, tmp_path, monkeypatch
+):
+    context = replace(normal_context, method_table_candidate=0x042D8AA4)
+    monkeypatch.setattr("atlantica_bot.capture.read_normal_battle", lambda _: context)
+    original_read = session.system.read_memory
+    methods = (
+        0x4F5168,
+        0x4F0675,
+        0x4F6C02,
+        0x4F5923,
+        0x4F41DF,
+        0x4F8987,
+        0x4F4A30,
+        0x4F5F28,
+        0x4F5F86,
+        0x538BC3,
+        0x4F070A,
+        0x4F4CB9,
+        0x4F3C95,
+    )
+    table = struct.pack("<13I", *methods) + "$leftturn".encode("utf-16le") + bytes(186)
+    assert len(table) == 256
+
+    def read(pid, address, size):
+        if (address, size) == (0x042D8AA4, 256):
+            return table
+        return original_read(pid, address, size)
+
+    session.system.read_memory = read
+    output = tmp_path / "known-normal.zip"
+    export_code_context(session, output, include_combat=True)
+    with ZipFile(output) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    resolution = manifest["combat"]["normal_method_resolution"]
+    assert resolution["entry_limit"] == 13 and len(resolution["entries"]) == 13
+    assert resolution["boundary_source"] == "verified_table_end_before_utf16_label"
+    assert sum(b["size"] for b in manifest["blocks"]) == 892 * 1024 + 256
+    assert (0x6C0000, 0x2000) not in session.system.reads
+
+
 def test_incomplete_dynamically_resolved_method_is_not_saved(session, normal_context, tmp_path):
     session.system.short_normal_method = True
     output = tmp_path / "normal.zip"

@@ -1,11 +1,13 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.8.3** corrige **Exportar combate** para
-seguir los métodos del gestor normal y del objeto de cliente relacionado.
-**Ver mercenarios** conserva la consulta de los nueve puestos.
+con Auto Battle apagado. La versión **0.9.0** añade una prueba individual de
+**ataque básico en combate** en **Ver mercenarios**: elige un mercenario y un
+enemigo y pulsa **Probar básico (experimental)**. Se usa el constructor y envío
+nativo de la ruta del clic manual, con comprobaciones de turno y objetivo.
 Permite guardar ataque básico o magia Q/W/E/R/T por mercenario.
-Los turnos todavía se juegan manualmente.
+El ciclo todavía espera a que juegues los turnos. La prueba individual requiere
+**Parar bot** durante la batalla y aún debe comprobarse en el cliente real.
 Conserva **Ataque nativo por radio (experimental)**, **Calibrar combate**,
 observaciones y tres perfiles. Al conectar con la compilación
 compatible vincula el detector local ya comprobado a ese PID y fecha de creación.
@@ -74,6 +76,9 @@ El perfil activo queda fijado al iniciar el ciclo. Detalles de uso y diagnóstic
 [calibración y perfiles](docs/combat-calibration.md).
 El análisis pendiente y la captura necesaria se describen en
 [turnos de mercenarios](docs/mercenary-turns.md).
+La prueba de 0.9 no ejecuta el perfil, magias ni botín: solicita un único básico
+del puesto elegido. Las instrucciones y límites están en
+[prueba de básico en combate](docs/basic-battle-trial.md).
 
 **Ataque nativo por radio (experimental)** viene marcado para la prueba solicitada.
 El radio va de 5 a 120 casillas alrededor del inicio de esa ejecución, con valor
@@ -153,7 +158,10 @@ y del cliente relacionado, porque el contexto comienza con datos, y añade el
 código de cliente que faltaba. **Ver mercenarios** muestra puesto, nombre
 del perfil y tipo leído; no confirma disponibilidad para actuar. El diagnóstico
 incluye los errores de lectura si todavía no puede validar los puestos.
-Detalles: [gestores del combate normal](docs/normal-combat-analysis-20261103-085549.md).
+La captura 0.8.3 resolvió el gestor `cltBattleManagerClient` y permitió seguir la
+ruta del clic manual hasta la solicitud de básico. La versión 0.9 limita esa tabla
+a sus 13 entradas comprobadas, antes de una cadena UTF-16 que parecía código por
+su valor numérico. Detalles: [prueba de básico en combate](docs/basic-battle-trial.md).
 
 La selección de cliente queda bloqueada mientras termina el trabajador. Si se cierra
 el juego, se detiene; abrir otro cliente exige Conectar. Cambios de mapa, movimiento

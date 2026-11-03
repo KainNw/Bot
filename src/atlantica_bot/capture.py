@@ -59,6 +59,7 @@ COMBAT_READONLY_BLOCKS = (
 ANCHOR_ADDRESS = 0x0043CDA7
 ANCHOR_BYTES = bytes.fromhex("68 08 64 2c 04")
 NORMAL_METHOD_LIMIT = 64
+KNOWN_METHOD_COUNTS = {0x042D8AA4: 13}
 
 
 def _normal_methods(
@@ -82,10 +83,11 @@ def _normal_methods(
     prefix = f"normal-{role}"
     blocks.append((f"{prefix}-method-table", table, data))
     entries = []
+    entry_limit = KNOWN_METHOD_COUNTS.get(table, NORMAL_METHOD_LIMIT)
     for offset, address in enumerate(pointers):
         if not 0x00401000 <= address < 0x03F85000:
             break
-        if len(entries) == NORMAL_METHOD_LIMIT:
+        if len(entries) == entry_limit:
             break
         existing = next(
             (name for name, start, code in blocks if start <= address < start + len(code)), None
@@ -103,8 +105,11 @@ def _normal_methods(
         "status": "captured",
         "table_address": f"{table:08X}",
         "entries": entries,
-        "entry_limit": NORMAL_METHOD_LIMIT,
-        "limit_reached": len(entries) == NORMAL_METHOD_LIMIT,
+        "entry_limit": entry_limit,
+        "limit_reached": len(entries) == entry_limit,
+        "boundary_source": "verified_table_end_before_utf16_label"
+        if table in KNOWN_METHOD_COUNTS
+        else "bounded_candidate_scan",
     }
 
 

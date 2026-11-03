@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
+from .battle import BattleTrial, read_battle_frame
 from .battle_context import read_normal_battle
 from .capture import export_code_context
 from .clients import control_native_marker, marker_scope
@@ -14,7 +15,7 @@ from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
 from .errors import DiagnosticError
 from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
-from .native_action import try_attack
+from .native_action import try_attack, try_battle_basic
 from .navigation import ApproachSettings
 from .profiles import ACTION_LABELS, BotProfile, Mercenary, ProfileStore
 from .session import GameSession, LiveState
@@ -42,6 +43,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.window_choice = tk.StringVar()
             self.last_trial = {}
             self.trial_unknown = False
+            self.battle_trials = set()
             self.bot_worker: HuntWorker | None = None
             self.bot_report = {}
             self.closing = False
@@ -787,6 +789,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.pid.set(str(session.process.pid))
                 self.session = session
                 self.trial_unknown = False
+                self.battle_trials.clear()
                 self.directory = session.directory
                 self.folder.set(str(session.directory))
                 self.detail.set(
@@ -989,7 +992,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             window.title(f"PID {selected_session.process.pid} — mercenarios en combate")
             frame = ttk.Frame(window, padding=16)
             frame.pack(fill="both", expand=True)
-            summary = tk.StringVar(value="Consulta de lectura; los turnos siguen siendo manuales.")
+            summary = tk.StringVar(value="Consulta los puestos antes de probar un ataque básico.")
             ttk.Label(frame, textvariable=summary, wraplength=680).pack(anchor="w", pady=6)
             table = ttk.Treeview(
                 frame, columns=("slot", "label", "kind", "present"), show="headings", height=9
@@ -1004,10 +1007,40 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 table.column(column, width=width, anchor="w")
             table.pack(fill="both", expand=True, pady=6)
             last = {}
+            live = None
+            trial_result = {}
+            source_choices, target_choices = {}, {}
+            source_choice, target_choice = tk.StringVar(), tk.StringVar()
+            ttk.Label(frame, text="Mercenario para la prueba:").pack(anchor="w", pady=(8, 0))
+            source_list = ttk.Combobox(
+                frame, textvariable=source_choice, state="readonly", width=65
+            )
+            source_list.pack(fill="x", pady=4)
+            ttk.Label(frame, text="Objetivo en la formación enemiga:").pack(anchor="w")
+            target_list = ttk.Combobox(
+                frame, textvariable=target_choice, state="readonly", width=65
+            )
+            target_list.pack(fill="x", pady=4)
+            trial_status = tk.StringVar(
+                value="Prueba experimental: solicita un solo ataque básico. Para el bot antes. "
+                "El perfil todavía no ejecuta turnos ni magias."
+            )
+            ttk.Label(frame, textvariable=trial_status, wraplength=680).pack(anchor="w", pady=6)
 
             def refresh_members() -> None:
+                nonlocal live
+                live = None
+                trial_button.configure(state="disabled")
                 table.delete(*table.get_children())
                 last.clear()
+                if trial_result:
+                    last["basic_trial"] = dict(trial_result)
+                source_choices.clear()
+                target_choices.clear()
+                source_list.configure(values=())
+                target_list.configure(values=())
+                source_choice.set("")
+                target_choice.set("")
                 try:
                     if self.session is not selected_session:
                         raise DiagnosticError(
@@ -1039,6 +1072,48 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         "ocupados. El tipo se leyó del cliente; los nombres proceden del perfil. "
                         "La disponibilidad para actuar todavía no está comprobada."
                     )
+                    try:
+                        live = read_battle_frame(selected_session)
+                        last["battle_frame"] = live.summary()
+                        source_choices.update(
+                            {
+                                f"Puesto {u.member_slot} — "
+                                f"{names.get(u.member_slot, 'Sin nombre')} "
+                                f"(tipo {u.kind_id})": u
+                                for u in live.sources
+                            }
+                        )
+                        enemy_groups = {
+                            slot: n
+                            for n, slot in enumerate(
+                                sorted({u.world_slot for u in live.enemies}), 1
+                            )
+                        }
+                        target_choices.update(
+                            {
+                                f"Enemigo {enemy_groups[u.world_slot]} — puesto {u.member_slot} "
+                                f"(tipo {u.kind_id})": u
+                                for u in live.enemies
+                            }
+                        )
+                        source_list.configure(values=tuple(source_choices))
+                        target_list.configure(values=tuple(target_choices))
+                        source_choice.set(next(iter(source_choices), ""))
+                        target_choice.set(next(iter(target_choices), ""))
+                        trial_status.set(
+                            ("Turno de tu grupo. " if live.own_turn else "Turno del otro grupo. ")
+                            + "Comprueba el tipo de los puestos leídos. "
+                            "El botón comprueba el ataque con el cliente antes de enviarlo."
+                        )
+                        if live.own_turn and live.phase == 3 and source_choices and target_choices:
+                            trial_button.configure(state="normal")
+                    except (DiagnosticError, OSError) as exc:
+                        trial_status.set(str(exc))
+                        last["battle_frame"] = {
+                            "status": "unavailable",
+                            "message": str(exc),
+                            "details": getattr(exc, "details", None),
+                        }
                 except (DiagnosticError, OSError) as exc:
                     summary.set(str(exc))
                     last.update(
@@ -1049,6 +1124,58 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                             "tool_version": __version__,
                         }
                     )
+
+            def test_basic() -> None:
+                try:
+                    self.require_idle_bot()
+                    if self.session is not selected_session or live is None:
+                        raise DiagnosticError("La conexión cambió; actualiza el combate.")
+                    if self.trial_unknown:
+                        raise DiagnosticError(
+                            "Comprueba el juego y reconecta antes de otra prueba."
+                        )
+                    selected_window = self.selected_window(selected_session)
+                    source = source_choices.get(source_choice.get())
+                    target = target_choices.get(target_choice.get())
+                    if source is None or target is None:
+                        raise DiagnosticError("Elige el mercenario y el objetivo de la prueba.")
+                    trial = BattleTrial(live, source, target)
+                    trial.validate()
+                    if trial.key() in self.battle_trials:
+                        raise DiagnosticError(
+                            "Ya se solicitó una prueba de este mercenario en este turno. "
+                            "Espera al siguiente turno o continúa manualmente."
+                        )
+                except DiagnosticError as exc:
+                    trial_status.set(str(exc))
+                    return
+                trial_button.configure(state="disabled")
+                self.battle_trials.add(trial.key())
+                try:
+                    result = try_battle_basic(selected_session, selected_window, trial)
+                    self.last_trial = result
+                    if result["status"] not in (26, 10, 11):
+                        self.battle_trials.discard(trial.key())
+                    self.trial_unknown |= result["status"] in (10, 11)
+                    last["basic_trial"] = result
+                    trial_result.clear()
+                    trial_result.update(result)
+                    trial_status.set(
+                        result["message"] + " Actualizar solo vuelve a leer el combate."
+                    )
+                except (DiagnosticError, OSError) as exc:
+                    self.trial_unknown = True
+                    result = {
+                        "pid": selected_session.process.pid,
+                        "status": "unknown",
+                        "message": str(exc),
+                        "attack_confirmed": False,
+                    }
+                    self.last_trial = result
+                    last["basic_trial"] = result
+                    trial_result.clear()
+                    trial_result.update(result)
+                    trial_status.set(str(exc))
 
             def copy_members() -> None:
                 if last:
@@ -1061,6 +1188,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Button(buttons, text="Copiar mercenarios", command=copy_members).pack(
                 side="left", padx=8
             )
+            trial_button = ttk.Button(
+                buttons, text="Probar básico (experimental)", command=test_basic, state="disabled"
+            )
+            trial_button.pack(side="left", padx=8)
             if load:
                 refresh_members()
 

@@ -1,10 +1,16 @@
-# Turnos de mercenarios 0.8.3
+# Turnos de mercenarios 0.9.0
 
 El panel guarda el plan de cada mercenario: puesto, nombre, participación, prioridad,
 ataque básico o magia Q/W/E/R/T y la preferencia de usar básico si la magia no está
-disponible. Todavía no ejecuta esas acciones; el ciclo de caza pausa durante la
-batalla para que juegues los turnos manualmente. El delay de persecución y ataque
-de 0.7 se conserva.
+disponible. El ciclo todavía no ejecuta el plan; pausa durante la batalla para que
+juegues los turnos. En 0.9 se añade una prueba de un básico con mercenario y enemigo
+elegidos desde **Ver mercenarios**, después de **Parar bot**. Falta comprobar el
+golpe en el cliente real. Las magias y el botín siguen pendientes.
+El delay de persecución y ataque de 0.7 se conserva.
+
+Para la prueba nueva, consulta [ataque básico individual](basic-battle-trial.md).
+**Actualizar** y **Copiar mercenarios** solo leen; **Probar básico (experimental)**
+sí solicita una acción. El panel no ejecuta automáticamente el perfil guardado.
 
 ## Controles comunicados por el usuario
 
@@ -22,7 +28,7 @@ todavía requieren análisis. Tampoco se ha implementado la recogida automática
 
 ## Exportar el código de combate
 
-1. Abre el panel 0.8.3 y conecta con la ventana elegida.
+1. Abre el panel 0.9.0 y conecta con la ventana elegida.
 2. Mantén Auto Battle y caza nativa apagados.
 3. Entra en combate manualmente o con el ciclo de caza que ya funciona. El panel
    permite exportar mientras el ciclo está pausado dentro de la batalla.
@@ -52,7 +58,9 @@ El manifiesto de combate usa esquema 4 y contiene PID/creación, hash de la
 compilación, observaciones antes/después, detector y los controles comunicados.
 Cada bloque indica `kind=code` o `kind=readonly_constants`.
 Conserva `turn_state_verified=false` y `turn_execution_available=false`: detectar
-la batalla no identifica el turno del mercenario.
+la batalla no identifica por sí sola la disponibilidad del mercenario. El visor
+ampliado compara además el grupo local y el grupo que tiene turno; el puente
+comprueba la disponibilidad y el ataque mediante las funciones del cliente.
 
 Añade estos bloques a la exportación normal de hasta 100 KiB:
 
@@ -103,5 +111,5 @@ La exportación normal sigue limitada a 100 KiB. No hay volcados de bloques de h
 
 El ZIP no incluye nombres de los perfiles, chat ni contenido de paquetes de red.
 Los bloques tienen tamaño fijo y SHA-256; se conserva el archivo de destino si
-ya existe. El siguiente paso es analizar el código del cliente normal y seguir sus
-validaciones de turno y objetivo antes de incorporar la primera orden nativa por PID.
+ya existe. La captura 0.8.3 permitió incorporar la primera prueba de básico por PID.
+La confirmación visual del golpe y la lectura del turno siguen pendientes en el juego.

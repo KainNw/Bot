@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .battle import BattleTrial
 from .clients import ClientWindow
 from .errors import DiagnosticError
 from .hunting import control_hunting
@@ -40,6 +41,11 @@ RESULTS = {
     23: "Se encoló la parada de la persecución nativa; esperando una posición estable.",
     24: "El destino nativo cambió fuera del bot; no se modificó ese movimiento.",
     25: "El cliente ya está en combate; no se envió una orden de movimiento.",
+    26: "Se encoló un ataque básico del mercenario. Comprueba el golpe en el juego.",
+    27: "El mercenario o el combate todavía no están listos para atacar. Actualiza el turno.",
+    28: "El turno cambió antes del envío. Actualiza el combate; no se repitió la acción.",
+    29: "El mercenario o el enemigo cambiaron. Actualiza el combate.",
+    30: "El cliente rechazó el ataque básico. Elige otro objetivo o espera al turno.",
 }
 
 
@@ -147,6 +153,18 @@ def stop_native_pursuit(
     return _request(session, window, None, operation=5, pursuit=pursuit)
 
 
+def try_battle_basic(session: GameSession, window: ClientWindow, trial: BattleTrial) -> dict:
+    trial.validate()
+    if (trial.frame.context.pid, trial.frame.context.creation_time) != (
+        session.process.pid,
+        session.creation_time,
+    ):
+        raise DiagnosticError("La lectura del combate pertenece a otra instancia.")
+    target = trial.target
+    candidate = Candidate(target.world_slot, target.kind_id, 0, 0, 0, 0, target.identity)
+    return _request(session, window, candidate, operation=6, battle=trial)
+
+
 def _request(
     session: GameSession,
     window: ClientWindow,
@@ -158,6 +176,7 @@ def _request(
     radius: int = 0,
     route: NavigationState | None = None,
     pursuit: NativePursuit | None = None,
+    battle: BattleTrial | None = None,
 ) -> dict:
     with BotLease(session.process.pid):
         signal = cancellation or Cancellation(session.process.pid)
@@ -172,6 +191,7 @@ def _request(
                 radius=radius,
                 route=route,
                 pursuit=pursuit,
+                battle=battle,
             )
         finally:
             if cancellation is None:
@@ -192,6 +212,7 @@ def _try_action(
     radius: int,
     route: NavigationState | None,
     pursuit: NativePursuit | None,
+    battle: BattleTrial | None,
 ) -> dict:
     """Issue one explicit request on the selected window's thread; never retry or move input."""
     if sys.platform != "win32":
@@ -214,9 +235,15 @@ def _try_action(
         raise DiagnosticError("Esta copia no contiene el puente Windows de 32 bits compilado.")
     args = [
         str(helper),
-        ("--probe", "--attack", "--approach", "--stop-move", "--native-attack", "--stop-native")[
-            operation
-        ],
+        (
+            "--probe",
+            "--attack",
+            "--approach",
+            "--stop-move",
+            "--native-attack",
+            "--stop-native",
+            "--battle-basic",
+        )[operation],
         "--pid",
         str(window.pid),
         "--created",
@@ -331,6 +358,12 @@ def _try_action(
             args.extend(("--map", str(pursuit.map_id)))
     elif operation == 5:
         raise DiagnosticError("Falta la persecución propia que se desea detener.")
+    if operation == 6:
+        if battle is None:
+            raise DiagnosticError("Falta la lectura del turno de combate.")
+        battle.validate()
+        for name, value in battle.arguments().items():
+            args.extend((f"--{name}", str(value)))
     if cancellation is not None:
         args.extend(("--cancel-event", cancellation.name))
     try:
@@ -367,8 +400,26 @@ def _try_action(
         code = report["status"]
         if type(code) is not int or code not in RESULTS or type(report["thread_id"]) is not int:
             raise ValueError("Respuesta no válida")
+        if operation == 6:
+            if code not in {4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 26, 27, 28, 29, 30}:
+                raise ValueError("Resultado de otra operación")
+            expected = {
+                "manager": battle.frame.context.manager,
+                "context": battle.frame.context.context,
+                "client": battle.frame.context.client_object,
+                "turn_number": battle.frame.turn_number,
+                "turn_tick": battle.frame.turn_tick,
+                "mercenary_slot": battle.source.member_slot,
+                "target_member_slot": battle.target.member_slot,
+                "source_unit": battle.source.address,
+                "target_unit": battle.target.address,
+            }
+            if any(report["battle"].get(key) != value for key, value in expected.items()):
+                raise ValueError("Respuesta de otro turno o mercenario")
         if code >= 15 and code not in (
-            {15, 17, 18, 19, 20, 21}
+            {26, 27, 28, 29, 30}
+            if operation == 6
+            else {15, 17, 18, 19, 20, 21}
             if operation == 2
             else {16, 17, 21}
             if operation == 3
@@ -413,5 +464,10 @@ def _try_action(
         "stop_movement",
         "native_attack",
         "stop_native_pursuit",
+        "battle_basic",
     )[operation]
+    if operation == 6:
+        report["attack_confirmed"] = False
+        report["target_identity"] = list(battle.target.identity)
+        report["actor_identity"] = list(battle.frame.context.actor_identity)
     return report

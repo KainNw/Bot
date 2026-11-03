@@ -1,10 +1,13 @@
 import json
 import sys
 from contextlib import nullcontext
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
+from atlantica_bot.battle import BattleFrame, BattleTrial, BattleUnit
+from atlantica_bot.battle_context import NormalBattleContext
 from atlantica_bot.clients import ClientWindow
 from atlantica_bot.errors import DiagnosticError
 from atlantica_bot.hunting import HuntingResult
@@ -13,6 +16,7 @@ from atlantica_bot.native_action import (
     stop_native_pursuit,
     try_approach,
     try_attack,
+    try_battle_basic,
     try_native_attack,
 )
 from atlantica_bot.navigation import ApproachSettings
@@ -340,3 +344,139 @@ def test_response_to_a_different_operation_is_rejected(bridge, monkeypatch, oper
     )
     with pytest.raises(DiagnosticError, match="respuesta no válida"):
         try_attack(*bridge)
+
+
+@pytest.fixture
+def battle_trial(bridge):
+    context = NormalBattleContext(
+        200,
+        123456,
+        0x500000,
+        (209, 8888, 0),
+        0x600000,
+        0,
+        0x700000,
+        0x042D8AA4,
+        0x10215B8,
+        (),
+        client_object=0x900000,
+    )
+    source = BattleUnit(1, 0xA01000, 1, context.actor_identity, 3, 2318, 100, 0, 1, 0x8000)
+    target = BattleUnit(2, 0xA02000, 6, (5633, 9999, 0), 5, 5000, 40, 1, 1, 0x8000)
+    frame = BattleFrame(context, 3, 0, 0, 12, 123450, (source, target))
+    return BattleTrial(frame, source, target)
+
+
+def battle_reply(trial, status=26):
+    return {
+        "pid": 200,
+        "slot": 6,
+        "thread_id": 1234,
+        "operation": 6,
+        "status": status,
+        "battle": {
+            "manager": trial.frame.context.manager,
+            "context": trial.frame.context.context,
+            "client": trial.frame.context.client_object,
+            "turn_number": trial.frame.turn_number,
+            "turn_tick": trial.frame.turn_tick,
+            "mercenary_slot": trial.source.member_slot,
+            "target_member_slot": trial.target.member_slot,
+            "source_unit": trial.source.address,
+            "target_unit": trial.target.address,
+            "native_error": [0, 0, 0, 0],
+        },
+    }
+
+
+def test_battle_basic_sends_one_bound_request_with_distinct_member_and_enemy_slots(
+    bridge, battle_trial, monkeypatch
+):
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        for key, value in {
+            "pid": 200,
+            "created": 123456,
+            "thread": 1234,
+            "mercenary": 3,
+            "enemy-member": 5,
+            "slot": 6,
+            "kind": 5633,
+            "actor-kind": 209,
+            "actor-serial": 8888,
+            "turn-number": 12,
+            "turn-tick": 123450,
+        }.items():
+            assert args[args.index(f"--{key}") + 1] == str(value)
+        assert "--battle-basic" in args and "--native-attack" not in args
+        assert kwargs["timeout"] == 8
+        return SimpleNamespace(returncode=0, stdout=json.dumps(battle_reply(battle_trial)))
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    session, window, _ = bridge
+    report = try_battle_basic(session, window, battle_trial)
+    assert len(calls) == 1 and report["status"] == 26 and report["action"] == "battle_basic"
+    assert not report["attack_confirmed"] and not report["battle_confirmed"]
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [("turn_number", 99), ("turn_tick", 123451), ("mercenary_slot", 4), ("target_unit", 0xB00000)],
+)
+def test_battle_reply_from_a_different_turn_or_member_is_rejected(
+    bridge, battle_trial, monkeypatch, key, value
+):
+    reply = battle_reply(battle_trial)
+    reply["battle"][key] = value
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run",
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps(reply)),
+    )
+    with pytest.raises(DiagnosticError, match="respuesta no válida"):
+        try_battle_basic(bridge[0], bridge[1], battle_trial)
+
+
+def test_foreign_battle_instance_is_rejected_before_opening_the_helper(
+    bridge, battle_trial, monkeypatch
+):
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run",
+        lambda *a, **kw: pytest.fail("foreign process"),
+    )
+    trial = replace(
+        battle_trial,
+        frame=replace(
+            battle_trial.frame, context=replace(battle_trial.frame.context, creation_time=99999)
+        ),
+    )
+    with pytest.raises(DiagnosticError, match="otra instancia"):
+        try_battle_basic(bridge[0], bridge[1], trial)
+
+
+def test_native_battle_rejection_returns_without_retry_or_claiming_a_hit(
+    bridge, battle_trial, monkeypatch
+):
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(battle_reply(battle_trial, 30)))
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    report = try_battle_basic(bridge[0], bridge[1], battle_trial)
+    assert len(calls) == 1 and report["status"] == 30 and not report["attack_confirmed"]
+
+
+def test_world_attack_queue_result_cannot_be_accepted_as_a_battle_action(
+    bridge, battle_trial, monkeypatch
+):
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=0, stdout=json.dumps(battle_reply(battle_trial, 1))
+        ),
+    )
+    with pytest.raises(DiagnosticError, match="respuesta no válida"):
+        try_battle_basic(bridge[0], bridge[1], battle_trial)
