@@ -32,7 +32,7 @@ el objetivo y el alcance cuando ejecuta la solicitud. No se emiten clics ni tecl
 | Estabilizando | Exige el mismo mapa y posición estable durante dos segundos. |
 | Buscando | Consulta candidatos y elige uno dentro del umbral nativo. |
 | Acercándose (opcional) | Solicita una ruta normal dentro del radio y observa el progreso. |
-| Parando ruta | Comprueba la ruta propia, solicita detenerla y estabiliza antes de atacar. |
+| Verificando llegada | Espera la ruta inactiva y posición 3D estable antes de atacar. Ante atasco, cancelación o límites interrumpe su ruta. |
 | Solicitud enviada | Espera dos observaciones de combate según la calibración; no duplica la solicitud. |
 | Combate | Pausa solicitudes; los turnos son manuales. |
 | Regreso al mapa | Vuelve a estabilizar y buscar en el mismo mapa. |

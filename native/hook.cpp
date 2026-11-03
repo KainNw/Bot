@@ -164,6 +164,7 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
         || !LockImport(0x03f850d0, "EnterCriticalSection", "RtlEnterCriticalSection")
         || !LockImport(0x03f850d4, "LeaveCriticalSection", "RtlLeaveCriticalSection"))
         return InvalidQueue;
+    if (Read<uint8_t>(player + 0x1012) == 1) { ReadRoute(player, cmd); return MovementBusy; }
     if (cmd->operation == Probe) return Verified; // Probe never calls any client function.
     if (cmd->operation != Attack) return Unsupported;
     if (IsCancelled(cancellation)) return Cancelled;
@@ -175,7 +176,10 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
     if (!reinterpret_cast<Ready>(0x4355ec)(reinterpret_cast<void*>(player))) return Blocked;
     if (!reinterpret_cast<Can>(0x433a4a)(reinterpret_cast<void*>(player), static_cast<int>(cmd->slot))) return Blocked;
     if (IsCancelled(cancellation)) return Cancelled;
-    if (Read<uint32_t>(0x04a9290c) != owner || !Identity(target, cmd)) return TargetChanged;
+    if (Read<uint32_t>(0x04a9290c) != owner || !Identity(target, cmd)
+        || Read<uint32_t>(manager + 0x28 + cmd->slot * 4) != target
+        || Read<uint32_t>(target + 0x200) != cmd->slot || !Active(index, cmd->slot)) return TargetChanged;
+    if (Read<uint8_t>(player + 0x1012) == 1) { ReadRoute(player, cmd); return MovementBusy; }
     alignas(4) unsigned char payload[16] = {}, message[64] = {};
     reinterpret_cast<Payload>(0x43bc26)(payload, reinterpret_cast<void*>(target + 0x204), 1, 0);
     reinterpret_cast<Message>(0x40c4e9)(message, 0xae2, 16, payload, 1);

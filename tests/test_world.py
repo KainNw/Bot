@@ -179,6 +179,37 @@ def test_navigation_observation_reads_route_destination_and_flags(session):
     result = observe_scene(session, include_navigation=True)
     assert result.navigation.key == (actor, 1234, 8, 14, 25)
     assert result.navigation.active and result.navigation.moving
+    assert result.world_position == (10.0, 0.0, 20.0)
+
+
+def test_active_identity_snapshot_includes_filtered_actors(session):
+    memory = session.system
+    actor, _ = memory.actor(7, 4000, 8, 12, 25)
+    memory.write(actor + 0x208, struct.pack("<II", 77, 88))
+    memory.write(actor + 0x38, b"\x22")
+    result = scan_world(session)
+    assert result.candidates == () and result.active_identities == ((4000, 77, 88),)
+    assert result.player_world_position == (10.0, 0.0, 20.0)
+
+
+def test_identity_reused_during_scan_is_not_returned_as_a_candidate(session):
+    memory = session.system
+    actor, info = memory.actor(7, 4000, 8, 12, 25)
+
+    def replace_identity(address, size):
+        if address == info + 0xCA:
+            memory.write(actor + 0x208, struct.pack("<II", 99, 100))
+
+    memory.after_read = replace_identity
+    result = scan_world(session)
+    assert result.candidates == () and result.active_identities is None
+    assert dict(result.rejected_by) == {"identity_changed": 1}
+
+
+def test_nonfinite_actual_position_is_rejected_before_navigation_can_be_selected(session):
+    session.system.write(0x30010000 + 0xB8C, struct.pack("<fff", float("nan"), 0, 0))
+    with pytest.raises(DiagnosticError, match="posición 3D no válida"):
+        observe_scene(session, include_navigation=True)
 
 
 def test_transport_observer_reads_counters_without_reading_packet_data(session):
@@ -253,6 +284,7 @@ def test_unreadable_actor_keeps_partial_result_and_counts_failure(session):
     view = scan_world(session)
     assert len(view.candidates) == 1
     assert view.read_errors == 1
+    assert view.active_identities is None
 
 
 def test_reused_slot_is_discarded(session):

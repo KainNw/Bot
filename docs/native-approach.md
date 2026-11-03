@@ -1,9 +1,11 @@
-# Acercamiento opcional 0.6.3
+# Acercamiento opcional 0.6.4
 
 El usuario confirmó dos encuentros con 0.5: entró en combate sin Auto Battle,
 reconoció la batalla por `local_context` y volvió a buscar. El límite restante era
 el alcance: solo atacaba los mobs cercanos. La versión 0.6 añade una ruta normal
-del cliente hacia objetivos lejanos; su efecto en el juego sigue pendiente de prueba.
+del cliente hacia objetivos lejanos. La captura 0.6.3 registró tres combates y un
+cuarto envío sin combate. 0.6.4 cambia la finalización del recorrido y necesita
+contraste en el juego.
 
 ## Uso
 
@@ -14,8 +16,9 @@ del cliente hacia objetivos lejanos; su efecto en el juego sigue pendiente de pr
 3. Pulsa **Iniciar bot**. El punto de inicio fija el centro del área de esa ejecución.
    El radio usa distancia de rejilla (|ΔX| + |ΔY|), entre 5 y 120; no representa metros.
 4. El bot prefiere un objetivo ya en alcance. Si no hay uno disponible, solicita
-   acercarse al más próximo dentro del área. Al alcanzar el margen de ataque,
-   solicita parar, espera dos segundos de posición estable y vuelve a consultar.
+   acercarse al más próximo dentro del área. Espera que termine la ruta del cliente,
+   comprueba la inactividad y exige dos segundos de posición real estable antes de
+   consultar de nuevo y solicitar el ataque.
 5. **Parar bot** cancela nuevas acciones y solicita detener una ruta propia conocida.
    Espera el estado detenido antes de moverlo manualmente o cambiar de ventana.
 6. **Copiar estado del bot** incluye `approach`: punto de inicio, configuración,
@@ -125,6 +128,49 @@ y expulsaban la historia de los primeros combates del límite de 32 eventos.
 cuando cambia otro campo. Así se mantienen las selecciones, llegadas y confirmaciones
 en un diagnóstico de este mismo tipo.
 
+## Esperar el recorrido completo en 0.6.4
+
+La captura `Atlantica-PID10192-contexto-20261103-051123.zip` contiene once bloques
+con tamaño y SHA-256 verificados, manifiesto 0.6.3 y Auto Battle/caza nativa apagados.
+El ciclo observó tres combates y se detuvo tras el cuarto envío, sin repetirlo:
+
+| Intento | Identidad (tipo, número, tercero) | Origen | Distancia al cuadrado al enviar | Resultado |
+| --- | --- | --- | --- | --- |
+| 1 | `(12039, 68087899, 0)` | Ruta terminada por el cliente | 19.9046 | Combate confirmado. |
+| 2 | `(14801, 67723769, 0)` | Cercano | 18.56 | Combate confirmado. |
+| 3 | `(19485, 68108009, 0)` | Cercano | 18.5601 | Combate confirmado. |
+| 4 | `(5633, 68108322, 0)` | Ruta interrumpida por el bot al entrar en alcance | 7.84757 | Sin combate observado en 30 segundos. |
+
+El último objetivo tenía identidad distinta de los tres anteriores. La cola estuvo
+vacía y el control de comandos en `0000`; no hay evidencia de atasco local ni de
+aceptación del servidor. Los ataques anteriores funcionaron cerca del umbral 20,
+por lo que este registro no respalda aumentar arbitrariamente el alcance.
+La diferencia entre finalización natural y parada anticipada es una hipótesis a
+contrastar, no una causa del rechazo demostrada.
+
+0.6.4 elimina la parada al 80 % del umbral. Mientras la ruta siga activa, vigila
+identidad, destino, límites y progreso sin solicitar ataques. Reconoce una ruta
+inactiva aunque conserve su tick y destino. Tras confirmar inactividad, requiere
+dos segundos de estabilidad de los floats `+0xB8C/+0xB90/+0xB94`, con tolerancia
+de 0.01 unidades de distancia 3D, además de la rejilla. Revalida esa posición en
+la consulta inmediatamente anterior al ataque; si cambió, reinicia la espera.
+El puente rechaza un ataque si el cliente vuelve a publicar una ruta activa y
+comprueba de nuevo puesto, puntero e identidad tras la validación nativa.
+
+El seguimiento, las esperas y las exclusiones se vinculan a los tres identificadores,
+independientemente del puesto. La misma identidad `(14801, 67723769, 0)` apareció
+en el puesto 6 de la captura anterior y en el 9 de esta captura. Un puesto nuevo
+no prueba que sea otro mob. El historial solo retira una identidad cuando una
+consulta completa de la colección activa deja de encontrarla, incluyendo actores
+rechazados como candidatos. Una consulta parcial conserva las exclusiones.
+Este historial pertenece a cada ejecución y a su instancia de cliente.
+
+La solicitud sigue siendo `0x0AE2`, con los 12 bytes de identidad y controles
+`1,0` preparados por `0043BC26`, constructor `0040C4E9` y envío `0043652D`.
+Son los mismos argumentos de las dos ramas de ataque nativo observadas en
+`0043CD71` y `0043CE80`. El bucle completo `0043CA56` depende de Auto Battle;
+se reutiliza su solicitud, manteniendo el ciclo independiente.
+
 | Operación | Función del cliente | Comprobación |
 | --- | --- | --- |
 | Solicitar ruta | `0043C9D3`, this=jugador, args mapa/X/Y, ret 12. | Envuelve `0043B145`, conserva la navegación normal del cliente. |
@@ -150,10 +196,10 @@ El código nuevo necesita confirmar en el juego movimiento, llegada y Parar bot.
 ## Límites del ciclo
 
 Durante el acercamiento solo consulta la ruta y el objetivo; no envía ataques.
-Solicita parar cuando el objetivo entra en el 80 % del umbral de distancia al
-cuadrado, para dejar margen. Después usa el filtro normal y la revalidación nativa
-antes de pedir un ataque. Una identidad desaparecida, cambio importante del destino,
-cinco segundos sin progreso o veinte segundos de duración terminan el acercamiento.
+Espera el fin del recorrido, estabiliza y usa el filtro normal y la revalidación
+nativa antes de pedir un ataque. Una identidad desaparecida, cambio importante del
+destino, cinco segundos sin progreso real o veinte segundos de duración solicitan
+interrumpir el acercamiento. Esas interrupciones no se cuentan como llegadas.
 Los acercamientos no completados tienen una espera por objetivo; tras tres fallos
 se detiene. Al superar el área se detiene también. El centro no se desplaza tras
 cada combate.

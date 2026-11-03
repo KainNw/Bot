@@ -25,7 +25,7 @@ IDLE = NavigationState(ROUTE.player_address, 0, -1, 0, 0, False, False)
 DETECTOR = CombatDetector(100, 777, "local_context")
 
 
-def observation(position=ORIGIN, navigation=IDLE, *, battle=False):
+def observation(position=ORIGIN, navigation=IDLE, *, battle=False, world_position=None):
     return Observation(
         100,
         777,
@@ -33,11 +33,19 @@ def observation(position=ORIGIN, navigation=IDLE, *, battle=False):
         position,
         local=LocalState(1, 0 if battle else -1, -1, 0),
         navigation=navigation,
+        world_position=world_position or (float(position.x), 0.0, float(position.y)),
     )
 
 
-def view(*candidates, position=ORIGIN):
-    return WorldView(position, candidates, 2, range_limit_squared=20)
+def view(*candidates, position=ORIGIN, world_position=None):
+    return WorldView(
+        position,
+        candidates,
+        2,
+        range_limit_squared=20,
+        player_world_position=world_position or (float(position.x), 0.0, float(position.y)),
+        active_identities=tuple(candidate.identity for candidate in candidates),
+    )
 
 
 def move_report():
@@ -79,13 +87,15 @@ def test_walk_stop_stabilize_attack_battle_and_return_without_auto_battle():
     assert engine.observe(observation(arrived, ROUTE), 3.5)
     nearby = replace(TARGET, distance_squared=10)
     assert engine.select(view(nearby, position=arrived), 3.5) is None
+    assert engine.phase == "approaching" and engine.attempts == 0
+    assert not engine.observe(observation(arrived, IDLE), 3.6)
     assert engine.phase == "stopping_move" and engine.attempts == 0
-    engine.record_movement_stop(stopped(), 3.6)
-    assert not engine.observe(observation(arrived), 3.7)
-    assert engine.observe(observation(arrived), 5.8)
-    assert engine.select(view(nearby, position=arrived), 5.8) == nearby
-    engine.record(nearby, {"pid": 100, "slot": 6, "status": 1, "message": "queued"}, 5.9)
-    for now in (6, 6.25):
+    engine.record_movement_stop(stopped(), 3.7)
+    assert not engine.observe(observation(arrived), 3.8)
+    assert engine.observe(observation(arrived), 5.9)
+    assert engine.select(view(nearby, position=arrived), 5.9) == nearby
+    engine.record(nearby, {"pid": 100, "slot": 6, "status": 1, "message": "queued"}, 6)
+    for now in (6.25, 6.5):
         engine.observe(observation(arrived, battle=True), now)
     assert engine.battles == engine.arrivals == engine.queued == 1
     assert not engine.observe(observation(arrived), 25)
@@ -93,7 +103,7 @@ def test_walk_stop_stabilize_attack_battle_and_return_without_auto_battle():
     assert engine.origin == ORIGIN and engine.running
 
 
-def arrived_engine(*, reason="in_range"):
+def arrived_engine(*, reason="route_finished"):
     engine = moving_engine()
     engine.move_reason = reason
     engine.record_movement_stop(stopped(), 3)
@@ -111,6 +121,91 @@ def test_keeps_approached_identity_when_another_mob_becomes_closer():
     selection = engine.summary()["events"][-1]
     assert selection["event"] == "target_selected"
     assert selection["target"]["identity"] == TARGET.identity
+
+
+def test_same_mob_can_move_to_a_different_active_slot_before_attack():
+    engine = arrived_engine()
+    relocated = replace(TARGET, slot=13, distance_squared=1)
+    replacement = replace(TARGET, identity=(12053, 99, 0), distance_squared=0.1)
+    assert engine.select(view(replacement, relocated), 5.2) == relocated
+    assert engine.selection_source == "approach" and engine.arrivals == 1
+
+
+def test_route_can_finish_without_changing_destination_or_revision():
+    engine = moving_engine()
+    idle = replace(ROUTE, active=False, moving=False, active_raw=0, moving_raw=0)
+    assert not engine.observe(observation(ORIGIN, idle), 3)
+    assert engine.move_reason == "route_finished"
+    assert engine.phase == "stopping_move" and engine.attempts == 0
+
+
+def test_actual_position_must_settle_even_if_grid_does_not_change():
+    engine = moving_engine()
+    assert not engine.observe(observation(ORIGIN, IDLE), 3)
+    engine.record_movement_stop(stopped(), 3.1)
+    for now, x in ((3.2, 193.0), (5.3, 193.25), (7.4, 193.5)):
+        assert not engine.observe(observation(world_position=(x, 0.0, 340.0)), now)
+        assert engine.select(view(replace(TARGET, distance_squared=1)), now) is None
+    settled = (193.5, 0.0, 340.0)
+    assert engine.observe(observation(world_position=settled), 9.5)
+    assert (
+        engine.select(view(replace(TARGET, distance_squared=1), world_position=settled), 9.5)
+        is not None
+    )
+    assert engine.attempts == 0 and engine.arrivals == 1
+
+
+def test_movement_between_observation_and_scan_restarts_stability_wait():
+    engine = arrived_engine()
+    drifted = (193.25, 0.0, 340.0)
+    assert (
+        engine.select(view(replace(TARGET, distance_squared=1), world_position=drifted), 5.2)
+        is None
+    )
+    assert engine.phase == "waiting_map" and engine.arrivals == engine.attempts == 0
+    assert engine.arrival_target == TARGET
+    assert not engine.observe(observation(world_position=drifted), 5.3)
+    assert engine.observe(observation(world_position=drifted), 7.4)
+    assert (
+        engine.select(view(replace(TARGET, distance_squared=1), world_position=drifted), 7.4)
+        is not None
+    )
+
+
+def test_physical_progress_inside_one_grid_cell_does_not_count_as_stalled():
+    engine = moving_engine()
+    for now, x in ((6, 193.1), (10, 193.2), (14, 193.3)):
+        assert engine.observe(observation(navigation=ROUTE, world_position=(x, 0.0, 340.0)), now)
+        assert engine.phase == "approaching" and not engine.move_reason
+
+
+def test_missing_actual_position_does_not_allow_an_attack():
+    engine = HuntEngine(100, 777, DETECTOR, approach=ApproachSettings(True))
+    assert not engine.observe(replace(observation(), world_position=None), 0)
+    assert not engine.running and engine.needs_reconnect and engine.attempts == 0
+
+
+def test_worker_observes_residual_movement_while_waiting_after_route_finished(monkeypatch):
+    session = SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100))
+    worker = HuntWorker(
+        session, ClientWindow(100, 0x1234, "Atlantica"), DETECTOR, approach=ApproachSettings(True)
+    )
+    worker.engine = moving_engine()
+    assert not worker.engine.observe(observation(ORIGIN, IDLE), 3)
+    worker.engine.record_movement_stop(stopped(), 3.1)
+
+    def observe(session_arg, *, include_navigation, allow_player_movement):
+        assert session_arg is session and include_navigation and allow_player_movement
+        return observation(world_position=(193.25, 0.0, 340.0))
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.time.monotonic", lambda: 3.5)
+    monkeypatch.setattr("atlantica_bot.hunt_loop.observe_scene", observe)
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.try_attack", lambda *args, **kw: pytest.fail("still moving")
+    )
+    worker._iteration()
+    assert worker.engine.running and worker.engine.phase == "resuming"
+    assert worker.engine.attempts == worker.engine.arrivals == 0
 
 
 def test_reused_slot_does_not_silently_replace_arrival_target():
@@ -151,12 +246,15 @@ def test_failed_approach_reason_survives_a_later_successful_arrival():
     assert engine.select(view(other), 10.2) == other
     report = {**move_report(), "slot": 9}
     engine.record_approach(other, report, 10.3)
-    engine.move_reason = "in_range"
+    engine.move_reason = "route_finished"
     engine.record_movement_stop(stopped(), 11)
+    assert not engine.observe(observation(), 11.1)
+    assert engine.observe(observation(), 13.2)
+    assert engine.select(view(replace(other, distance_squared=1)), 13.2) is not None
     assert engine.arrivals == engine.move_failures == 1
     assert engine.last_failed_approach["reason"] == "stalled"
     stops = [event for event in engine.events if event["event"] == "movement_stop_result"]
-    assert [event["reason"] for event in stops] == ["stalled", "in_range"]
+    assert [event["reason"] for event in stops] == ["stalled", "route_finished"]
 
 
 def test_nearby_mode_preserves_previous_behavior_and_radius_bounds_far_targets():

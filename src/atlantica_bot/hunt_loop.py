@@ -28,7 +28,14 @@ from .world import (
 
 
 def target_key(candidate: Candidate) -> tuple:
-    return candidate.slot, candidate.identity
+    # Active-table slots can be reused or reassigned between observations.
+    return candidate.identity
+
+
+def same_world_position(first: tuple | None, second: tuple | None) -> bool:
+    if first is None or second is None:
+        return first is second
+    return sum((a - b) ** 2 for a, b in zip(first, second, strict=True)) <= 0.0001
 
 
 @dataclass
@@ -43,12 +50,13 @@ class HuntEngine:
     message: str = "Esperando mapa."
     map_id: int | None = None
     anchor: GridPosition | None = None
+    anchor_world_position: tuple[float, float, float] | None = None
     next_scan: float = 0
     resume_at: float = 0
     stable_samples: int = 0
     deadline: float | None = None
     cooldowns: dict = field(default_factory=dict)
-    engaged_targets: dict[int, tuple[int, int, int]] = field(default_factory=dict)
+    engaged_targets: dict[tuple[int, int, int], int] = field(default_factory=dict)
     attempts: int = 0
     queued: int = 0
     battles: int = 0
@@ -71,6 +79,7 @@ class HuntEngine:
     move_started: float = 0
     move_progress: float = 0
     move_position: GridPosition | None = None
+    move_world_position: tuple[float, float, float] | None = None
     move_distance_squared: float | None = None
     move_reason: str = ""
     moves: int = 0
@@ -157,7 +166,7 @@ class HuntEngine:
                 self.battle_active = True
             if self.deadline is not None:
                 if self.pending_target is not None:
-                    self.engaged_targets[self.pending_target.slot] = self.pending_target.identity
+                    self.engaged_targets[self.pending_target.identity] = self.pending_target.slot
                 self.last_attack = {
                     **self.last_attack,
                     "battle_confirmed": True,
@@ -203,6 +212,9 @@ class HuntEngine:
             self.anchor = None
             return False
         position = observation.player
+        if self.approach.enabled and observation.world_position is None:
+            self.stop("No se pudo comprobar la posición 3D del personaje.", reconnect=True)
+            return False
         if (
             self.approach.enabled
             and observation.navigation is not None
@@ -224,8 +236,12 @@ class HuntEngine:
             self.stop("Se alcanzó el límite del área de búsqueda; bot detenido.")
             return False
         if self.phase in ("battle", "confirming_battle", "waiting_map", "resuming"):
-            if self.anchor != position:
+            if self.anchor != position or (
+                self.approach.enabled
+                and not same_world_position(self.anchor_world_position, observation.world_position)
+            ):
                 self.anchor = position
+                self.anchor_world_position = observation.world_position
                 self.resume_at = now + 2
                 self.stable_samples = 1
             else:
@@ -235,7 +251,10 @@ class HuntEngine:
                 return False
             self.phase = "searching"
             self.battle_active = False
-        elif self.anchor != position:
+        elif self.anchor != position or (
+            self.approach.enabled
+            and not same_world_position(self.anchor_world_position, observation.world_position)
+        ):
             self.stop("El personaje se movió; pulsa Iniciar bot cuando esté quieto.")
             return False
         if now < self.next_scan:
@@ -254,24 +273,35 @@ class HuntEngine:
         self.scans += 1
         if view.scene_code != 2 or view.player != self.anchor:
             raise SceneChanged("La escena o posición cambió antes de seleccionar el objetivo.")
+        if self.approach.enabled and (
+            view.player_world_position is None
+            or not same_world_position(self.anchor_world_position, view.player_world_position)
+        ):
+            self.anchor = None
+            self.phase, self.message = (
+                "waiting_map",
+                "Esperando que termine el desplazamiento real.",
+            )
+            self._event("position_not_settled", now, world_position=view.player_world_position)
+            return None
         limit = view.range_limit_squared
         if limit is None or not math.isfinite(limit) or not 0 < limit <= 1e8:
             self.stop("No se pudo validar el alcance nativo; bot detenido.", reconnect=True)
             return None
         self.cooldowns = {key: until for key, until in self.cooldowns.items() if until > now}
-        # A completed fight can leave its actor visible in the active table. A timeout
-        # must not make that same identity eligible again; a new spawn in its slot can.
-        for candidate in view.candidates:
-            if (
-                len(candidate.identity) == 3
-                and candidate.slot in self.engaged_targets
-                and candidate.identity != self.engaged_targets[candidate.slot]
-            ):
-                del self.engaged_targets[candidate.slot]
+        # Retain identities even if a defeated actor is filtered out or moves slots.
+        # Only a complete active-identity scan can prove that an actor has left.
+        if view.active_identities is not None:
+            active = set(view.active_identities)
+            self.engaged_targets = {
+                identity: slot
+                for identity, slot in self.engaged_targets.items()
+                if identity in active
+            }
         eligible = [
             candidate
             for candidate in view.candidates
-            if self.engaged_targets.get(candidate.slot) != candidate.identity
+            if candidate.identity not in self.engaged_targets
         ]
         available = []
         for candidate in eligible:
@@ -388,7 +418,7 @@ class HuntEngine:
 
     def _observe_movement(self, observation: Observation, classification: str, now: float) -> bool:
         position, navigation = observation.player, observation.navigation
-        if classification != "map" or position is None:
+        if classification != "map" or position is None or observation.world_position is None:
             self.stop("Cambió el estado durante el acercamiento; bot detenido.", reconnect=True)
             return False
         if self.origin is None or not self.approach.contains(self.origin, position):
@@ -407,15 +437,25 @@ class HuntEngine:
             else:
                 self.stop("El movimiento cambió fuera del bot; detenido sin sustituirlo.")
                 return False
+        elif navigation.active is False and navigation.moving is False:
+            self.move_reason = "route_finished"
         elif now - self.move_started >= self.approach.timeout:
             self.move_reason = "timeout"
         else:
-            if position != self.move_position:
+            if position != self.move_position or not same_world_position(
+                self.move_world_position, observation.world_position
+            ):
                 self.move_position, self.move_progress = position, now
+                self.move_world_position = observation.world_position
             if now - self.move_progress >= self.approach.stall_timeout:
                 self.move_reason = "stalled"
         if self.move_reason:
-            self.phase, self.message = "stopping_move", "Deteniendo el acercamiento."
+            self.phase, self.message = (
+                "stopping_move",
+                "Comprobando el fin del recorrido."
+                if self.move_reason == "route_finished"
+                else "Deteniendo el acercamiento.",
+            )
             return False
         self.phase, self.message = (
             "approaching",
@@ -444,11 +484,12 @@ class HuntEngine:
         self.move_distance_squared = target.distance_squared if target else None
         if target is None:
             self.move_reason = "target_changed"
-        elif target.distance_squared is not None and target.distance_squared <= limit * 0.8:
-            self.move_reason = "in_range"
-            self.move_target = target
         elif abs(target.x - self.route.x) + abs(target.y - self.route.y) > 4:
             self.move_reason = "target_moved"
+        else:
+            # Being inside the attack radius does not mean that navigation or the
+            # current movement segment has finished. Let the client's route end.
+            self.move_target = target
         if self.move_reason:
             self.phase, self.message = "stopping_move", "Parando antes de comprobar el ataque."
 
@@ -472,6 +513,7 @@ class HuntEngine:
             self.arrival_target, self.verify_arrival = None, False
             self.move_started = self.move_progress = now
             self.move_position = self.anchor
+            self.move_world_position = self.anchor_world_position
             self.move_distance_squared = candidate.distance_squared
             self.move_reason = ""
             self.moves += 1
@@ -503,7 +545,7 @@ class HuntEngine:
             return
         if not cleanup and self.move_reason == "route_finished":
             self.arrival_target, self.verify_arrival = self.move_target, True
-        elif not cleanup and self.move_reason != "in_range":
+        elif not cleanup:
             if self.move_target is not None:
                 self.cooldowns[target_key(self.move_target)] = now + 30
             self.move_failures += 1
@@ -512,9 +554,6 @@ class HuntEngine:
                 "target": asdict(self.move_target) if self.move_target else None,
                 "report": dict(report),
             }
-        elif not cleanup:
-            self.arrivals += 1
-            self.arrival_target, self.verify_arrival = self.move_target, False
         self.route = self.move_target = None
         self.anchor = None
         if not cleanup:
@@ -621,7 +660,7 @@ class HuntEngine:
             "range": dict(self.range_diagnostic),
             "target_history": [
                 {"slot": slot, "identity": identity}
-                for slot, identity in sorted(self.engaged_targets.items())
+                for identity, slot in sorted(self.engaged_targets.items())
             ],
             "profile": self.profile.summary(),
             "approach": {
@@ -739,8 +778,11 @@ class HuntWorker:
 
     def _iteration(self) -> None:
         moving = self.engine.route is not None
+        settling = self.engine.phase in ("waiting_map", "resuming", "battle", "confirming_battle")
         observation = (
-            observe_scene(self.session, include_navigation=True, allow_player_movement=moving)
+            observe_scene(
+                self.session, include_navigation=True, allow_player_movement=moving or settling
+            )
             if self.engine.approach.enabled
             else observe_scene(self.session)
         )

@@ -26,11 +26,21 @@ def observation(scene=2, player=POSITION, *, pid=100, created=777, native=False,
         player if scene == 2 else None,
         native,
         LocalState(0, 4 if active else -1, -1, 0),
+        world_position=(float(player.x), 0.0, float(player.y)) if player and scene == 2 else None,
     )
 
 
-def view(*candidates, player=POSITION, limit=20):
-    return WorldView(player, candidates, 2, range_limit_squared=limit)
+def view(*candidates, player=POSITION, limit=20, active_identities=None):
+    return WorldView(
+        player,
+        candidates,
+        2,
+        range_limit_squared=limit,
+        player_world_position=(float(player.x), 0.0, float(player.y)),
+        active_identities=active_identities
+        if active_identities is not None
+        else tuple(candidate.identity for candidate in candidates),
+    )
 
 
 def report(code=1, *, candidate=NEAR, pid=100):
@@ -107,6 +117,26 @@ def test_confirmed_target_stays_excluded_from_attack_and_approach_after_cooldown
     assert engine.select(view(respawn), 601) == respawn
     assert engine.phase == ("requesting" if distance <= 20 else "requesting_approach")
     assert engine.summary()["target_history"] == []
+
+
+def test_engaged_identity_is_excluded_across_slot_reassignment_and_filtered_scans():
+    engine = ready_engine()
+    engine.select(view(NEAR), 2)
+    engine.record(NEAR, report(), 2.1)
+    engine.observe(observation(active=True), 3)
+    engine.observe(observation(active=True), 3.5)
+    assert not engine.observe(observation(), 20)
+    assert engine.observe(observation(), 22)
+    # A filtered corpse remains active, and a new mob reuses its former slot.
+    fresh = replace(NEAR, identity=(12053, 99, 100), distance_squared=3)
+    active = (NEAR.identity, fresh.identity)
+    assert engine.select(view(active_identities=active), 22) is None
+    assert len(engine.engaged_targets) == 1
+    relocated = replace(NEAR, slot=13)
+    # A partially unreadable active collection cannot clear the exclusion either.
+    assert engine.select(replace(view(relocated), active_identities=None), 23) is None
+    assert engine.select(view(relocated, fresh), 24) == fresh
+    assert engine.range_diagnostic["excluded_previously_engaged"] == 1
 
 
 def test_missing_battle_transition_stops_without_retry():

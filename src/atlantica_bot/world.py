@@ -105,6 +105,8 @@ class WorldView:
     inactive_entries: int = 0
     out_of_scope_entries: int = 0
     range_limit_squared: float | None = None
+    player_world_position: tuple[float, float, float] | None = None
+    active_identities: tuple[tuple[int, int, int], ...] | None = None
 
     def summary(self) -> dict:
         return {
@@ -120,6 +122,7 @@ class WorldView:
             "inactive_entries": self.inactive_entries,
             "out_of_scope_entries": self.out_of_scope_entries,
             "range_limit_squared": self.range_limit_squared,
+            "player_world_position": self.player_world_position,
             "attack_eligibility_fully_validated": False,
         }
 
@@ -205,6 +208,7 @@ class Observation:
     native_active: bool = False
     local: LocalState | None = None
     navigation: NavigationState | None = None
+    world_position: tuple[float, float, float] | None = None
 
     def summary(self) -> dict:
         return asdict(self)
@@ -248,7 +252,7 @@ def observe_scene(
     if not owner:
         raise DiagnosticError("El cliente todavía no publica una escena válida.")
     scene = reader.i32(owner + 0xB98)
-    player = local = navigation = None
+    player = local = navigation = world_position = None
     if scene == 2:
         manager = reader.u32(owner + 0x828)
         if not manager:
@@ -259,6 +263,7 @@ def observe_scene(
         player = _grid(reader, actor)
         local = _local_state(reader, actor)
         navigation = _navigation(reader, actor) if include_navigation else None
+        world_position = _world_position(reader, actor) if include_navigation else None
         current_position = _grid(reader, actor)
         if (
             reader.u32(owner + 0x828) != manager
@@ -281,6 +286,7 @@ def observe_scene(
         state.auto_battle or state.hunting or state.files.marker_present,
         local,
         navigation,
+        world_position,
     )
 
 
@@ -352,6 +358,8 @@ def scan_world(session: GameSession, *, allow_player_movement: bool = False) -> 
     limit = struct.unpack("<f", reader.read(0x045079EC, 4))[0]
     range_limit = limit if math.isfinite(limit) and 0 < limit <= 1e8 else None
     candidates = []
+    active_identities = set()
+    identities_complete = True
     errors = changed = 0
     rejected: dict[str, int] = {}
 
@@ -362,13 +370,23 @@ def scan_world(session: GameSession, *, allow_player_movement: bool = False) -> 
     for slot in scoped:
         actor = pointers[slot]
         if not actor:
+            identities_complete = False
             reject("missing_actor")
             continue
         try:
             if reader.u32(actor + 0x200) != slot:
+                identities_complete = False
                 reject("slot_mismatch")
                 continue
             identity = struct.unpack("<III", reader.read(actor + 0x204, 12))
+            if reader.u32(manager + TABLE_OFFSET + slot * 4) != actor:
+                changed += 1
+                identities_complete = False
+                reject("pointer_changed")
+                continue
+            # Include filtered actors (such as defeated mobs) when deciding whether
+            # a previously engaged identity has actually left the active collection.
+            active_identities.add(identity)
             kind_id = identity[0]
             if not 3500 <= kind_id < 22000:
                 reject("kind_range")
@@ -388,7 +406,13 @@ def scan_world(session: GameSession, *, allow_player_movement: bool = False) -> 
                 continue
             if reader.u32(manager + TABLE_OFFSET + slot * 4) != actor:
                 changed += 1
+                identities_complete = False
                 reject("pointer_changed")
+                continue
+            if struct.unpack("<III", reader.read(actor + 0x204, 12)) != identity:
+                changed += 1
+                identities_complete = False
+                reject("identity_changed")
                 continue
             distance = abs(position.x - player.x) + abs(position.y - player.y)
             world_position = _world_position(reader, actor)
@@ -409,6 +433,7 @@ def scan_world(session: GameSession, *, allow_player_movement: bool = False) -> 
             )
         except (DiagnosticError, OSError):
             errors += 1
+            identities_complete = False
             reject("read_error")
     session.snapshot()
     current_position = _grid(reader, player_actor)
@@ -441,4 +466,6 @@ def scan_world(session: GameSession, *, allow_player_movement: bool = False) -> 
         sum(bool(pointer) and slot not in scoped for slot, pointer in enumerate(pointers[2:], 2)),
         sum(slot >= SLOT_COUNT for slot in active.slots),
         range_limit,
+        player_position,
+        tuple(sorted(active_identities)) if identities_complete else None,
     )
