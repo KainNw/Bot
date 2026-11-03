@@ -1,4 +1,4 @@
-# Acercamiento opcional 0.6.2
+# Acercamiento opcional 0.6.3
 
 El usuario confirmó dos encuentros con 0.5: entró en combate sin Auto Battle,
 reconoció la batalla por `local_context` y volvió a buscar. El límite restante era
@@ -94,6 +94,36 @@ El segundo contiene la función `00443382` usada por la parada; no estaba en las
 capturas anteriores. El manifiesto versión 2 incorpora la traza del bot de ese mismo
 PID y fecha de creación. Descarta campos ajenos, nombres de perfiles y contexto de
 otra instancia; el contexto tiene un límite de 128 KiB. La exportación solo consulta.
+
+## Evitar volver a un mob ya combatido
+
+La captura `Atlantica-PID10192-contexto-20261103-045410.zip`, generada con 0.6.2,
+registró dos solicitudes de acercamiento, dos llegadas y dos combates observados.
+El tercer ataque se encoló con distancia al cuadrado 7.01439 y umbral 20, pero no
+se confirmó el combate. Durante los treinta segundos de espera la cola permaneció
+vacía, con envío habilitado y control de comandos `0000`. Estos datos no prueban
+aceptación del servidor. El usuario observó que se acercó a un mob ya derrotado.
+
+El ciclo anterior solo imponía diez segundos de espera al objetivo atacado; tras
+una batalla podía volver a seleccionarlo aunque fuera el mismo actor derrotado.
+0.6.3 recuerda el puesto y los tres identificadores del objetivo cuando confirma
+la entrada en combate. Mientras esa identidad permanezca, lo excluye tanto de la
+selección cercana como del acercamiento, sin caducidad por tiempo durante la
+ejecución. Si el puesto contiene una identidad nueva, vuelve a estar disponible;
+no se excluye a otros mobs de la misma especie. La memoria está limitada a una
+identidad por puesto y no se comparte entre procesos ni entre ejecuciones del bot.
+
+La confirmación de combate no indica victoria. Esta medida evita repetir los
+objetivos ya combatidos en el ciclo; no demuestra un detector general de cadáveres
+ni permite identificar los derrotados antes de iniciar. El informe incluye
+`target_history` y `range.excluded_previously_engaged` para contrastar el descarte.
+Se mantienen el alcance, el envío individual y la parada si no comienza el combate.
+
+En la misma captura, los cambios de `client_tick` generaban un evento cada segundo
+y expulsaban la historia de los primeros combates del límite de 32 eventos.
+0.6.3 conserva las muestras recientes del reloj pero solo añade eventos de transporte
+cuando cambia otro campo. Así se mantienen las selecciones, llegadas y confirmaciones
+en un diagnóstico de este mismo tipo.
 
 | Operación | Función del cliente | Comprobación |
 | --- | --- | --- |

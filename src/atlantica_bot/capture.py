@@ -100,6 +100,7 @@ def _bot_context(session: GameSession, report: dict | None) -> dict | None:
         "battles_observed",
         "last_attack",
         "range",
+        "target_history",
         "first_observation",
         "recent_observations",
         "events",

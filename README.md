@@ -15,8 +15,14 @@ como prueba de que el personaje esté parado.
 
 La revisión 0.6.2 conserva el mismo objetivo tras acercarse y lo revalida después
 de parar. Guarda el historial de selección, movimiento, parada y ataque, además de
-los contadores de la cola mientras espera combate. El usuario confirmó un segundo
-ataque encolado que no inició combate; la causa de ese rechazo sigue en diagnóstico.
+los contadores de la cola mientras espera combate.
+
+La revisión **0.6.3** evita volver a atacar o acercarse al mismo mob después de
+confirmar un combate durante esa ejecución. La espera anterior de diez segundos
+podía permitir seleccionar otra vez un actor ya derrotado que seguía visible.
+La exclusión conserva su identidad completa; un mob nuevo que reutiliza ese puesto
+sí se puede seleccionar. El diagnóstico también conserva los eventos de selección
+y combate cuando solo avanza el reloj de la cola.
 
 **Comprobado por el usuario:** la prueba individual 0.3 inició el ataque con Auto Battle
 desactivado. También confirmó un combate iniciado por 0.4 que el detector no reconoció.
@@ -36,8 +42,10 @@ cierre que permita identificar su causa.
 
 La lógica tiene pruebas automatizadas. El workflow de Windows prueba las APIs y
 sincronización sobre procesos/objetos propios, compila el puente x86 y comprueba el
-arranque del ejecutable empaquetado. El acercamiento de 0.6 todavía necesita la
-prueba en el cliente real. Usa el cliente sin adjuntar x32dbg.
+arranque del ejecutable empaquetado. La captura 0.6.2 registró dos acercamientos y
+dos combates, seguidos de una solicitud sin combate. El usuario observó que el
+personaje se había acercado a un mob ya derrotado. La exclusión nueva necesita
+contrastarse en el cliente real. Usa el cliente sin adjuntar x32dbg.
 
 Solo se admite la compilación cuyo SHA-256 es
 `BC87A0CC5826AA7FB5E4FF10B6B7C1A349962BD8B146AD28EC3FFA9453FE04E6`.
@@ -49,7 +57,10 @@ del alcance 3D del cliente. Envía una solicitud y espera dos observaciones de c
 según el detector calibrado antes de permitir otra. Al volver al mismo mapa, exige
 una posición estable durante dos segundos. Si no observa el combate en treinta
 segundos, se detiene sin repetir el envío. El ciclo cercano ya se observó en dos
-combates; el detector se sigue vinculando a cada instancia.
+combates; el detector se sigue vinculando a cada instancia. Los objetivos de combates
+confirmados quedan excluidos durante la ejecución mientras conservan la misma identidad,
+aunque sigan en la lista del cliente. Esto no determina si se ganó la batalla ni
+detecta por sí solo los mobs derrotados antes de iniciar el bot.
 Detalles y límites en [caza independiente](docs/independent-hunt.md).
 
 **Configurar mercenarios** guarda los nueve puestos, sus nombres, participación y

@@ -104,6 +104,7 @@ def test_export_includes_same_instance_history_without_profile_names_or_arbitrar
         "pid": 123,
         "detector": {"instance_creation_time": 777},
         "events": [{"event": "attack_not_confirmed", "elapsed_seconds": 30}],
+        "target_history": [{"slot": 6, "identity": [14801, 67723769, 0]}],
         "profile": {"name": "private-mercenary-label"},
         "directory": "private-installation-path",
     }
@@ -112,6 +113,7 @@ def test_export_includes_same_instance_history_without_profile_names_or_arbitrar
     with ZipFile(output) as archive:
         manifest = json.loads(archive.read("manifest.json"))
     assert manifest["bot_context"]["events"] == report["events"]
+    assert manifest["bot_context"]["target_history"] == report["target_history"]
     assert "private-mercenary-label" not in json.dumps(manifest)
     assert "private-installation-path" not in json.dumps(manifest)
 

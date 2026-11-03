@@ -48,6 +48,7 @@ class HuntEngine:
     stable_samples: int = 0
     deadline: float | None = None
     cooldowns: dict = field(default_factory=dict)
+    engaged_targets: dict[int, tuple[int, int, int]] = field(default_factory=dict)
     attempts: int = 0
     queued: int = 0
     battles: int = 0
@@ -155,6 +156,8 @@ class HuntEngine:
                 self.battles += 1
                 self.battle_active = True
             if self.deadline is not None:
+                if self.pending_target is not None:
+                    self.engaged_targets[self.pending_target.slot] = self.pending_target.identity
                 self.last_attack = {
                     **self.last_attack,
                     "battle_confirmed": True,
@@ -256,8 +259,22 @@ class HuntEngine:
             self.stop("No se pudo validar el alcance nativo; bot detenido.", reconnect=True)
             return None
         self.cooldowns = {key: until for key, until in self.cooldowns.items() if until > now}
-        available = []
+        # A completed fight can leave its actor visible in the active table. A timeout
+        # must not make that same identity eligible again; a new spawn in its slot can.
         for candidate in view.candidates:
+            if (
+                len(candidate.identity) == 3
+                and candidate.slot in self.engaged_targets
+                and candidate.identity != self.engaged_targets[candidate.slot]
+            ):
+                del self.engaged_targets[candidate.slot]
+        eligible = [
+            candidate
+            for candidate in view.candidates
+            if self.engaged_targets.get(candidate.slot) != candidate.identity
+        ]
+        available = []
+        for candidate in eligible:
             distance = candidate.distance_squared
             if (
                 distance is not None
@@ -269,7 +286,7 @@ class HuntEngine:
                 available.append(candidate)
         measured = [
             candidate
-            for candidate in view.candidates
+            for candidate in eligible
             if candidate.distance_squared is not None
             and math.isfinite(candidate.distance_squared)
             and candidate.distance_squared >= 0
@@ -280,6 +297,7 @@ class HuntEngine:
             "nearest_slot": nearest.slot if nearest else None,
             "nearest_distance_squared": nearest.distance_squared if nearest else None,
             "available_in_range": len(available),
+            "excluded_previously_engaged": len(view.candidates) - len(eligible),
             "automatic_approach": self.approach.enabled,
         }
         if self.arrival_target is not None:
@@ -347,7 +365,9 @@ class HuntEngine:
                     )
                     return candidate
             self.message = (
-                "Sin objetivos disponibles dentro del radio de búsqueda."
+                "Los mobs ya combatidos siguen visibles; buscando otros objetivos."
+                if view.candidates and not eligible
+                else "Sin objetivos disponibles dentro del radio de búsqueda."
                 if self.approach.enabled
                 else "Los mobs están fuera de alcance. Para el bot y acércate antes de iniciar."
                 if nearest and nearest.distance_squared > limit
@@ -561,7 +581,12 @@ class HuntEngine:
             self.transport_first = sample
         previous = self.transport[-1] if self.transport else None
         self.transport.append(sample)
-        if previous is None or any(previous.get(key) != value for key, value in report.items()):
+        fields = (set(previous or {}) | set(report)) - {
+            "client_tick",
+            "attempt",
+            "elapsed_since_queue",
+        }
+        if previous is None or any(previous.get(key) != report.get(key) for key in fields):
             self._event("transport_observed", now, attempt=self.attempts, transport=report)
 
     def summary(self) -> dict:
@@ -594,6 +619,10 @@ class HuntEngine:
             else None,
             "transport": {"first": dict(self.transport_first), "recent": list(self.transport)},
             "range": dict(self.range_diagnostic),
+            "target_history": [
+                {"slot": slot, "identity": identity}
+                for slot, identity in sorted(self.engaged_targets.items())
+            ],
             "profile": self.profile.summary(),
             "approach": {
                 **self.approach.summary(),

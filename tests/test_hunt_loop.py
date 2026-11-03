@@ -1,5 +1,6 @@
 import threading
 from contextlib import nullcontext
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ from atlantica_bot.clients import ClientWindow
 from atlantica_bot.combat import CombatDetector
 from atlantica_bot.errors import DiagnosticError
 from atlantica_bot.hunt_loop import HuntEngine, HuntWorker
+from atlantica_bot.navigation import ApproachSettings
 from atlantica_bot.world import Candidate, GridPosition, LocalState, Observation, WorldView
 
 POSITION = GridPosition(52, 193, 340)
@@ -78,7 +80,33 @@ def test_resumes_after_battle_and_stable_return_position_without_auto_battle():
     assert not engine.observe(observation(player=returned), 20)
     assert not engine.observe(observation(player=returned), 21)
     assert engine.observe(observation(player=returned), 22)
-    assert engine.select(view(NEAR, player=returned), 22) == NEAR
+    fresh = replace(NEAR, slot=9, identity=(12053, 99, 100), distance_squared=3)
+    assert engine.select(view(NEAR, fresh, player=returned), 22) == fresh
+    assert engine.range_diagnostic["excluded_previously_engaged"] == 1
+    assert engine.summary()["target_history"] == [{"slot": NEAR.slot, "identity": NEAR.identity}]
+
+
+@pytest.mark.parametrize("distance", [1, 49])
+def test_confirmed_target_stays_excluded_from_attack_and_approach_after_cooldown(distance):
+    engine = ready_engine()
+    engine.approach = ApproachSettings(enabled=True)
+    engine.select(view(NEAR), 2)
+    engine.record(NEAR, report(), 2.1)
+    engine.observe(observation(active=True), 3)
+    engine.observe(observation(active=True), 3.5)
+    assert not engine.observe(observation(), 20)
+    assert engine.observe(observation(), 22)
+    visible = replace(NEAR, distance_squared=distance)
+    for now in (22, 60, 600):
+        assert engine.select(view(visible), now) is None
+    assert engine.running and engine.attempts == engine.battles == 1
+    assert engine.moves == 0 and engine.range_diagnostic["excluded_previously_engaged"] == 1
+    # Reusing the actor slot for a different identity must not block a fresh mob
+    # of the same species, even at the same coordinates.
+    respawn = replace(visible, identity=(NEAR.kind_id, 999, 88))
+    assert engine.select(view(respawn), 601) == respawn
+    assert engine.phase == ("requesting" if distance <= 20 else "requesting_approach")
+    assert engine.summary()["target_history"] == []
 
 
 def test_missing_battle_transition_stops_without_retry():
@@ -108,6 +136,28 @@ def test_drained_queue_is_not_treated_as_battle_confirmation_and_timeout_keeps_t
     assert summary["transport"]["recent"][-1]["queued_bytes"] == 0
     assert any(event["event"] == "attack_not_confirmed" for event in summary["events"])
     assert summary["queued"] == 1
+
+
+def test_transport_clock_does_not_evict_selection_and_battle_events():
+    engine = ready_engine()
+    engine.select(view(NEAR), 2)
+    engine.record(NEAR, report(), 2.1)
+    state = {"available": True, "queued_bytes": 25, "queue_instance": "1234"}
+    for tick in range(50):
+        engine.record_transport({**state, "client_tick": tick}, 2.2 + tick / 10)
+    events = engine.summary()["events"]
+    assert [event["event"] for event in events] == [
+        "target_selected",
+        "attack_result",
+        "transport_observed",
+    ]
+    assert engine.summary()["transport"]["first"]["client_tick"] == 0
+    assert engine.summary()["transport"]["recent"][-1]["client_tick"] == 49
+    engine.record_transport({**state, "queued_bytes": 0, "client_tick": 50}, 7.2)
+    assert engine.summary()["events"][-1]["transport"]["queued_bytes"] == 0
+    engine.observe(observation(active=True), 7.5)
+    engine.observe(observation(active=True), 8)
+    assert engine.summary()["events"][-1]["event"] == "battle_confirmed"
 
 
 @pytest.mark.parametrize(
@@ -272,6 +322,7 @@ def test_out_of_range_wait_reports_distance_without_changing_native_limit():
         "nearest_slot": FAR.slot,
         "nearest_distance_squared": 21,
         "available_in_range": 0,
+        "excluded_previously_engaged": 0,
         "automatic_approach": False,
     }
     assert engine.running and engine.attempts == 0
