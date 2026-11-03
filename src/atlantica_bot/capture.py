@@ -179,6 +179,7 @@ def _bot_context(session: GameSession, report: dict | None) -> dict | None:
         "phase",
         "message",
         "running",
+        "execute_turns",
         "needs_reconnect",
         "detector",
         "scans",

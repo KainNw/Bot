@@ -78,6 +78,8 @@ class TurnEngine:
         self.loot_empty_since: float | None = None
         self.loot_rejected = set()
         self.loot_queued = 0
+        self.loot_suspended = False
+        self.loot_pause_reason: str | None = None
         self.active = False
         self.fresh_battle = False
         self.turn = None
@@ -123,6 +125,8 @@ class TurnEngine:
             self.orders.clear()
             self.loot_empty_since = None
             self.loot_rejected.clear()
+            self.loot_suspended = False
+            self.loot_pause_reason = None
             self.pending = self.inflight = None
 
     def leave(self) -> None:
@@ -220,6 +224,9 @@ class TurnEngine:
         if self.pending is not None and self.pending.trial.action == "loot":
             if not self._observe_pending(frame, now):
                 return None
+        if self.loot_suspended:
+            self.message = self.loot_pause_reason
+            return None
         if not self.profile.collect_remaining_loot or not frame.corpses:
             return None
         if self.loot_empty_since is None:
@@ -463,7 +470,20 @@ class TurnEngine:
         elif code in (28, 29):
             self._defer_unready(trial, now)
         elif code == 33:
-            self.stop("La selección del juego cambió; bot detenido para revisar el equipo.")
+            if trial.operation == 9 or (
+                trial.operation == 7
+                and self.profile.collect_remaining_loot
+                and not trial.frame.enemies
+            ):
+                # 33 is returned before an action is sent. Do not fight the selection
+                # or stop hunting because an optional collection could not be sent.
+                self.loot_suspended = True
+                self.loot_pause_reason = (
+                    "Cambió la selección; recogida restante en pausa hasta el siguiente combate."
+                )
+                self._order(slot, "loot", self.loot_pause_reason, now)
+            else:
+                self.stop("La selección del juego cambió; bot detenido para revisar el equipo.")
         elif code == 13:
             self.stop("Orden de combate cancelada.")
         else:
@@ -478,6 +498,8 @@ class TurnEngine:
             "loot": {
                 "enabled": self.profile.collect_remaining_loot,
                 "queued": self.loot_queued,
+                "paused": self.loot_suspended,
+                "pause_reason": self.loot_pause_reason,
                 "neo_grace_seconds": 1,
                 "bonus_detection_verified": False,
                 "collection_confirmed": False,

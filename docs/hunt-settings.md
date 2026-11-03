@@ -77,6 +77,11 @@ Análisis estático del código descifrado capturado en
   Resultado 36: aumentó la cola en 33 bytes. Resultado 37: no hubo envío.
   Una excepción o un resultado incierto detiene el ciclo.
 
+Desde 0.13.1, un cambio de selección sin envío (33) durante la recogida o su selección
+previa pausa solo la recogida restante hasta el siguiente combate. No repite esa
+orden ni detiene la caza. El modo **Combate automático / Turnos manuales** se muestra
+por separado: activar recogida no activa básicos ni magias.
+
 IPC versión 8, estructura de 408 bytes, operación 9; no cambia las operaciones
 de ataque, magia o persecución existentes. Se prueban persistencia/migración,
 límites y calibración del radio, cuenta interrumpible, guardas de cadáveres,

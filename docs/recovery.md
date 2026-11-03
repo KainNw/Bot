@@ -45,6 +45,34 @@ puntero, gestor normal, colección, identidades y turno antes de llamar al clien
 La ruta alternativa BF continúa sin habilitarse. No se dispone del registro del
 fallo para afirmar que un índice distinto de cero fuese su causa.
 
+### Registro recibido en 0.13.0 y corrección 0.13.1
+
+El estado recibido de un combate iniciado por un mob registra `battle_entry.source=external`,
+observación del turno inicial y primer turno propio a los 9,672 s. El grupo propio
+era 1. También indica `combat.execute_orders=false`, cero ataques encolados y
+recogida restante habilitada. En ese registro, la detección de la batalla y del
+turno propio funcionó; los ataques estaban desactivados. `combat.enabled=true`
+incluye el trabajador de recogida y no significa que estén habilitados los ataques.
+
+**Ejecutar turnos según el perfil** debe marcarse antes de iniciar para usar básicos
+y magias. La recogida puede estar activa con turnos manuales. Desde 0.13.1, el panel
+y la vista general muestran el modo de combate; el diagnóstico también incluye
+`execute_turns` en la raíz. Mientras el bot funciona, ese indicador refleja el modo
+fijado al iniciar.
+
+La parada posterior del registro fue diferente: resultado 33 durante una recogida
+(operación 9), después de dos búsquedas encoladas y cambios observados. No demuestra
+recepción de bonus. El 33 se produce antes de enviar esa orden. Desde 0.13.1 pausa
+la recogida de esa batalla sin detener la caza ni reenviar la búsqueda. También
+se aplica si falla la selección previa a una recogida. Al entrar en otro combate
+puede volver a recoger. Las excepciones, resultados inciertos y cambios de selección
+durante órdenes ofensivas conservan la política de parada anterior.
+
+Las pruebas reproducen grupo propio 1, turno inicial del enemigo y primer turno
+propio con recogida activa: con turnos manuales no emite ataques; con turnos
+automáticos solicita Q del Main. Este registro no permite atribuir la incidencia
+anterior con lag a la misma causa.
+
 ## Lecturas y estados transitorios
 
 Antes de observar enemigos vivos, una colección vacía significa **cargando enemigos**;

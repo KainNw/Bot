@@ -40,6 +40,8 @@ class OverviewWindow:
         from tkinter import ttk
 
         self._tcl_error = tk.TclError
+        self._pid: int | None = None
+        self._execute_orders = execute_turns.get()
         self.window = tk.Toplevel(parent)
         self.window.title("Atlantica — Vista general")
         self.window.configure(background=BACKGROUND)
@@ -57,9 +59,10 @@ class OverviewWindow:
             font=("Segoe UI", 15, "bold"),
         ).pack(side="left")
         self.identity = tk.StringVar(value="Sin conexión")
-        tk.Label(heading, textvariable=self.identity, background=BACKGROUND, foreground=MUTED).pack(
-            side="right"
+        self.identity_label = tk.Label(
+            heading, textvariable=self.identity, background=BACKGROUND, font=("Segoe UI", 9, "bold")
         )
+        self.identity_label.pack(side="right")
         self.tabs = ttk.Notebook(outer)
         self.tabs.pack(fill="both", expand=True)
         summary = tk.Frame(self.tabs, background=SURFACE, padx=10, pady=10)
@@ -256,7 +259,8 @@ class OverviewWindow:
 
     def paint(self, rows: list[dict], message: str, *, pid: int | None) -> None:
         self.window.title(f"Atlantica — Vista general{f' — PID {pid}' if pid else ''}")
-        self.identity.set(f"PID {pid}" if pid else "Sin conexión")
+        self._pid = pid
+        self.set_turn_mode(self._execute_orders)
         self.message.set(message)
         by_slot = {row["slot"]: row for row in rows}
         for slot, cells in self.cells.items():
@@ -292,6 +296,13 @@ class OverviewWindow:
             for key, label in self.order_cells[slot].items():
                 value = member_label(slot) if key == "member" else row.get(key, "—")
                 label.configure(text=value)
+
+    def set_turn_mode(self, automatic: bool) -> None:
+        self._execute_orders = automatic
+        identity = f"PID {self._pid}" if self._pid else "Sin conexión"
+        mode = "Combate automático" if automatic else "Turnos manuales"
+        self.identity.set(f"{identity} · {mode}")
+        self.identity_label.configure(foreground=GREEN if automatic else GOLD)
 
     def set_controls(self, *, start: bool, stop: bool, editable: bool) -> None:
         for widget in self.hunt_controls:

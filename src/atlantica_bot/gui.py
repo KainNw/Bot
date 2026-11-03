@@ -77,6 +77,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.attack_delay = tk.StringVar(value="0")
             self.collect_loot = tk.BooleanVar(value=False)
             self.bot_status = tk.StringVar(value="Bot detenido.")
+            self.execution_status = tk.StringVar()
             self.pid = tk.StringVar()
             self.folder = tk.StringVar(value="Conecta con el juego o selecciona su carpeta.")
             self.request = tk.StringVar(value="Solicitud: sin consultar")
@@ -118,6 +119,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.pid_entry.pack(side="left")
             self.connect_button = ttk.Button(row, text="Conectar", command=self.connect)
             self.connect_button.pack(side="left", padx=8)
+            ttk.Label(
+                frame,
+                textvariable=self.execution_status,
+                font=("Segoe UI", 10, "bold"),
+                foreground="#235884",
+                wraplength=760,
+            ).pack(anchor="w", pady=(8, 0))
             row = ttk.Frame(frame)
             row.pack(fill="x", pady=10)
             self.bot_start_button = ttk.Button(
@@ -304,6 +312,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ).pack(anchor="w", pady=10)
             self.root.protocol("WM_DELETE_WINDOW", self.close)
             self.pid.trace_add("write", self.pid_changed)
+            self.turns_enabled.trace_add("write", self.update_execution_mode)
+            self.collect_loot.trace_add("write", self.update_execution_mode)
             self.load_profile()
             if not smoke_test:
                 self.root.after(100, self.list_windows)
@@ -437,6 +447,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.sync_overview_controls()
 
         def sync_overview_controls(self) -> None:
+            self.update_execution_mode()
             if self.overview is None or not self.overview.alive:
                 return
             editable = self.bot_worker is None and not self.closing and not self.calibrating
@@ -456,6 +467,23 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.overview.set_run_status(
                 self.bot_status.get() if report else "Bot detenido.", report
             )
+
+        def update_execution_mode(self, *_) -> None:
+            worker = self.bot_worker
+            automatic = worker.engine.execute_turns if worker else self.turns_enabled.get()
+            loot = (
+                worker.engine.profile.collect_remaining_loot if worker else self.collect_loot.get()
+            )
+            self.execution_status.set(
+                (
+                    "Combate automático: básicos y magias del perfil."
+                    if automatic
+                    else "Turnos manuales: el bot no ejecutará básicos ni magias."
+                )
+                + (" Recogida restante: activa." if loot else "")
+            )
+            if self.overview is not None and self.overview.alive:
+                self.overview.set_turn_mode(automatic)
 
         def refresh_team(self) -> None:
             profile = self.profile or BotProfile.default(1)
@@ -1851,6 +1879,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.show_overview()
         overview = panel.overview
         assert overview is not None and overview.alive and len(overview.cells) == 9
+        assert "Turnos manuales" in overview.identity.get()
+        assert "no ejecutará básicos ni magias" in panel.execution_status.get()
+        panel.turns_enabled.set(True)
+        assert "Combate automático" in overview.identity.get()
+        assert "Combate automático" in panel.execution_status.get()
+        panel.turns_enabled.set(False)
         assert tuple(overview.tabs.tab(tab, "text") for tab in overview.tabs.tabs()) == (
             "Resumen",
             "Órdenes de combate",

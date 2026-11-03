@@ -175,3 +175,52 @@ def test_worker_can_collect_with_manual_turns_and_uses_saved_search_radius():
     )
     assert worker.engine.approach.radius == 350 and not worker.engine.execute_turns
     assert worker.turns is not None and not worker.turns.execute_orders
+
+
+@pytest.mark.parametrize("stage", ["select", "loot"])
+def test_selection_change_pauses_only_collection_until_the_next_battle(turn_frame, stage):
+    frame = defeated(turn_frame)
+    if stage == "select":
+        frame = replace(frame, selected_unit=0)
+    bot = collector(frame, execute=True)
+    assert bot.next(frame, 0) is None
+    trial = bot.next(frame, 1)
+    assert trial.action == stage
+    record(bot, trial, 33, 1)
+    assert bot.running and not bot.needs_reconnect and bot.inflight is None
+    assert bot.pending is None and not bot.ledger and bot.loot_queued == 0
+    assert bot.summary()["loot"]["paused"]
+    for later in (frame, replace(frame, turn_number=2, turn_tick=123500)):
+        assert bot.next(later, 10) is None
+        assert bot.running
+    # A paused optional collector cannot suppress attacks if a live enemy appears.
+    assert bot.next(turn_frame, 11).action == "basic"
+    bot.leave()
+    bot.enter(fresh=True)
+    assert not bot.loot_suspended and bot.loot_pause_reason is None
+
+
+@pytest.mark.parametrize("status", [10, 11])
+def test_uncertain_collection_still_stops_without_retry(turn_frame, status):
+    frame = defeated(turn_frame)
+    bot = collector(frame)
+    bot.next(frame, 0)
+    trial = bot.next(frame, 1)
+    record(bot, trial, status, 1)
+    assert not bot.running and bot.needs_reconnect
+    assert bot.next(frame, 2) is None and bot.loot_queued == 0
+
+
+@pytest.mark.parametrize("stage", ["select", "Q"])
+def test_selection_change_during_offensive_orders_keeps_existing_stop_policy(turn_frame, stage):
+    frame = replace(turn_frame, selected_unit=0) if stage == "select" else turn_frame
+    bot = collector(frame, execute=True)
+    bot.profile = replace(
+        bot.profile,
+        mercenaries=(replace(bot.profile.mercenaries[0], action="Q"), *bot.profile.mercenaries[1:]),
+    )
+    trial = bot.next(frame, 0)
+    assert trial.action == stage
+    record(bot, trial, 33, 0)
+    assert not bot.running and not bot.loot_suspended
+    assert not bot.ledger and bot.queued == bot.loot_queued == 0

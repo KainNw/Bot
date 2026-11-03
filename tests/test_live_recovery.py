@@ -135,6 +135,59 @@ def test_one_window_can_walk_while_an_ambushed_window_waits_enemy_turn_then_cast
     assert workers[100].turns.queued == 0
 
 
+@pytest.mark.parametrize("execute_turns", [False, True])
+def test_ambush_with_loot_enabled_obeys_the_separate_automatic_turn_switch(
+    turn_frame, monkeypatch, execute_turns
+):
+    session = SimpleNamespace(process=SimpleNamespace(pid=100), creation_time=777)
+    profile = replace(plan(), collect_remaining_loot=True)
+    worker = HuntWorker(
+        session,
+        ClientWindow(100, 0x1234, "Atlantica", 1234),
+        CombatDetector(100, 777, "local_context"),
+        profile,
+        native_attack=True,
+        execute_turns=execute_turns,
+    )
+    worker.cancellation = object()
+    # Match the reported ambush: own group is 1, enemy group is 0, then turn 1 is ours.
+    frame = replace(
+        turn_frame,
+        local_group=1,
+        turn_group=0,
+        units=tuple(replace(u, group=1 if u.world_slot == 1 else 0) for u in turn_frame.units),
+    )
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.observe_scene", lambda *a, **kw: observation(battle=True)
+    )
+    monkeypatch.setattr("atlantica_bot.hunt_loop.read_battle_frame", lambda *a: frame)
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.scan_world", lambda *a, **kw: pytest.fail("Battle only")
+    )
+    calls = []
+
+    def send(session, window, trial, **kwargs):
+        calls.append(trial)
+        return {"pid": 100, "operation": trial.operation, "status": 32}
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.try_battle_action", send)
+    worker._iteration()
+    worker._iteration()
+    assert not calls
+    frame = replace(frame, turn_group=1, turn_number=1, turn_tick=123500)
+    worker._iteration()
+    summary = worker.engine.summary()
+    assert summary["execute_turns"] == execute_turns
+    assert summary["battle_entry"]["source"] == "external"
+    assert summary["combat"]["enabled"] and summary["combat"]["loot"]["enabled"]
+    assert summary["combat"]["execute_orders"] == execute_turns
+    assert summary["combat"]["frame"]["own_turn"]
+    assert summary["running"] and not summary["needs_reconnect"]
+    assert len(calls) == int(execute_turns)
+    if execute_turns:
+        assert calls[0].source.member_slot == 1 and calls[0].action == "Q"
+
+
 @pytest.mark.parametrize("queued", [False, True])
 def test_combat_read_recovery_has_time_grace_and_does_not_repeat_a_queued_order(
     turn_frame, monkeypatch, queued

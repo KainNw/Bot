@@ -999,6 +999,7 @@ class HuntEngine:
         return {
             "pid": self.pid,
             "running": self.running,
+            "execute_turns": self.execute_turns,
             "phase": self.phase,
             "message": self.message,
             "scans": self.scans,

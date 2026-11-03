@@ -1,7 +1,13 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.13.0** incorpora **Caza y botín**: espera
+con Auto Battle apagado. La versión **0.13.1** distingue claramente **Combate
+automático** de **Turnos manuales**, también al tener activa la recogida. Un cambio
+de selección que impide enviar una recogida pausa esa función hasta la siguiente
+batalla, en vez de detener toda la caza. Consulta [el diagnóstico del combate
+recibido](docs/recovery.md#registro-recibido-en-0130-y-corrección-0131).
+
+Conserva **Caza y botín** de 0.13.0: espera
 configurable antes de atacar (0, 1, 3 o un valor de 0–60 segundos), radio de búsqueda
 de 5–500 casillas con calibración por objetivo y recogida nativa experimental de
 botín restante después de derrotar a todos los mobs. Se guarda por perfil.
