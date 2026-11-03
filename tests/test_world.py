@@ -13,6 +13,7 @@ from atlantica_bot.world import (
     OWNER_ADDRESS,
     SLOT_COUNT,
     TABLE_OFFSET,
+    observe_scene,
     scan_world,
 )
 
@@ -28,6 +29,7 @@ class WorldMemory:
         self.after_read = None
         self.active_slots = []
         self.write(OWNER_ADDRESS, struct.pack("<I", self.owner))
+        self.write(0x045079EC, struct.pack("<f", 20))
         self.write(self.owner + 0xB98, struct.pack("<i", 2))
         self.write(self.owner + 0x828, struct.pack("<I", self.manager))
         self.write(self.manager + TABLE_OFFSET, bytes(SLOT_COUNT * 4))
@@ -51,13 +53,14 @@ class WorldMemory:
     def actor(self, slot, kind, map_id, x, y, *, active=True):
         actor = 0x30000000 + slot * 0x10000
         info = 0x40000000 + slot * 0x10000
-        self.write(actor, bytes(0x400))
+        self.write(actor, bytes(0xC00))
         self.write(self.manager + TABLE_OFFSET + slot * 4, struct.pack("<I", actor))
         self.write(actor + 0x200, struct.pack("<II", slot, kind))
         self.write(actor + 0x30, struct.pack("<I", info))
         self.write(actor + 0x318, struct.pack("<i", -1))
         self.write(actor + 0x254, struct.pack("<i", -1))
         self.write(info + 0xCA, struct.pack("<hhh", map_id, x, y))
+        self.write(actor + 0xB8C, struct.pack("<fff", x, 0, y))
         if active:
             self.activate(slot)
         return actor, info
@@ -93,6 +96,8 @@ def test_reads_and_ranks_candidates_with_auto_battle_off_and_zero_counter(sessio
     assert [(c.slot, c.grid_distance) for c in view.candidates] == [(8, 3), (7, 7)]
     assert view.observed_entries == 2
     assert view.active_index_entries == 3
+    assert view.range_limit_squared == 20
+    assert view.candidates[0].distance_squared == 9
     assert not (session.directory / MARKER_NAME).exists()
     assert view.summary()["attack_eligibility_fully_validated"] is False
 
@@ -124,6 +129,20 @@ def test_unknown_scene_is_not_reported_as_an_empty_valid_world(session):
     view = scan_world(session)
     assert view.player is None
     assert view.scene_code == 3
+
+
+def test_observer_does_not_read_map_actor_objects_during_battle(session):
+    memory = session.system
+    memory.write(memory.owner + 0xB98, struct.pack("<i", 1))
+    memory.write(memory.owner + 0x828, bytes(4))
+    result = observe_scene(session)
+    assert result.scene_code == 1 and result.player is None
+    assert result.pid == session.process.pid and not result.native_active
+
+
+def test_nonfinite_range_is_not_presented_as_attackable(session):
+    session.system.write(0x045079EC, struct.pack("<f", float("nan")))
+    assert scan_world(session).range_limit_squared is None
 
 
 def test_unreadable_actor_keeps_partial_result_and_counts_failure(session):

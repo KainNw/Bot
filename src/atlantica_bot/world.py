@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import math
 import struct
 from dataclasses import asdict, dataclass
 
-from .errors import DiagnosticError
+from .errors import DiagnosticError, SceneChanged
 from .hunting import control_hunting
 from .session import GameSession
 
@@ -46,7 +47,7 @@ class ActiveIndex:
             for slot in slots
             if slot < SLOT_COUNT
         ):
-            raise DiagnosticError("Los índices activos cambiaron durante la lectura; actualiza.")
+            raise SceneChanged("Los índices activos cambiaron durante la lectura; actualiza.")
         return cls(address, vector_address, capacity, slots, membership)
 
 
@@ -88,6 +89,7 @@ class Candidate:
     y: int
     grid_distance: int
     identity: tuple[int, int, int] = ()
+    distance_squared: float | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,7 @@ class WorldView:
     active_index_entries: int = 0
     inactive_entries: int = 0
     out_of_scope_entries: int = 0
+    range_limit_squared: float | None = None
 
     def summary(self) -> dict:
         return {
@@ -116,6 +119,7 @@ class WorldView:
             "active_index_entries": self.active_index_entries,
             "inactive_entries": self.inactive_entries,
             "out_of_scope_entries": self.out_of_scope_entries,
+            "range_limit_squared": self.range_limit_squared,
             "attack_eligibility_fully_validated": False,
         }
 
@@ -125,6 +129,50 @@ def _grid(reader: Reader, actor: int) -> GridPosition:
     if not info:
         raise DiagnosticError("El personaje todavía no publica su posición de rejilla.")
     return GridPosition(*struct.unpack("<hhh", reader.read(info + 0xCA, 6)))
+
+
+def _world_position(reader: Reader, actor: int) -> tuple[float, float, float]:
+    position = struct.unpack("<fff", reader.read(actor + 0xB8C, 12))
+    if not all(math.isfinite(value) for value in position):
+        raise DiagnosticError("El cliente publica una posición 3D no válida.")
+    return position
+
+
+@dataclass(frozen=True)
+class Observation:
+    pid: int
+    creation_time: int | None
+    scene_code: int
+    player: GridPosition | None
+    native_active: bool = False
+
+
+def observe_scene(session: GameSession) -> Observation:
+    state = session.snapshot()
+    reader = Reader(session)
+    owner = reader.u32(OWNER_ADDRESS)
+    if not owner:
+        raise DiagnosticError("El cliente todavía no publica una escena válida.")
+    scene = reader.i32(owner + 0xB98)
+    player = None
+    if scene == 2:
+        manager = reader.u32(owner + 0x828)
+        if not manager:
+            raise DiagnosticError("No se pudo leer el personaje del mapa.")
+        actor = reader.u32(manager + TABLE_OFFSET + 4)
+        if not actor or reader.u32(actor + 0x200) != 1:
+            raise DiagnosticError("No se pudo validar el personaje del mapa.")
+        player = _grid(reader, actor)
+    session.snapshot()
+    if reader.u32(OWNER_ADDRESS) != owner or reader.i32(owner + 0xB98) != scene:
+        raise SceneChanged("La escena cambió durante la observación.")
+    return Observation(
+        session.process.pid,
+        session.creation_time,
+        scene,
+        player,
+        state.auto_battle or state.hunting or state.files.marker_present,
+    )
 
 
 def scan_world(session: GameSession) -> WorldView:
@@ -150,6 +198,9 @@ def scan_world(session: GameSession) -> WorldView:
     player = _grid(reader, player_actor)
     if player.map_id < 0:
         raise DiagnosticError("El personaje todavía no publica un mapa válido.")
+    player_position = _world_position(reader, player_actor)
+    limit = struct.unpack("<f", reader.read(0x045079EC, 4))[0]
+    range_limit = limit if math.isfinite(limit) and 0 < limit <= 1e8 else None
     candidates = []
     errors = changed = 0
     rejected: dict[str, int] = {}
@@ -175,7 +226,7 @@ def scan_world(session: GameSession) -> WorldView:
             if reader.byte(actor + 0x38) in (0x22, 0x23):
                 reject("state")
                 continue
-            if reader.byte(actor + 0x388) & 0x10:
+            if reader.u32(actor + 0x388) & 0x810:
                 reject("flag")
                 continue
             if reader.i32(actor + 0x318) >= 0 or reader.i32(actor + 0x254) >= 0:
@@ -190,9 +241,20 @@ def scan_world(session: GameSession) -> WorldView:
                 reject("pointer_changed")
                 continue
             distance = abs(position.x - player.x) + abs(position.y - player.y)
+            world_position = _world_position(reader, actor)
+            squared = sum(
+                (a - b) ** 2 for a, b in zip(player_position, world_position, strict=True)
+            )
             candidates.append(
                 Candidate(
-                    slot, kind_id, position.map_id, position.x, position.y, distance, identity
+                    slot,
+                    kind_id,
+                    position.map_id,
+                    position.x,
+                    position.y,
+                    distance,
+                    identity,
+                    squared,
                 )
             )
         except (DiagnosticError, OSError):
@@ -204,15 +266,15 @@ def scan_world(session: GameSession) -> WorldView:
         or reader.i32(owner + 0xB98) != scene
         or reader.u32(owner + 0x828) != manager
     ):
-        raise DiagnosticError("La escena cambió durante la lectura; vuelve a consultar.")
+        raise SceneChanged("La escena cambió durante la lectura; vuelve a consultar.")
     if ActiveIndex.read(reader, manager) != active:
-        raise DiagnosticError("Los índices activos cambiaron durante la lectura; actualiza.")
+        raise SceneChanged("Los índices activos cambiaron durante la lectura; actualiza.")
     if (
         reader.u32(manager + TABLE_OFFSET + 4) != player_actor
         or reader.u32(player_actor + 0x200) != 1
         or _grid(reader, player_actor) != player
     ):
-        raise DiagnosticError(
+        raise SceneChanged(
             "El personaje cambió de posición durante la lectura; vuelve a consultar."
         )
     return WorldView(
@@ -226,4 +288,5 @@ def scan_world(session: GameSession) -> WorldView:
         len(active.slots),
         sum(bool(pointer) and slot not in scoped for slot, pointer in enumerate(pointers[2:], 2)),
         sum(slot >= SLOT_COUNT for slot in active.slots),
+        range_limit,
     )

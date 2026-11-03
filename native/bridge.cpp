@@ -49,10 +49,11 @@ static bool FileHash(const wchar_t* path) {
     if (provider) CryptReleaseContext(provider, 0);
     return good;
 }
-static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* response = nullptr) {
+static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* response = nullptr, bool quiet = false, DWORD expected_thread = 0) {
     DWORD owner = 0;
     const auto tid = GetWindowThreadProcessId(window, &owner);
-    if (!tid || owner != pid || !IsWindowEnabled(window) || IsIconic(window)) return 20;
+    if (!tid || owner != pid || (expected_thread && tid != expected_thread)
+        || !IsWindowEnabled(window) || IsIconic(window)) return 20;
     wchar_t mutex_name[80]; swprintf_s(mutex_name, L"Local\\AtlanticaPanel.Control.%lu", pid);
     auto mutex = CreateMutexW(nullptr, FALSE, mutex_name);
     if (!mutex) return 21;
@@ -78,7 +79,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 1; command.pid = pid;
+        command.magic = kMagic; command.version = 2; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -89,6 +90,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
         }
         if (code == 0) {
             if (response) *response = *shared;
+            if (!quiet) {
             std::cout << "{\"pid\":" << pid << ",\"status\":" << shared->result
                 << ",\"exception\":" << shared->exception << ",\"thread_id\":" << shared->thread_id
                 << ",\"slot\":" << shared->slot << ",\"distance_squared\":";
@@ -98,6 +100,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
             if (std::isfinite(shared->range_limit_squared)) std::cout << shared->range_limit_squared;
             else std::cout << "null";
             std::cout << "}" << std::endl;
+            }
         } else {
             InterlockedCompareExchange(&shared->state, 4, 1);
         }
@@ -131,22 +134,44 @@ static int SelfTest() {
     SharedCommand command = {};
     SharedCommand response = {};
     const int code = Run(test.window, GetCurrentProcessId(), command, &response);
+    wchar_t cancel_name[96];
+    swprintf_s(cancel_name, L"Local\\AtlanticaPanel.Cancel.SelfTest.%lu", GetCurrentProcessId());
+    auto cancellation = CreateEventW(nullptr, TRUE, TRUE, cancel_name);
+    SharedCommand cancelled = {}, cancelled_response = {}, missing_response = {};
+    cancelled.attack = 1;
+    cancelled.slot = 2;
+    wcscpy_s(cancelled.cancel_name, cancel_name);
+    const int cancelled_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &cancelled_response, true) : 32;
+    if (cancellation) CloseHandle(cancellation);
+    const int missing_code = Run(test.window, GetCurrentProcessId(), cancelled, &missing_response, true);
     PostThreadMessageW(tid, WM_QUIT, 0, 0);
     WaitForSingleObject(thread, 5000); CloseHandle(thread); CloseHandle(test.ready);
     // The bridge executable's base/build must be rejected before any client address is read.
-    const int result = code ? code : (response.result == Unsupported && response.thread_id == tid ? 0 : 31);
-    if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result << std::endl;
+    const int result = code ? code : (
+        response.result == Unsupported && response.thread_id == tid
+        && !cancelled_code && cancelled_response.result == Cancelled
+        && !missing_code && missing_response.result == CancellationUnavailable ? 0 : 31);
+    if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result
+        << ", cancelled: " << cancelled_code << "/" << cancelled_response.result
+        << ", missing: " << missing_code << "/" << missing_response.result << std::endl;
     return result;
 }
 int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wcscmp(argv[1], L"--self-test") == 0) return SelfTest();
     try {
-        DWORD pid = 0; uint64_t created = 0, hwnd = 0; SharedCommand command = {};
+        DWORD pid = 0, expected_thread = 0; uint64_t created = 0, hwnd = 0; SharedCommand command = {};
         bool operation = false;
         for (int i = 1; i < argc; ++i) {
             std::wstring key(argv[i]);
             if (key == L"--attack" || key == L"--probe") { command.attack = key == L"--attack"; operation = true; continue; }
             if (i + 1 >= argc) return 2;
+            if (key == L"--cancel-event") {
+                const auto name = argv[++i];
+                constexpr wchar_t prefix[] = L"Local\\AtlanticaPanel.Cancel.";
+                if (wcslen(name) >= 96 || wcsncmp(name, prefix, wcslen(prefix)) != 0) return 2;
+                wcscpy_s(command.cancel_name, name);
+                continue;
+            }
             auto value = Number(argv[++i]);
             if (key == L"--created") created = value;
             else if (key == L"--window") { if (value > UINT32_MAX) return 2; hwnd = value; }
@@ -154,6 +179,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (value > UINT32_MAX) return 2;
                 const auto small = static_cast<uint32_t>(value);
                 if (key == L"--pid") pid = small;
+                else if (key == L"--thread") expected_thread = small;
                 else if (key == L"--slot") command.slot = small;
                 else if (key == L"--kind") command.identity[0] = small;
                 else if (key == L"--serial") command.identity[1] = small;
@@ -161,7 +187,7 @@ int wmain(int argc, wchar_t** argv) {
                 else return 2;
             }
         }
-        if (!pid || !hwnd || !created || !operation || command.slot < 2 || command.slot >= 450) return 2;
+        if (!pid || !hwnd || !created || !expected_thread || !operation || command.slot < 2 || command.slot >= 450) return 2;
         auto process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
         if (!process) return 3;
         FILETIME start, exit_time, kernel, user;
@@ -170,7 +196,7 @@ int wmain(int argc, wchar_t** argv) {
             && ((static_cast<uint64_t>(start.dwHighDateTime) << 32) | start.dwLowDateTime) == created
             && QueryFullProcessImageNameW(process, 0, path, &length) && FileHash(path)
             && WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
-        const int result = valid ? Run(reinterpret_cast<HWND>(static_cast<uintptr_t>(hwnd)), pid, command) : 4;
+        const int result = valid ? Run(reinterpret_cast<HWND>(static_cast<uintptr_t>(hwnd)), pid, command, nullptr, false, expected_thread) : 4;
         CloseHandle(process);
         return result;
     } catch (...) { return 2; }

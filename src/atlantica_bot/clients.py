@@ -14,6 +14,7 @@ class ClientWindow:
     pid: int
     handle: int
     title: str
+    thread_id: int | None = None
 
     @property
     def label(self) -> str:

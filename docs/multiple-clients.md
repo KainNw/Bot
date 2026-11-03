@@ -1,6 +1,6 @@
 # Seleccionar una de varias ventanas
 
-El panel 0.3 muestra ventanas de `Atlantica.exe` con título, PID y HWND. Puedes
+El panel muestra ventanas de `Atlantica.exe` con título, PID y HWND. Puedes
 elegir una en la lista y pulsar **Conectar**. Si los títulos son iguales, **Elegir
 ventana** minimiza el panel durante tres segundos: activa el cliente con Alt+Tab
 o desde su barra de título. Al volver, el panel muestra su PID; Conectar es explícito.
@@ -12,6 +12,11 @@ no se sustituye por otro cliente; incluso un PID reutilizado exige reconectar.
 Cambiar la selección desconecta los controles. Un visor de objetivos abierto para
 otro cliente no cambia de destino: exige abrir un nuevo visor. Los resúmenes y
 exportaciones identifican el PID.
+
+En 0.4, mientras el trabajador esté activo, la selección queda bloqueada hasta que
+Parar bot termine. También se vincula el hilo de la ventana y se comprueba en cada
+solicitud. Un mutex por PID evita dos ciclos/controladores simultáneos del mismo
+cliente; otro PID usa su propia reserva y cancelación.
 
 ## Marcador compartido de caza nativa
 
@@ -37,6 +42,8 @@ El hook se limita al hilo de esa ventana. No se usan teclas, clics, la ventana a
 ni búsquedas posteriores del primer proceso para dirigir la acción. Un mutex
 individual por PID impide dos pruebas simultáneas del panel sobre el mismo cliente.
 
-La prueba requiere validación en el juego real. Una solicitud encolada no demuestra
-que empezó un combate. No mueve al personaje ni juega turnos; los controles normales
-de las otras ventanas permanecen bajo control del usuario.
+El usuario confirmó el inicio del ataque individual con Auto Battle apagado y una
+sola ventana. El ciclo 0.4 añade Iniciar bot/Parar bot usando la misma ruta y sin
+modificar marcadores. La prueba real con varios clientes continúa pendiente.
+Una solicitud encolada no demuestra por sí sola que empezó un combate. No hay
+movimiento ni turnos automáticos; véase [el ciclo](independent-hunt.md).

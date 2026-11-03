@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +10,7 @@ from . import __version__
 from .capture import export_code_context
 from .clients import control_native_marker, marker_scope
 from .errors import DiagnosticError
+from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
 from .native_action import try_attack
 from .session import GameSession, LiveState
@@ -27,7 +29,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def __init__(self) -> None:
             self.root = tk.Tk()
             self.root.title(f"Atlantica — Control de caza {__version__}")
-            self.root.minsize(800, 490)
+            self.root.minsize(800, 520)
             self.directory: Path | None = None
             self.session: GameSession | None = None
             self.last_state: LiveState | None = None
@@ -36,6 +38,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.window_choice = tk.StringVar()
             self.last_trial = {}
             self.trial_unknown = False
+            self.bot_worker: HuntWorker | None = None
+            self.bot_report = {}
+            self.closing = False
+            self.bot_status = tk.StringVar(value="Bot detenido.")
             self.pid = tk.StringVar()
             self.folder = tk.StringVar(value="Conecta con el juego o selecciona su carpeta.")
             self.request = tk.StringVar(value="Solicitud: sin consultar")
@@ -47,11 +53,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Label(frame, text="Control de caza", font=("Segoe UI", 18)).pack(anchor="w")
             ttk.Label(
                 frame,
-                text="Iniciar: caza nativa con Auto Battle. "
-                "Prueba de ataque: una solicitud sin Auto Battle.",
+                text="Iniciar bot ataca mobs cercanos con Auto Battle apagado.",
             ).pack(anchor="w", pady=4)
             ttk.Label(frame, textvariable=self.folder, wraplength=680).pack(anchor="w", pady=8)
-            ttk.Label(frame, textvariable=self.scope_status, wraplength=760).pack(anchor="w")
             row = ttk.Frame(frame)
             row.pack(fill="x", pady=4)
             self.window_list = ttk.Combobox(
@@ -59,33 +63,64 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             )
             self.window_list.pack(side="left", fill="x", expand=True)
             self.window_list.bind("<<ComboboxSelected>>", self.choose_window)
-            ttk.Button(row, text="Actualizar lista", command=self.list_windows).pack(
-                side="left", padx=8
-            )
-            ttk.Button(row, text="Elegir ventana", command=self.pick_window).pack(side="left")
+            self.list_button = ttk.Button(row, text="Actualizar lista", command=self.list_windows)
+            self.list_button.pack(side="left", padx=8)
+            self.pick_button = ttk.Button(row, text="Elegir ventana", command=self.pick_window)
+            self.pick_button.pack(side="left")
             row = ttk.Frame(frame)
             row.pack(fill="x", pady=4)
-            ttk.Button(row, text="Seleccionar carpeta", command=self.browse).pack(side="left")
+            self.browse_button = ttk.Button(row, text="Seleccionar carpeta", command=self.browse)
+            self.browse_button.pack(side="left")
             ttk.Label(row, text="PID opcional:").pack(side="left", padx=(12, 4))
-            ttk.Entry(row, textvariable=self.pid, width=9).pack(side="left")
-            ttk.Button(row, text="Conectar", command=self.connect).pack(side="left", padx=8)
+            self.pid_entry = ttk.Entry(row, textvariable=self.pid, width=9)
+            self.pid_entry.pack(side="left")
+            self.connect_button = ttk.Button(row, text="Conectar", command=self.connect)
+            self.connect_button.pack(side="left", padx=8)
             row = ttk.Frame(frame)
-            row.pack(fill="x", pady=18)
+            row.pack(fill="x", pady=10)
+            self.bot_start_button = ttk.Button(
+                row, text="Iniciar bot", command=self.start_bot, state="disabled"
+            )
+            self.bot_start_button.pack(side="left")
+            self.bot_stop_button = ttk.Button(
+                row, text="Parar bot", command=self.stop_bot, state="disabled"
+            )
+            self.bot_stop_button.pack(side="left", padx=10)
+            self.bot_copy_button = ttk.Button(
+                row, text="Copiar estado del bot", command=self.copy_bot, state="disabled"
+            )
+            self.bot_copy_button.pack(side="left")
+            ttk.Label(
+                frame, textvariable=self.bot_status, font=("Segoe UI", 12, "bold"), wraplength=760
+            ).pack(anchor="w", pady=4)
+            read_row = ttk.Frame(frame)
+            read_row.pack(fill="x", pady=6)
+            self.advanced = ttk.Frame(frame)
+            self.more_button = ttk.Button(
+                frame,
+                text="Más controles: caza nativa y prueba individual",
+                command=self.toggle_advanced,
+            )
+            self.more_button.pack(anchor="w", pady=4)
+            row = ttk.Frame(self.advanced)
+            row.pack(fill="x", pady=6)
             self.start_button = ttk.Button(
-                row, text="Iniciar", command=self.start, state="disabled"
+                row, text="Activar caza nativa", command=self.start, state="disabled"
             )
             self.start_button.pack(side="left", padx=(0, 10))
-            self.stop_button = ttk.Button(row, text="Parar", command=self.stop, state="disabled")
+            self.stop_button = ttk.Button(
+                row, text="Parar caza nativa", command=self.stop, state="disabled"
+            )
             self.stop_button.pack(side="left")
             self.capture_button = ttk.Button(
-                row, text="Exportar diagnóstico", command=self.export, state="disabled"
+                read_row, text="Exportar diagnóstico", command=self.export, state="disabled"
             )
             self.capture_button.pack(side="left", padx=10)
             self.targets_button = ttk.Button(
-                row, text="Ver objetivos", command=self.show_targets, state="disabled"
+                read_row, text="Ver objetivos", command=self.show_targets, state="disabled"
             )
             self.targets_button.pack(side="left")
-            row = ttk.Frame(frame)
+            row = ttk.Frame(self.advanced)
             row.pack(fill="x", pady=4)
             self.trial_button = ttk.Button(
                 row,
@@ -98,19 +133,18 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 row, text="Copiar prueba", command=self.copy_trial, state="disabled"
             )
             self.copy_trial_button.pack(side="left", padx=8)
-            ttk.Label(
-                frame,
-                text="La prueba requiere un mob cercano; no mueve al personaje ni repite ataques.",
-            ).pack(anchor="w")
-            ttk.Label(frame, textvariable=self.request).pack(anchor="w", pady=4)
+            ttk.Label(self.advanced, textvariable=self.scope_status, wraplength=760).pack(
+                anchor="w"
+            )
+            ttk.Label(self.advanced, textvariable=self.request).pack(anchor="w", pady=4)
             ttk.Label(frame, textvariable=self.status, font=("Segoe UI", 12, "bold")).pack(
                 anchor="w", pady=4
             )
             ttk.Label(frame, textvariable=self.detail, wraplength=680).pack(anchor="w", pady=8)
             ttk.Label(
                 frame,
-                text="Antes de moverte: solicita parar, espera confirmación y apaga Auto Battle.\n"
-                "El cierre del juego comunicado durante la prueba sigue pendiente de diagnóstico.",
+                text="Para moverte, pulsa Parar bot y espera a que se detenga.\n"
+                "Durante el combate, el bot espera: los turnos siguen siendo manuales.",
                 wraplength=680,
             ).pack(anchor="w", pady=10)
             self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -118,8 +152,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             if not smoke_test:
                 self.root.after(100, self.list_windows)
             self.root.after(750, self.poll)
+            self.root.after(100, self.poll_bot)
 
         def disconnect(self) -> None:
+            self.stop_bot()
             self.session = None
             self.directory = None
             self.start_button.configure(state="disabled")
@@ -127,10 +163,133 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.capture_button.configure(state="disabled")
             self.targets_button.configure(state="disabled")
             self.trial_button.configure(state="disabled")
+            self.bot_start_button.configure(state="disabled")
             self.status.set("Cliente: sin conexión; selecciona y pulsa Conectar")
             self.folder.set("Selecciona una ventana y pulsa Conectar.")
             self.scope_status.set("")
             self.request.set("Solicitud: sin consultar")
+            if self.bot_worker is None:
+                self.bot_status.set("Bot detenido; sin conexión.")
+
+        def toggle_advanced(self) -> None:
+            if self.advanced.winfo_manager():
+                self.advanced.pack_forget()
+            else:
+                self.advanced.pack(fill="x", pady=6, after=self.more_button)
+
+        def lock_target_controls(self) -> None:
+            active = self.bot_worker is not None or self.closing
+            self.window_list.configure(state="disabled" if active else "readonly")
+            for button in (
+                self.list_button,
+                self.pick_button,
+                self.browse_button,
+                self.connect_button,
+                self.pid_entry,
+            ):
+                button.configure(state="disabled" if active else "normal")
+            self.bot_stop_button.configure(
+                state="normal" if self.bot_worker is not None else "disabled"
+            )
+            if active:
+                self.bot_start_button.configure(state="disabled")
+                self.start_button.configure(state="disabled")
+                self.stop_button.configure(state="disabled")
+                self.trial_button.configure(state="disabled")
+
+        def require_idle_bot(self) -> None:
+            if self.bot_worker is not None or self.closing:
+                raise DiagnosticError(
+                    "Espera a que Parar bot termine antes de cambiar el cliente o modo."
+                )
+
+        def target_is_editable(self) -> bool:
+            if self.bot_worker is not None or self.closing:
+                self.detail.set(
+                    "Pulsa Parar bot y espera a que termine antes de cambiar el cliente."
+                )
+                return False
+            return True
+
+        def selected_window(self, session: GameSession):
+            window = self.windows.get(self.window_choice.get())
+            if window is None or window.pid != session.process.pid:
+                windows = [w for w in self.system.game_windows() if w.pid == session.process.pid]
+                if len(windows) != 1:
+                    raise DiagnosticError("Usa Elegir ventana para identificar el cliente exacto.")
+                window = windows[0]
+            return window
+
+        def start_bot(self) -> None:
+            try:
+                self.require_idle_bot()
+                session = self.session
+                if session is None:
+                    raise DiagnosticError("Conecta con la ventana elegida antes de iniciar el bot.")
+                if self.trial_unknown:
+                    raise DiagnosticError("Comprueba la solicitud anterior y vuelve a conectar.")
+                state = session.snapshot()
+                if state.auto_battle or state.hunting or state.files.marker_present:
+                    raise DiagnosticError(
+                        "Deja Auto Battle y caza nativa apagados para iniciar el bot."
+                    )
+                worker = HuntWorker(session, self.selected_window(session))
+                self.bot_report = worker.engine.summary()
+                self.bot_worker = worker
+                self.bot_status.set(f"PID {session.process.pid}: iniciando bot...")
+                worker.start()
+                self.lock_target_controls()
+            except (DiagnosticError, OSError) as exc:
+                self.error(exc)
+
+        def stop_bot(self) -> None:
+            worker = self.bot_worker
+            if worker is not None:
+                self.bot_status.set(
+                    f"PID {worker.window.pid}: deteniendo bot; esperando la solicitud en curso..."
+                )
+                try:
+                    worker.stop()
+                except DiagnosticError as exc:
+                    self.detail.set(str(exc))
+
+        def poll_bot(self) -> None:
+            worker = self.bot_worker
+            if worker is not None:
+                try:
+                    while True:
+                        self.bot_report = worker.events.get_nowait()
+                except queue.Empty:
+                    pass
+                if not worker.alive:
+                    self.bot_report = worker.engine.summary()
+                    self.trial_unknown |= self.bot_report["needs_reconnect"]
+                    self.bot_worker = None
+                    self.lock_target_controls()
+                if self.bot_report:
+                    info = self.bot_report
+                    message = info["message"]
+                    if worker.alive and worker.stop_event.is_set():
+                        message = "Deteniendo; puede completarse la solicitud en curso."
+                    self.bot_status.set(
+                        f"PID {info['pid']}: {message} "
+                        f"Enviadas: {info['queued']}; "
+                        f"combates observados: {info['battles_observed']}."
+                    )
+                    self.bot_copy_button.configure(state="normal")
+                    self.bot_copy_button.configure(text=f"Copiar estado PID {info['pid']}")
+            self.root.after(100, self.poll_bot)
+
+        def copy_bot(self) -> None:
+            if self.bot_report:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(
+                    json.dumps(
+                        {"tool_version": __version__, **self.bot_report},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
 
         def pid_changed(self, *args) -> None:
             selected = self.windows.get(self.window_choice.get())
@@ -154,6 +313,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.error(exc)
 
         def choose_window(self, event=None) -> None:
+            if not self.target_is_editable():
+                return
             window = self.windows.get(self.window_choice.get())
             if window is not None:
                 self.disconnect()
@@ -161,6 +322,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.detail.set(f"Seleccionado: {window.label}. Pulsa Conectar.")
 
         def pick_window(self) -> None:
+            if not self.target_is_editable():
+                return
             self.disconnect()
             self.root.iconify()
 
@@ -183,6 +346,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             messagebox.showerror("Control de caza", str(exc))
 
         def browse(self) -> None:
+            if not self.target_is_editable():
+                return
             value = filedialog.askdirectory(title="Carpeta de trabajo de Atlantica")
             if not value:
                 return
@@ -195,6 +360,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.start_button.configure(state="disabled")
                 self.capture_button.configure(state="disabled")
                 self.targets_button.configure(state="disabled")
+                self.trial_button.configure(state="disabled")
+                self.bot_start_button.configure(state="disabled")
                 self.folder.set(str(directory))
                 self.status.set("Cliente: sin conexión; estado real sin confirmar")
                 self.refresh_files()
@@ -204,6 +371,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def connect(self) -> None:
             from .__main__ import positive_pid
 
+            if not self.target_is_editable():
+                return
             self.disconnect()
             try:
                 pid = positive_pid(self.pid.get().strip()) if self.pid.get().strip() else None
@@ -246,8 +415,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.capture_button.configure(state="disabled")
             self.targets_button.configure(state="disabled")
             self.trial_button.configure(state="disabled")
+            self.bot_start_button.configure(state="disabled")
             self.refresh_files()
             if self.session is None:
+                self.lock_target_controls()
                 return
             state = self.session.snapshot()
             self.last_state = state
@@ -260,6 +431,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 or self.trial_unknown
             ):
                 self.trial_button.configure(state="normal")
+                self.bot_start_button.configure(state="normal")
             self.status.set(f"PID {self.session.process.pid}: {state.label}")
             scope = marker_scope(self.system, self.directory)
             if (
@@ -269,6 +441,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 and not state.files.marker_present
             ):
                 self.start_button.configure(state="normal")
+            self.lock_target_controls()
 
         def poll(self) -> None:
             try:
@@ -281,6 +454,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
         def start(self) -> None:
             try:
+                self.require_idle_bot()
                 if self.session is None:
                     raise DiagnosticError("Conecta con el juego antes de iniciar.")
                 self.session.start()
@@ -291,6 +465,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
         def stop(self) -> None:
             try:
+                self.require_idle_bot()
                 if self.directory is None:
                     raise DiagnosticError("Selecciona la carpeta del juego.")
                 if self.session is not None:
@@ -313,6 +488,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.detail.set(f"Marcador desactivado. Lectura del cliente no disponible: {exc}")
 
         def close(self) -> None:
+            if self.closing:
+                return
+            self.stop_bot()
             try:
                 active = self.directory is not None and marker_state(self.directory).marker_present
                 active = active or bool(
@@ -328,7 +506,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 "La caza puede seguir activada al cerrar el panel. ¿Quieres cerrarlo igualmente?",
             ):
                 return
-            self.root.destroy()
+            self.closing = True
+            self.lock_target_controls()
+
+            def finish_close() -> None:
+                if self.bot_worker is not None and self.bot_worker.alive:
+                    self.root.after(100, finish_close)
+                else:
+                    self.root.destroy()
+
+            finish_close()
 
         def export(self) -> None:
             session = self.session
@@ -362,16 +549,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 return
             self.trial_button.configure(state="disabled")
             try:
-                window = self.windows.get(self.window_choice.get())
-                if window is None or window.pid != session.process.pid:
-                    windows = [
-                        w for w in self.system.game_windows() if w.pid == session.process.pid
-                    ]
-                    if len(windows) != 1:
-                        raise DiagnosticError(
-                            "Usa Elegir ventana para identificar el cliente exacto."
-                        )
-                    window = windows[0]
+                self.require_idle_bot()
+                window = self.selected_window(session)
                 view = scan_world(session)
                 if not view.candidates:
                     raise DiagnosticError(
@@ -491,5 +670,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
     panel = Panel()
     if smoke_test:
         # Exercise the real packaged GUI without connecting or changing any files.
+        panel.toggle_advanced()
+        panel.root.update_idletasks()
+        panel.toggle_advanced()
         panel.root.after(500, panel.root.destroy)
     panel.root.mainloop()

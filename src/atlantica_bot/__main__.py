@@ -25,7 +25,7 @@ def positive_pid(value: str) -> int:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         prog="atlantica-bot",
-        description="Control de AutoHunting y diagnóstico del cliente de Atlantica Online.",
+        description="Panel de caza por ventana y diagnóstico de Atlantica Online.",
     )
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = root.add_subparsers(dest="command", required=True)

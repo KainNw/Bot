@@ -4,6 +4,11 @@ Objetivo activo: iniciar desde el panel manteniendo Auto Battle apagado. El modo
 nativo sigue necesitando ese indicador dentro del cliente; retirar únicamente el
 bloqueo de nuestra interfaz no elimina esa dependencia.
 
+Estado 0.4: el usuario confirmó que la prueba individual inició el ataque con Auto
+Battle apagado. Se implementó el ciclo de objetivos cercanos con pausa durante el
+combate y parada cancelable. Su prueba real completa, y la de varias ventanas,
+siguen pendientes. Véase [el comportamiento actual](independent-hunt.md).
+
 Estado 0.3: tercera captura recibida, funciones de validación y cola analizadas,
 y primera prueba individual implementada. El botón experimental usa el hilo de la
 ventana elegida y métodos del cliente para una solicitud, sin mover ni repetir.

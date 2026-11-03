@@ -1,12 +1,13 @@
 # Control de caza para Atlantica Online
 
-Controla la lógica AutoHunting que ya incluye el cliente analizado del servidor
-privado en Windows 10/11. El inicio y la parada usan `HuntingMode.txt`; el panel
-consulta el estado del proceso para distinguir una solicitud de la confirmación del cliente.
+Panel para Windows 10/11 que selecciona un cliente y solicita ataques a mobs cercanos
+con Auto Battle apagado. La versión 0.4 añade **Iniciar bot / Parar bot**, espera durante
+el combate y vuelve a buscar al regresar al mapa. No mueve al personaje ni juega los
+turnos de los mercenarios. El ciclo completo requiere validación en el cliente real.
 
-La versión 0.3 añade selección de ventanas/PID y una **prueba experimental de un
-ataque sin Auto Battle**, dirigida al cliente conectado. Esa prueba requiere
-validación en el juego real; no es todavía un ciclo autónomo de caza.
+**Comprobado por el usuario:** la prueba individual 0.3 inició el ataque con Auto Battle
+desactivado. El resultado indicó solicitud encolada, sin excepción y dentro del alcance
+nativo. Solo había una ventana abierta; la prueba real con varios clientes sigue pendiente.
 
 **Comprobado por el usuario:** tras activar Auto Battle y crear el marcador, el cliente
 mostró HUNT=1 y el personaje atacó mobs. También se comunicó un cierre al moverlo
@@ -16,30 +17,25 @@ El usuario también comunicó un cierre al probar el clic manual con Auto Battle
 apagado, marcador desactivado y sin x32dbg. No hay todavía registro de ese segundo
 cierre que permita identificar su causa.
 
-**Panel:** implementado con Iniciar, Parar y estado actualizado. La lógica tiene
-pruebas automatizadas; el workflow de Windows también comprueba las APIs sobre su
-propio proceso y el arranque del ejecutable gráfico. La conexión real con el cliente
-requiere validación en tu PC. La próxima prueba debe hacerse con el juego abierto
-normalmente, sin adjuntar x32dbg, para separar esa variable del comportamiento del cliente.
-El usuario pudo conectar el panel y exportar contexto con Auto Battle apagado en
-una sesión posterior con otro PID. La nueva vista de objetivos todavía requiere
-contrastar sus resultados con el juego.
+La lógica tiene pruebas automatizadas. El workflow de Windows prueba las APIs y
+sincronización sobre procesos/objetos propios, compila el puente x86 y comprueba el
+arranque del ejecutable empaquetado. Estos controles no sustituyen la prueba del
+ciclo y su detector de combate en el juego. Usa el cliente sin adjuntar x32dbg.
 
 Solo se admite la compilación cuyo SHA-256 es
 `BC87A0CC5826AA7FB5E4FF10B6B7C1A349962BD8B146AD28EC3FFA9453FE04E6`.
 
 ## Mejoras solicitadas y límites actuales
 
-La prioridad más reciente es entregar el panel de inicio, parada y estado para poder
-mejorarlo por etapas. Ese panel ya se publicó y se compiló para Windows. La siguiente
-etapa solicitada es la caza independiente. El primer modo disponible sigue siendo el
-control de la caza nativa.
+El ciclo 0.4 usa el envío individual ya confirmado y selecciona candidatos dentro
+del alcance 3D del cliente. Envía una solicitud y espera la escena de combate antes
+de permitir otra. Al volver al mismo mapa, exige una posición estable durante dos
+segundos. Si no observa el combate en diez segundos, se detiene sin repetir el envío.
+Detalles y límites en [caza independiente](docs/independent-hunt.md).
 
-El usuario ha pedido que Iniciar bot funcione manteniendo Auto Battle apagado.
-**La caza autónoma independiente todavía no está completada.** Se ha implementado
-una primera prueba de una solicitud de ataque usando los métodos nativos analizados,
-con Auto Battle y caza nativa apagados. Quedan su prueba en el cliente real y, después,
-el ciclo de caza, movimiento y confirmación de entrada en combate.
+No hay desplazamiento hacia mobs lejanos ni automatización de turnos. El control
+nativo anterior sigue en **Más controles** y utiliza `HuntingMode.txt` y Auto Battle.
+El ciclo nuevo no modifica ese archivo ni activa Auto Battle.
 
 Como mejora posterior se solicitó estudiar una velocidad configurable solo durante
 batallas, restaurando la velocidad normal al salir del combate o parar. No está
@@ -53,40 +49,39 @@ Si abres varios clientes, selecciona su ventana en la lista antes de **Conectar*
 muestra el PID y vincula la conexión también a la fecha de creación de ese proceso.
 No cambia automáticamente a otro cliente cuando se cierra el elegido.
 
-Si varios clientes comparten carpeta, **Iniciar/Parar nativos se bloquean** porque
+Si varios clientes comparten carpeta, **Activar/Parar caza nativa se bloquean** porque
 `HuntingMode.txt` es compartido. Las consultas de objetivos siguen siendo por PID.
 Detalles: [varias ventanas](docs/multiple-clients.md).
 
-Requiere Python 3.11 o posterior de 64 bits, con Tkinter (incluido en el instalador
-normal de Python para Windows). En la carpeta de este proyecto:
+El ejecutable de GitHub Actions ya incluye Python y el puente x86. Para ejecutar
+desde fuentes se requiere Python 3.11+ de 64 bits con Tkinter y compilar el puente
+de la sección final:
 
 ```powershell
 py -3 panel_caza.py
 ```
 
-1. Abre el juego y pulsa **Conectar**. El panel identifica el proceso y su carpeta de
-   trabajo; verifica el ejecutable antes de habilitar controles. Deja el PID opcional
-   vacío para que se detecte automáticamente. Ese campo permite elegir un cliente
-   concreto si hay varios abiertos.
-2. Activa **Auto Battle** mediante el control normal del juego.
-3. Pulsa **Iniciar**. El panel crea o restaura el marcador y espera la lectura del cliente.
-4. Para mover el personaje manualmente, pulsa **Parar**, espera la confirmación y
-   desactiva Auto Battle desde el juego. Es una forma de controlar la prueba; no es
-   una corrección demostrada del cierre comunicado.
+1. Elige la ventana y pulsa **Conectar**. Con varios procesos no se elige el primero.
+2. Mantén Auto Battle y caza nativa apagados y deja el personaje quieto cerca de mobs.
+3. Pulsa **Iniciar bot**. Busca objetivos cercanos, solicita un ataque y espera el combate.
+4. Juega los turnos manualmente. Al regresar al mapa, el bot vuelve a buscar.
+5. Para moverte o cambiar de cliente, pulsa **Parar bot** y espera el estado detenido.
 
-El estado distingue **Inicio solicitado**, **Caza habilitada**, **Parada solicitada**,
-**Parada confirmada**, **Auto Battle apagado** y ausencia de lectura actual. La presencia
-del archivo no demuestra por sí sola que el personaje esté atacando. Con Auto Battle
-apagado puede quedar un indicador almacenado sin actualizar.
+**Copiar estado del bot** copia el PID, fase, contadores y resultado de la última
+solicitud. Una cola confirmada no demuestra por sí sola que empezó un combate;
+el ciclo registra la escena observada por separado.
 
-Si el juego se cierra, el panel deshabilita Iniciar y muestra que perdió la lectura.
-Al abrirlo de nuevo, pulsa **Conectar**: el PID se busca de nuevo y el puntero del estado
-se consulta en cada lectura. No se conserva el PID como identificador permanente.
+La selección de cliente queda bloqueada mientras termina el trabajador. Si se cierra
+el juego, se detiene; abrir otro cliente exige Conectar. Cambios de mapa, movimiento
+manual mientras busca, activación de Auto Battle o errores inciertos detienen el ciclo.
+Cerrar el panel solicita parar y espera al trabajador. Una solicitud ya encolada
+puede completarse; Parar bot no cancela un combate que ya empezó.
 
-Con el juego cerrado también puedes elegir **Seleccionar carpeta** y pulsar **Parar**
-para dejar el marcador desactivado antes del siguiente arranque. Cerrar el panel no
-desactiva automáticamente la función del cliente; si puede seguir activa, aparece
-una confirmación antes de cerrar la ventana.
+**Más controles** conserva la prueba individual y el control de la caza nativa.
+Para esta última sí hace falta Auto Battle. Sus botones modifican el marcador y
+su parada tarda hasta la siguiente comprobación del cliente. Con el juego cerrado,
+Seleccionar carpeta permite **Parar caza nativa**. Cerrar el panel no retira ese
+marcador; si sigue activo se conserva la advertencia anterior.
 
 ## Contexto para la siguiente etapa
 
@@ -97,8 +92,8 @@ ataques. **Copiar prueba** guarda el resultado en el portapapeles para contrasta
 con lo ocurrido en el juego. Tras encolar o recibir un resultado incierto, comprueba
 el cliente y reconecta antes de otra prueba. No se confirma batalla por el mero envío.
 
-El ejecutable incluye un auxiliar y DLL x86 propios para esa solicitud. Solo se
-cargan en el cliente al pulsar el botón de prueba. La conexión normal y Ver objetivos
+El ejecutable incluye un auxiliar y DLL x86 propios para esa solicitud y el ciclo.
+Se cargan para solicitar una acción. La conexión normal y Ver objetivos
 siguen usando las APIs de consulta y lectura. La prueba no cambia Auto Battle ni
 el marcador de ninguna carpeta. El código está en `native/`; sus controles y límites
 se explican en [el tercer análisis](docs/context-analysis-20261102-190839.md).

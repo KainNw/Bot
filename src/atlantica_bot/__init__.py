@@ -1,3 +1,3 @@
-"""Native hunting controls and read-only diagnostics for the verified Atlantica client."""
+"""Client controls and diagnostics for the verified Atlantica build."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

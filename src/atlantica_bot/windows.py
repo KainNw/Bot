@@ -220,11 +220,11 @@ class WindowsSystem:
 
         def visit(handle, parameter):
             pid = DWORD()
-            self._window_pid(handle, ctypes.byref(pid))
+            thread_id = self._window_pid(handle, ctypes.byref(pid))
             if pid.value in pids and self._window_visible(handle):
                 title = ctypes.create_unicode_buffer(512)
                 self._window_title(handle, title, len(title))
-                windows.append(ClientWindow(pid.value, int(handle), title.value))
+                windows.append(ClientWindow(pid.value, int(handle), title.value, int(thread_id)))
             return True
 
         callback = self._window_callback_type(visit)

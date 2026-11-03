@@ -8,6 +8,7 @@ from pathlib import Path
 from .clients import ClientWindow
 from .errors import DiagnosticError
 from .hunting import control_hunting
+from .ipc import BotLease, Cancellation
 from .session import GameSession
 from .world import Candidate
 
@@ -25,6 +26,8 @@ RESULTS = {
     10: "El cliente produjo una excepción durante la prueba. No repitas la acción.",
     11: "No se confirmó que la solicitud se copiase a la cola del cliente.",
     12: "El umbral de alcance nativo no está validado; no se solicitó el ataque.",
+    13: "Solicitud cancelada antes de enviar el ataque.",
+    14: "No se pudo validar el control de parada; no se solicitó un ataque.",
 }
 
 
@@ -56,7 +59,32 @@ def self_test_bridge() -> None:
 
 
 def try_attack(
-    session: GameSession, window: ClientWindow, candidate: Candidate, *, probe: bool = False
+    session: GameSession,
+    window: ClientWindow,
+    candidate: Candidate,
+    *,
+    probe: bool = False,
+    cancellation: Cancellation | None = None,
+) -> dict:
+    with BotLease(session.process.pid):
+        signal = cancellation or Cancellation(session.process.pid)
+        try:
+            return _try_attack(session, window, candidate, probe=probe, cancellation=signal)
+        finally:
+            if cancellation is None:
+                try:
+                    signal.cancel()
+                finally:
+                    signal.close()
+
+
+def _try_attack(
+    session: GameSession,
+    window: ClientWindow,
+    candidate: Candidate,
+    *,
+    probe: bool,
+    cancellation: Cancellation | None,
 ) -> dict:
     """Issue one explicit request on the selected window's thread; never retry or move input."""
     if sys.platform != "win32":
@@ -65,7 +93,12 @@ def try_attack(
     control_hunting(session.directory, "status")
     if state.auto_battle or state.hunting or state.files.marker_present:
         raise DiagnosticError("La prueba requiere Auto Battle y caza nativa desactivados.")
-    if session.creation_time is None or window.pid != session.process.pid or not window.handle:
+    if (
+        session.creation_time is None
+        or window.pid != session.process.pid
+        or not window.handle
+        or not window.thread_id
+    ):
         raise DiagnosticError("La ventana no corresponde a la instancia conectada.")
     if not 2 <= candidate.slot < 450 or len(candidate.identity) != 3:
         raise DiagnosticError("Actualiza los candidatos antes de solicitar un ataque.")
@@ -81,6 +114,8 @@ def try_attack(
         str(session.creation_time),
         "--window",
         str(window.handle),
+        "--thread",
+        str(window.thread_id),
         "--slot",
         str(candidate.slot),
         "--kind",
@@ -90,6 +125,8 @@ def try_attack(
         "--unique",
         str(candidate.identity[2]),
     ]
+    if cancellation is not None:
+        args.extend(("--cancel-event", cancellation.name))
     try:
         result = subprocess.run(
             args,
@@ -117,6 +154,8 @@ def try_attack(
         report = json.loads(result.stdout)
         if report["pid"] != window.pid or report["slot"] != candidate.slot:
             raise ValueError("Respuesta de otra instancia")
+        if report["thread_id"] != window.thread_id:
+            raise ValueError("Respuesta de otro hilo de ventana")
         code = report["status"]
         if type(code) is not int or code not in RESULTS or type(report["thread_id"]) is not int:
             raise ValueError("Respuesta no válida")

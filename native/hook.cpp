@@ -30,7 +30,11 @@ static bool LockImport(uintptr_t address, const char* name, const char* rtl_name
     return actual == GetProcAddress(GetModuleHandleW(L"kernel32.dll"), name)
         || actual == GetProcAddress(GetModuleHandleW(L"ntdll.dll"), rtl_name);
 }
-static uint32_t Invoke(SharedCommand* cmd) {
+static bool IsCancelled(HANDLE signal) {
+    return signal && WaitForSingleObject(signal, 0) != WAIT_TIMEOUT;
+}
+static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
+    if (IsCancelled(cancellation)) return Cancelled;
     if (!Supported()) return Unsupported;
     const auto owner = Read<uint32_t>(0x04a9290c);
     if (!owner || Read<int>(owner + 0xb98) != 2) return InvalidScene;
@@ -72,6 +76,7 @@ static uint32_t Invoke(SharedCommand* cmd) {
         || !LockImport(0x03f850d4, "LeaveCriticalSection", "RtlLeaveCriticalSection"))
         return InvalidQueue;
     if (!cmd->attack) return Verified; // Probe never calls any client function.
+    if (IsCancelled(cancellation)) return Cancelled;
     using Can = int(__thiscall*)(void*, int);
     using Ready = bool(__thiscall*)(void*);
     using Payload = void*(__thiscall*)(void*, const void*, int, int);
@@ -79,6 +84,7 @@ static uint32_t Invoke(SharedCommand* cmd) {
     using Send = int(__thiscall*)(void*, const void*);
     if (!reinterpret_cast<Ready>(0x4355ec)(reinterpret_cast<void*>(player))) return Blocked;
     if (!reinterpret_cast<Can>(0x433a4a)(reinterpret_cast<void*>(player), static_cast<int>(cmd->slot))) return Blocked;
+    if (IsCancelled(cancellation)) return Cancelled;
     if (Read<uint32_t>(0x04a9290c) != owner || !Identity(target, cmd)) return TargetChanged;
     alignas(4) unsigned char payload[16] = {}, message[64] = {};
     reinterpret_cast<Payload>(0x43bc26)(payload, reinterpret_cast<void*>(target + 0x204), 1, 0);
@@ -89,7 +95,9 @@ static uint32_t Invoke(SharedCommand* cmd) {
     uint32_t result = NotQueued;
     __try {
         const auto capacity = Read<int>(queue + 4), used = Read<int>(queue + 0x10);
-        if (capacity <= 0 || used < 0 || used > capacity || capacity - used < 25) {
+        if (IsCancelled(cancellation)) {
+            result = Cancelled;
+        } else if (capacity <= 0 || used < 0 || used > capacity || capacity - used < 25) {
             result = QueueFull;
         } else {
             // The client's queue lock is recursive; this serializes the capacity check and copy.
@@ -102,12 +110,19 @@ static uint32_t Invoke(SharedCommand* cmd) {
     return result;
 }
 static void GuardedInvoke(SharedCommand* cmd) {
+    HANDLE cancellation = nullptr;
     __try {
-        cmd->result = Invoke(cmd);
+        if (cmd->cancel_name[0]) {
+            if (cmd->cancel_name[95] != 0) { cmd->result = CancellationUnavailable; return; }
+            cancellation = OpenEventW(SYNCHRONIZE, FALSE, cmd->cancel_name);
+            if (!cancellation) { cmd->result = CancellationUnavailable; return; }
+        }
+        cmd->result = Invoke(cmd, cancellation);
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         cmd->exception = GetExceptionCode();
         cmd->result = ClientException;
     }
+    if (cancellation) CloseHandle(cancellation);
 }
 extern "C" LRESULT CALLBACK AtlanticaHookProc(int code, WPARAM removed, LPARAM data) {
     if (code >= 0 && removed == PM_REMOVE) {
@@ -122,7 +137,7 @@ extern "C" LRESULT CALLBACK AtlanticaHookProc(int code, WPARAM removed, LPARAM d
                 if (mapping) {
                     auto cmd = static_cast<SharedCommand*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedCommand)));
                     if (cmd) {
-                        if (cmd->magic == kMagic && cmd->version == 1 && cmd->pid == pid
+                        if (cmd->magic == kMagic && cmd->version == 2 && cmd->pid == pid
                             && cmd->nonce_lo == msg->wParam && cmd->nonce_hi == static_cast<DWORD>(msg->lParam)
                             && InterlockedCompareExchange(&cmd->state, 2, 1) == 1) {
                             cmd->thread_id = GetCurrentThreadId();

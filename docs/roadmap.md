@@ -1,64 +1,54 @@
 # Próximas etapas acordadas
 
-## Panel entregado y estabilidad
+## Ataque individual confirmado
 
-- Implementados el control conservador del archivo y el panel nativo con estados de
-  solicitud/confirmación. La lógica tiene pruebas; el panel requiere prueba en Windows.
-- El PID no es persistente: al perder la lectura, el panel descarta la sesión y exige
-  reconectar. La búsqueda por nombre identifica el nuevo PID y verifica la compilación.
-- Pendiente diagnosticar el cierre comunicado al mover el personaje con caza activa
-  y x32dbg adjunto. No hay un registro conservado ni una causa confirmada.
-- El usuario respondió que el clic manual también cierra el cliente con Auto Battle
-  apagado, el marcador desactivado y sin x32dbg. Ese resultado amplía la reproducción;
-  todavía no permite asignar una causa. Después pidió priorizar la entrega del panel.
-- El panel se publicó en `codex/panel-caza`; su compilación Windows y prueba de arranque
-  del ejecutable terminaron correctamente. El usuario conectó el panel, consultó
-  candidatos y exportó dos ZIP de contexto. La acción independiente sigue pendiente.
+El usuario confirmó que la prueba 0.3 inició el ataque con Auto Battle apagado.
+El resultado identificó PID 16244, hilo 18440, objetivo 8, solicitud encolada sin
+excepciones y distancia dentro del umbral nativo. Solo había una ventana abierta.
+La primera prueba con varias ventanas continúa pendiente; no se presenta como realizada.
 
-## Caza independiente de Auto Battle — objetivo activo
+Se recibieron tres capturas de contexto, verificadas y analizadas como datos. Se
+identificaron la lista activa, los métodos de validación, construcción del mensaje,
+transformación y cola. El puente x86 usa el hilo de la ventana elegida y comprueba
+compilación, PID, fecha de creación, HWND, hilo e identidad del objetivo.
 
-Requisito del usuario: Iniciar bot debe iniciar la caza mientras Auto Battle permanezca
-apagado. El modo nativo hallado exige ese indicador y no cumple este requisito.
+## Ciclo cercano 0.4 — objetivo activo
 
-El usuario pidió también automatizar los turnos de sus mercenarios y después
-confirmó priorizar primero el ataque/inicio de encuentros con mobs. Los turnos
-y la aceleración quedan como etapas posteriores.
+Se implementaron Iniciar bot/Parar bot, selección dentro del alcance 3D, espera de
+escena de combate y reanudación tras volver al mismo mapa y estabilizarse. El ciclo
+no cambia Auto Battle, el marcador de caza nativa, instrucciones o relojes del juego.
+No juega turnos ni mueve al personaje hacia mobs lejanos.
 
-La línea base solicitada fue: marcador desactivado, sin x32dbg adjunto, Auto Battle
-apagado y un clic manual sobre un mob. El usuario informó que también se cierra.
-Falta obtener evidencia del error antes de considerar ese flujo una base estable.
+La interfaz conserva respuesta mientras el auxiliar espera. La parada y el cierre
+señalan una cancelación que el cliente comprueba antes del envío. Una solicitud ya
+en curso/encolada puede completarse. Datos cambiantes se descartan; resultados
+inciertos y ausencia de confirmación de combate detienen el ciclo sin repetirlos.
+Los controles para cambiar cliente permanecen bloqueados hasta terminar el trabajador.
 
-Después hay que identificar la ruta normal del clic y validar selección de objetivo,
-contexto de ejecución y acción. Ya se analizó el constructor `0040C4E9` y el
-despachador `0043652D`, que delega en un método virtual no incluido en la primera
-captura. No se deben presentar como una API de ataque disponible.
+La lógica de fases, cancelación y aislamiento tiene pruebas. Quedan por validar el
+ciclo completo y el detector de escena en el cliente real, y después varias ventanas.
+Véase el comportamiento y sus límites en independent-hunt.md.
 
-La primera exportación de 28 KiB ya se recibió, validó y analizó. Se implementó una
-vista de candidatos de solo lectura que no exige Auto Battle y se amplió la captura
-a los auxiliares faltantes y el método virtual de envío. La segunda captura y el
-resumen real se recibieron: el barrido 0.2.1 consulta ahora la lista activa y corrige
-el contador de cambios. Se identificó `0095EC3A`, pero faltan sus auxiliares de
-preparación y la validación `00431AC0`; la exportación añade esos bloques (hasta
-76 KiB). Todavía no hay acción de ataque independiente. Detalles en
-[independent-mode.md](independent-mode.md).
+## Aislamiento y estabilidad
 
-No se considera modo independiente el cambio artificial del indicador Auto Battle
-ni saltarse su comprobación en la rutina nativa. El controlador actual no hace ninguno
-de esos cambios. La versión 0.3 añade una prueba individual que llama a los métodos
-analizados en el hilo de la ventana seleccionada, con controles de identidad, escena,
-alcance y cola. Requiere validar el resultado en el cliente real antes del ciclo
-automático. No hay movimiento hacia candidatos lejanos ni automatización de turnos.
+Cada ejecución queda ligada a PID, fecha de creación y ventana/hilo. Perder la sesión
+detiene el trabajador; no se busca otro cliente automáticamente. Un mutex por PID
+excluye ciclos o pruebas simultáneos del mismo cliente. Las otras instancias utilizan
+su propia reserva y evento de cancelación.
 
-El panel selecciona ventana/PID y fecha de creación, evita reconectar automáticamente
-a otra instancia y bloquea el marcador nativo compartido por varios clientes. La
-prueba individual no cambia ese archivo ni introduce entradas en otras ventanas.
+La caza nativa anterior utiliza HuntingMode.txt, compartido si varios clientes
+usan la misma carpeta. Sus cambios permanecen bloqueados en ese caso. El ciclo 0.4
+no utiliza ese marcador para iniciar o parar.
 
-## Velocidad durante combate — mejora posterior
+El usuario comunicó anteriormente cierres al moverse con caza nativa/x32dbg, y también
+con clic manual sin ambos. El registro se perdió y no hay causa confirmada. El ataque
+individual nuevo funcionó, pero no se afirma que haya corregido esos otros cierres.
 
-El usuario solicitó estudiar un speedhack al entrar en batalla y mejorar el bot por
-etapas. Aún hay que concretar si el efecto deseado es visual o sobre el ritmo de acciones.
+## Turnos y velocidad — etapas posteriores
 
-Antes de implementarlo se necesitan detección fiable de entrada/salida de combate,
-control configurable desactivado por defecto, recuperación de la velocidad normal
-al salir del combate/parar/reconectar y comprobaciones de interacción con los tiempos
-del servidor. No hay actualmente modificación de relojes, animaciones o velocidad.
+El usuario pidió también jugar los turnos de sus mercenarios, y confirmó avanzar
+primero con el inicio de encuentros. Los turnos seguirán siendo manuales en esta etapa.
+
+Se solicitó estudiar una velocidad configurable durante batallas y restaurarla al
+salir/parar. Esa función continúa sin implementar. Queda para después de validar
+el ciclo, la estabilidad y el comportamiento de los turnos.
