@@ -1,8 +1,9 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.8.2** añade **Ver mercenarios** y sigue en
-**Exportar combate** la ruta de contexto que aparece en la batalla del usuario.
+con Auto Battle apagado. La versión **0.8.3** corrige **Exportar combate** para
+seguir los métodos del gestor normal y del objeto de cliente relacionado.
+**Ver mercenarios** conserva la consulta de los nueve puestos.
 Permite guardar ataque básico o magia Q/W/E/R/T por mercenario.
 Los turnos todavía se juegan manualmente.
 Conserva **Ataque nativo por radio (experimental)**, **Calibrar combate**,
@@ -138,7 +139,7 @@ los nombres de perfiles ni el contenido de los paquetes de red. Una cola vacía
 indica que salió de ese búfer; no confirma recepción o aceptación del servidor.
 
 **Exportar combate** requiere estar dentro de una batalla con Auto Battle y caza
-nativa apagados. Guarda hasta 885 KiB de regiones del ejecutable, las observaciones
+nativa apagados. Guarda hasta 1917 KiB de regiones del ejecutable, las observaciones
 y los campos acotados de los nueve puestos de esa instancia, sin enviar acciones.
 Adjunta el archivo `Atlantica-PID…-combate-….zip`
 para continuar con la selección nativa, ataque básico y magias. **X** está registrado
@@ -146,11 +147,13 @@ como el control manual de botín; aún no hay recogida automática.
 El resultado de la primera captura y las dependencias que faltaban están en
 [el análisis de combate](docs/combat-analysis-20261103-074421.md).
 La captura ampliada mostró que la ruta BF de selección exige un contexto distinto
-del observado en esta batalla. La versión 0.8.2 sigue la ruta que coincide con
-la muestra y exporta sus dependencias. **Ver mercenarios** muestra puesto, nombre
+del observado en esta batalla. La captura 0.8.2 validó la ruta del contexto normal
+y los nueve puestos en el PID 21076. La versión 0.8.3 sigue las tablas del gestor
+y del cliente relacionado, porque el contexto comienza con datos, y añade el
+código de cliente que faltaba. **Ver mercenarios** muestra puesto, nombre
 del perfil y tipo leído; no confirma disponibilidad para actuar. El diagnóstico
 incluye los errores de lectura si todavía no puede validar los puestos.
-Detalles: [ruta del combate observado](docs/normal-combat-analysis-20261103-081115.md).
+Detalles: [gestores del combate normal](docs/normal-combat-analysis-20261103-085549.md).
 
 La selección de cliente queda bloqueada mientras termina el trabajador. Si se cierra
 el juego, se detiene; abrir otro cliente exige Conectar. Cambios de mapa, movimiento

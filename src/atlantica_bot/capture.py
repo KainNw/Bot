@@ -48,30 +48,39 @@ COMBAT_CODE_BLOCKS = (
     ("magic-policy", 0x00544000, 0x1000),
     # 00431769 indexes owner+091C by actor+0318 and calls 004FE29F.
     ("normal-battle-manager-and-members", 0x004F0000, 0x30000),
+    # The normal-context cleanup calls 005A481F on owner+16358, not the BF object.
+    ("normal-battle-client", 0x00590000, 0x30000),
 )
 COMBAT_READONLY_BLOCKS = (
     # Common character/manager method tables at 042DE14C/042DE770 and their strings.
     ("battle-method-tables-and-labels", 0x042DE000, 0x2000),
-    ("normal-battle-labels", 0x042DC000, 0x2000),
+    ("normal-battle-labels", 0x042D8000, 0x4000),
 )
 ANCHOR_ADDRESS = 0x0043CDA7
 ANCHOR_BYTES = bytes.fromhex("68 08 64 2c 04")
-NORMAL_METHOD_LIMIT = 24
+NORMAL_METHOD_LIMIT = 64
 
 
-def _normal_methods(session: GameSession, context: NormalBattleContext, blocks: list) -> dict:
-    """Resolve bounded methods from the observed normal context, without calling them."""
-    table = context.method_table_candidate
+def _normal_methods(
+    session: GameSession, context: NormalBattleContext, blocks: list, *, role: str = "manager"
+) -> dict:
+    """Collect candidate methods from the normal manager and related client; never call them."""
+    table = (
+        context.method_table_candidate
+        if role == "manager"
+        else context.client_method_table_candidate
+    )
     if not 0x03F85000 <= table <= 0x044F9000 - 256:
-        return {"status": "unavailable", "reason": "context_word_is_not_a_known_readonly_table"}
+        return {"status": "unavailable", "reason": "object_word_is_not_a_known_readonly_table"}
     reader = session.system.read_memory
     data = reader(session.process.pid, table, 256)
     if len(data) != 256:
         raise DiagnosticError("Lectura incompleta de los métodos del combate normal.")
     pointers = struct.unpack("<64I", data)
     if not all(0x00401000 <= address < 0x03F85000 for address in pointers[:3]):
-        return {"status": "unavailable", "reason": "context_word_is_not_a_verified_method_table"}
-    blocks.append(("normal-context-method-table", table, data))
+        return {"status": "unavailable", "reason": "object_word_is_not_a_candidate_method_table"}
+    prefix = f"normal-{role}"
+    blocks.append((f"{prefix}-method-table", table, data))
     entries = []
     for offset, address in enumerate(pointers):
         if not 0x00401000 <= address < 0x03F85000:
@@ -87,7 +96,7 @@ def _normal_methods(session: GameSession, context: NormalBattleContext, blocks: 
             code = reader(session.process.pid, start, size)
             if len(code) != size or not any(code):
                 raise DiagnosticError("Lectura incompleta de un método del combate normal.")
-            existing = f"normal-context-method-{offset:02d}"
+            existing = f"{prefix}-method-{offset:02d}"
             blocks.append((existing, start, code))
         entries.append({"offset": offset * 4, "address": f"{address:08X}", "block": existing})
     return {
@@ -233,6 +242,9 @@ def export_code_context(
         blocks.append(dispatch_block)
     if normal is not None:
         combat["normal_method_resolution"] = _normal_methods(session, normal, blocks)
+        combat["normal_client_method_resolution"] = _normal_methods(
+            session, normal, blocks, role="client"
+        )
     session.snapshot()  # Do not label an export valid if the process exited during capture.
     if detector is not None:
         after = observe_scene(session)
@@ -244,7 +256,7 @@ def export_code_context(
             {
                 "after": after.summary(),
                 "detector": detector.summary(),
-                "scope": "observed_context_a_and_battle_code_dependencies",
+                "scope": "normal_manager_and_related_client_code_dependencies",
                 "turn_state_verified": False,
                 "turn_execution_available": False,
                 "reported_controls": {
@@ -257,7 +269,8 @@ def export_code_context(
             }
         )
     readonly_names = {name for name, _, _ in COMBAT_READONLY_BLOCKS} | {
-        "normal-context-method-table"
+        "normal-manager-method-table",
+        "normal-client-method-table",
     }
     manifest = {
         "schema_version": 4 if include_combat else 2,

@@ -1,4 +1,4 @@
-# Turnos de mercenarios 0.8.2
+# Turnos de mercenarios 0.8.3
 
 El panel guarda el plan de cada mercenario: puesto, nombre, participación, prioridad,
 ataque básico o magia Q/W/E/R/T y la preferencia de usar básico si la magia no está
@@ -22,7 +22,7 @@ todavía requieren análisis. Tampoco se ha implementado la recogida automática
 
 ## Exportar el código de combate
 
-1. Abre el panel 0.8.2 y conecta con la ventana elegida.
+1. Abre el panel 0.8.3 y conecta con la ventana elegida.
 2. Mantén Auto Battle y caza nativa apagados.
 3. Entra en combate manualmente o con el ciclo de caza que ya funciona. El panel
    permite exportar mientras el ciclo está pausado dentro de la batalla.
@@ -78,20 +78,30 @@ El cambio no habilitó acciones ni recogió bloques de memoria de objetos del ju
 
 La [segunda captura](normal-combat-analysis-20261103-081115.md) mostró la diferencia
 entre esa ruta BF y la que utiliza el contexto local observado. Desde 0.8.2 se añaden
-192 KiB de código del gestor normal y 8 KiB de constantes, junto con un informe
+192 KiB de código del gestor normal y constantes, junto con un informe
 estructurado de su contexto y los nueve miembros. No se ejecutan sus funciones.
 Los valores de miembro `4C` y `50` conservan sus nombres de diagnóstico; no se usan
 para decidir si se puede atacar o lanzar magia.
 
-Si la primera palabra del contexto señala una tabla de métodos dentro de la sección
-de solo lectura y sus tres primeras entradas señalan código, se exportan sus 256
-bytes y hasta 24 regiones de código de 8 KiB. Se reutilizan los bloques ya capturados.
-La tabla se conserva como candidata para el análisis, no como autorización para
-llamar a sus métodos. El manifiesto registra el límite y las entradas resueltas.
-El total fijo es 692 KiB y el máximo con métodos es 884,25 KiB, más el manifiesto.
+La [captura del PID 21076](normal-combat-analysis-20261103-085549.md) confirmó los
+nueve puestos, pero mostró que el contexto comienza con datos. En 0.8.3 se lee
+la tabla candidata desde el gestor de `owner+091C`, cuyo despacho virtual aparece
+en `0050064F`, y desde el objeto de cliente de `owner+16358`, usado por `004FDDD7`.
+La primera palabra del contexto se conserva como dato; no se sigue como tabla.
+
+Se añaden 192 KiB de código en `00590000–005C0000`, que incluyen la llamada
+`005A481F`, y se corrigen las constantes normales a `042D8000–042DC000` (16 KiB).
+Para cada uno de los dos objetos, si la tabla señala la sección de solo lectura
+y sus tres primeras entradas señalan código, se exportan sus 256 bytes y hasta
+64 regiones de código de 8 KiB. Se reutilizan los bloques ya capturados.
+Estas comprobaciones acotan candidatos para el análisis; no identifican por sí
+solas qué hace cada función. No se llama a sus métodos.
+El manifiesto registra por separado `normal_method_resolution` y
+`normal_client_method_resolution`, sus límites y entradas resueltas.
+El total fijo es 892 KiB y el máximo con métodos es 1916,5 KiB, más el manifiesto.
 La exportación normal sigue limitada a 100 KiB. No hay volcados de bloques de heap.
 
 El ZIP no incluye nombres de los perfiles, chat ni contenido de paquetes de red.
 Los bloques tienen tamaño fijo y SHA-256; se conserva el archivo de destino si
-ya existe. El siguiente paso es localizar los objetos de batalla y seguir sus
-validaciones antes de incorporar una primera orden nativa comprobable por PID.
+ya existe. El siguiente paso es analizar el código del cliente normal y seguir sus
+validaciones de turno y objetivo antes de incorporar la primera orden nativa por PID.

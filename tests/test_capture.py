@@ -33,6 +33,7 @@ class CaptureSystem:
         self.short_readonly = False
         self.short_normal_method = False
         self.many_normal_methods = False
+        self.many_client_methods = False
 
     def read_memory(self, pid, address, size):
         assert pid == 123
@@ -54,7 +55,13 @@ class CaptureSystem:
             if self.many_normal_methods:
                 return struct.pack("<64I", *(0x700010 + n * 0x3000 for n in range(64)))
             return struct.pack("<64I", 0x700010, 0x700040, 0x8B0010, *([0] * 61))
+        if (address, size) == (0x04304000, 256):
+            if self.many_client_methods:
+                return struct.pack("<64I", *(0x800010 + n * 0x3000 for n in range(64)))
+            return struct.pack("<64I", 0x5A481F, 0x700010, 0x700040, *([0] * 61))
         if self.many_normal_methods and 0x700000 <= address < 0x7C0000 and size == 0x2000:
+            return b"\x90" * size
+        if self.many_client_methods and 0x800000 <= address < 0x8C0000 and size == 0x2000:
             return b"\x90" * size
         if (address, size) == (0x00700000, 0x2000):
             return b"\x90" * (size - int(self.short_normal_method))
@@ -133,7 +140,7 @@ def test_combat_export_contains_fixed_code_dependencies_readonly_tables_and_cont
         assert archive.testzip() is None
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["schema_version"] == 4 and manifest["purpose"] == "battle_turn_diagnostic"
-        assert sum(b["size"] for b in manifest["blocks"]) == 692 * 1024
+        assert sum(b["size"] for b in manifest["blocks"]) == 892 * 1024
         assert len(archive.namelist()) == (
             len(CODE_BLOCKS) + len(COMBAT_CODE_BLOCKS) + len(COMBAT_READONLY_BLOCKS) + 2
         )
@@ -148,7 +155,7 @@ def test_combat_export_contains_fixed_code_dependencies_readonly_tables_and_cont
                 assert block["kind"] == "code"
                 assert 0x00401000 <= address < address + block["size"] <= 0x03F85000
         constants = [b for b in manifest["blocks"] if b["kind"] == "readonly_constants"]
-        assert len(constants) == 2 and all(b["size"] == 8 * 1024 for b in constants)
+        assert sorted(b["size"] for b in constants) == [8 * 1024, 16 * 1024]
     combat = manifest["combat"]
     assert combat["before"]["local"]["context_a"] == combat["after"]["local"]["context_a"] == 0
     assert combat["reported_controls"]["magic_shortcuts"] == list("QWERT")
@@ -205,29 +212,71 @@ def test_normal_context_capture_follows_only_verified_image_methods_and_reuses_c
         assert not methods["limit_reached"]
         assert methods["entries"][0]["block"] == methods["entries"][1]["block"]
         assert methods["entries"][2]["block"] == "battle-client-actions"
-        assert sum(b["size"] for b in manifest["blocks"]) == 700 * 1024 + 256
+        assert sum(b["size"] for b in manifest["blocks"]) == 900 * 1024 + 256
         table = next(b for b in manifest["blocks"] if b["address"] == "04303000")
         assert table["kind"] == "readonly_constants"
         assert archive.testzip() is None
 
 
-def test_context_word_outside_readonly_image_is_never_followed(
-    session, normal_context, tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "field,resolution",
+    [
+        ("method_table_candidate", "normal_method_resolution"),
+        ("client_method_table_candidate", "normal_client_method_resolution"),
+    ],
+)
+def test_object_table_outside_readonly_image_is_never_followed(
+    session, normal_context, tmp_path, monkeypatch, field, resolution
 ):
-    context = replace(normal_context, method_table_candidate=0x30010000)
+    context = replace(normal_context, **{field: 0x30010000})
     monkeypatch.setattr("atlantica_bot.capture.read_normal_battle", lambda _: context)
     output = tmp_path / "normal.zip"
     export_code_context(session, output, include_combat=True)
     with ZipFile(output) as archive:
         report = json.loads(archive.read("manifest.json"))["combat"]
-        assert report["normal_method_resolution"]["status"] == "unavailable"
-    assert not any(address == context.method_table_candidate for address, _ in session.system.reads)
+        assert report[resolution]["status"] == "unavailable"
+    assert not any(address == 0x30010000 for address, _ in session.system.reads)
 
 
-def test_context_replacement_during_capture_never_creates_a_valid_zip(
+def test_related_client_table_is_captured_and_reuses_normal_client_and_manager_blocks(
     session, normal_context, tmp_path, monkeypatch
 ):
-    versions = iter((normal_context, replace(normal_context, context=0x700100)))
+    context = replace(
+        normal_context,
+        context_word=0x50100001,
+        client_object=0x900000,
+        client_method_table_candidate=0x04304000,
+    )
+    monkeypatch.setattr("atlantica_bot.capture.read_normal_battle", lambda _: context)
+    output = tmp_path / "normal.zip"
+    export_code_context(session, output, include_combat=True)
+    with ZipFile(output) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    report = manifest["combat"]
+    methods = report["normal_client_method_resolution"]
+    assert methods["status"] == "captured" and len(methods["entries"]) == 3
+    assert methods["entries"][0]["block"] == "normal-battle-client"
+    assert methods["entries"][1]["block"] == "normal-manager-method-00"
+    assert methods["entries"][2]["block"] == "normal-manager-method-00"
+    tables = [b for b in manifest["blocks"] if b["size"] == 256]
+    assert len(tables) == 2 and all(b["kind"] == "readonly_constants" for b in tables)
+    assert sum(b["size"] for b in manifest["blocks"]) == 900 * 1024 + 512
+    assert (context.context_word, 256) not in session.system.reads
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("context", 0x700100),
+        ("method_table_candidate", 0x04303100),
+        ("client_object", 0x900000),
+        ("client_method_table_candidate", 0x04304000),
+    ],
+)
+def test_context_or_method_owner_replacement_during_capture_never_creates_a_valid_zip(
+    session, normal_context, tmp_path, monkeypatch, field, value
+):
+    versions = iter((normal_context, replace(normal_context, **{field: value})))
     monkeypatch.setattr("atlantica_bot.capture.read_normal_battle", lambda _: next(versions))
     output = tmp_path / "normal.zip"
     with pytest.raises(DiagnosticError, match="contexto del combate cambió"):
@@ -252,8 +301,27 @@ def test_large_method_table_cannot_expand_export_beyond_the_documented_limit(
     with ZipFile(output) as archive:
         manifest = json.loads(archive.read("manifest.json"))
     methods = manifest["combat"]["normal_method_resolution"]
-    assert methods["limit_reached"] and len(methods["entries"]) == 24
-    assert sum(b["size"] for b in manifest["blocks"]) == 884 * 1024 + 256
+    assert methods["limit_reached"] and len(methods["entries"]) == 64
+    assert sum(b["size"] for b in manifest["blocks"]) == 1404 * 1024 + 256
+
+
+def test_two_large_tables_stay_within_combined_limit_and_reuse_existing_code(
+    session, normal_context, tmp_path, monkeypatch
+):
+    session.system.many_normal_methods = True
+    session.system.many_client_methods = True
+    context = replace(normal_context, client_method_table_candidate=0x04304000)
+    monkeypatch.setattr("atlantica_bot.capture.read_normal_battle", lambda _: context)
+    output = tmp_path / "normal.zip"
+    export_code_context(session, output, include_combat=True)
+    with ZipFile(output) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    for key in ("normal_method_resolution", "normal_client_method_resolution"):
+        methods = manifest["combat"][key]
+        assert methods["limit_reached"] and len(methods["entries"]) == 64
+    # Every new entry adds at most 8 KiB; fixed client blocks can cover multiple entries.
+    assert sum(b["size"] for b in manifest["blocks"]) <= 1916 * 1024 + 512
+    assert len({b["file"] for b in manifest["blocks"]}) == len(manifest["blocks"])
 
 
 @pytest.mark.parametrize(

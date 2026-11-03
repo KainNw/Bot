@@ -18,6 +18,8 @@ MEMBER_ANCHOR = bytes.fromhex(
     "8b44240485c07e273b41047d228b54240883fa0b77198b0969c0b815020069d28804"
     "000003c28d840808410000eb0233c0c20800"
 )
+MANAGER_DISPATCH_ANCHOR = bytes.fromhex("a10c29a9048b881c090000ff750c8b01ff5018")
+CLIENT_OBJECT_ANCHOR = bytes.fromhex("ff7424188b8858630100e8396a0a00")
 
 
 @dataclass(frozen=True)
@@ -41,8 +43,12 @@ class NormalBattleContext:
     member_info: int
     members: tuple[MemberSnapshot, ...]
     member_read_error: str | None = None
+    context_word: int = 0
+    client_object: int = 0
+    client_method_table_candidate: int = 0
 
     def binding(self) -> tuple:
+        # The context starts with data, not a vptr or a verified identity field.
         return (
             self.pid,
             self.creation_time,
@@ -52,6 +58,9 @@ class NormalBattleContext:
             self.index,
             self.context,
             self.member_info,
+            self.method_table_candidate,
+            self.client_object,
+            self.client_method_table_candidate,
         )
 
     def summary(self) -> dict:
@@ -64,6 +73,9 @@ class NormalBattleContext:
             "turn_execution_available": False,
             "member_values_semantics_verified": False,
             "members_status": "unavailable" if self.member_read_error else "captured",
+            "method_table_owner": "manager",
+            "manager_dispatch_source": "0050064F_owner_091c_virtual_18",
+            "client_object_source": "004FDDD7_owner_16358_call_005A481F",
         }
 
 
@@ -85,7 +97,23 @@ def _binding(reader: Reader) -> tuple:
     info_manager = reader.u32(owner + 0x830)
     info = reader.u32(actor + 0x30)
     identity = struct.unpack("<3I", reader.read(actor + 0x204, 12))
-    return owner, world, actor, identity, manager, index, context, info_manager, info
+    manager_table = reader.u32(manager)
+    client_object = reader.u32(owner + 0x16358)
+    client_table = reader.u32(client_object) if client_object else 0
+    return (
+        owner,
+        world,
+        actor,
+        identity,
+        manager,
+        index,
+        context,
+        info_manager,
+        info,
+        manager_table,
+        client_object,
+        client_table,
+    )
 
 
 def read_normal_battle(session: GameSession) -> NormalBattleContext:
@@ -99,8 +127,27 @@ def read_normal_battle(session: GameSession) -> NormalBattleContext:
         raise DiagnosticError("La ruta del combate normal no coincide con el código analizado.")
     if reader.read(0x004ED38B, len(MEMBER_ANCHOR)) != MEMBER_ANCHOR:
         raise DiagnosticError("La información de miembros no coincide con el código analizado.")
+    if (
+        reader.read(0x0050064F, len(MANAGER_DISPATCH_ANCHOR)) != MANAGER_DISPATCH_ANCHOR
+        or reader.read(0x004FDDD7, len(CLIENT_OBJECT_ANCHOR)) != CLIENT_OBJECT_ANCHOR
+    ):
+        raise DiagnosticError("Los gestores del combate no coinciden con el código analizado.")
     binding = _binding(reader)
-    _, _, actor, identity, manager, index, context, info_manager, info = binding
+    (
+        _,
+        _,
+        actor,
+        identity,
+        manager,
+        index,
+        context,
+        info_manager,
+        info,
+        manager_table,
+        client_object,
+        client_table,
+    ) = binding
+    context_word = reader.u32(context)
     members = []
     member_error = None
     try:
@@ -117,7 +164,6 @@ def read_normal_battle(session: GameSession) -> NormalBattleContext:
     except (DiagnosticError, OSError) as exc:
         members.clear()
         member_error = str(exc)
-    method_table = reader.u32(context)
     after = observe_scene(session)
     if detector.classify(after) != "battle" or after.native_active or _binding(reader) != binding:
         raise SceneChanged("El combate cambió durante la consulta; vuelve a actualizar.")
@@ -129,8 +175,11 @@ def read_normal_battle(session: GameSession) -> NormalBattleContext:
         manager,
         index,
         context,
-        method_table,
+        manager_table,
         info,
         tuple(members),
         member_error,
+        context_word,
+        client_object,
+        client_table,
     )

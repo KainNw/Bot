@@ -3,7 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from atlantica_bot.battle_context import CONTEXT_ANCHOR, MEMBER_ANCHOR, read_normal_battle
+from atlantica_bot.battle_context import (
+    CLIENT_OBJECT_ANCHOR,
+    CONTEXT_ANCHOR,
+    MANAGER_DISPATCH_ANCHOR,
+    MEMBER_ANCHOR,
+    read_normal_battle,
+)
 from atlantica_bot.combat import CombatDetector
 from atlantica_bot.errors import DiagnosticError, SceneChanged
 from atlantica_bot.world import GridPosition, LocalState, Observation
@@ -40,6 +46,8 @@ def normal(monkeypatch):
     memory = Memory()
     memory.put(0x431769, CONTEXT_ANCHOR)
     memory.put(0x4ED38B, MEMBER_ANCHOR)
+    memory.put(0x50064F, MANAGER_DISPATCH_ANCHOR)
+    memory.put(0x4FDDD7, CLIENT_OBJECT_ANCHOR)
     memory.word(0x4A9290C, 0x300000)
     memory.word(0x300828, 0x400000)
     memory.word(0x40002C, 0x500000)
@@ -48,8 +56,11 @@ def normal(monkeypatch):
     memory.word(0x500318, 0)
     memory.word(0x500254, 0xFFFFFFFF)
     memory.word(0x30091C, 0x600000)
+    memory.word(0x600000, 0x04303000)
     memory.word(0x600008, 0x700000)
-    memory.word(0x700000, 0x04303000)
+    memory.word(0x700000, 0x50100001)
+    memory.word(0x300000 + 0x16358, 0x900000)
+    memory.word(0x900000, 0x04304000)
     memory.word(0x300830, 0x800000)
     memory.put(0x800000, struct.pack("<II", 0x1000000, 450))
     memory.word(0x500030, 0x10215B8)
@@ -75,6 +86,10 @@ def test_normal_context_follows_observed_a_path_and_reads_nine_bounded_member_re
     result = read_normal_battle(session)
     assert (result.index, result.manager, result.context) == (0, 0x600000, 0x700000)
     assert result.actor_identity == (1001, 543210, 0)
+    assert result.method_table_candidate == 0x04303000
+    assert result.context_word == 0x50100001
+    assert result.client_object == 0x900000
+    assert result.client_method_table_candidate == 0x04304000
     assert len(result.members) == 9
     assert result.members[1].kind_id == 1002
     assert result.members[8].kind_id == 0
@@ -114,7 +129,7 @@ def test_member_data_must_belong_to_local_actor_and_native_member_collection(nor
     assert result.summary()["members_status"] == "unavailable"
 
 
-@pytest.mark.parametrize("address", [0x431769, 0x4ED38B])
+@pytest.mark.parametrize("address", [0x431769, 0x4ED38B, 0x50064F, 0x4FDDD7])
 def test_changed_code_prevents_following_the_layout(normal, address):
     session, memory = normal
     memory.put(address, b"\x00")
