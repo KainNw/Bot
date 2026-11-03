@@ -14,6 +14,7 @@ from atlantica_bot.world import (
     SLOT_COUNT,
     TABLE_OFFSET,
     observe_scene,
+    observe_transport,
     scan_world,
 )
 
@@ -178,6 +179,32 @@ def test_navigation_observation_reads_route_destination_and_flags(session):
     result = observe_scene(session, include_navigation=True)
     assert result.navigation.key == (actor, 1234, 8, 14, 25)
     assert result.navigation.active and result.navigation.moving
+
+
+def test_transport_observer_reads_counters_without_reading_packet_data(session):
+    memory = session.system
+    connection, outgoing = 0x50000000, 0x51000000
+    memory.write(memory.owner + 0x1D70, struct.pack("<I", connection))
+    memory.write(memory.owner + 0x11D8E, b"\x01")
+    memory.write(memory.owner + 0x16544, struct.pack("<H", 0xAE2))
+    memory.write(memory.owner + 0x16548, struct.pack("<I", 1000))
+    memory.write(memory.owner + 0xBA4, struct.pack("<I", 1100))
+    memory.write(connection + 0x6C, struct.pack("<II", outgoing, 1))
+    memory.write(outgoing + 4, struct.pack("<i", 4096))
+    memory.write(outgoing + 0x10, struct.pack("<i", 25))
+    memory.write(outgoing + 0x44, struct.pack("<i", 0))
+    # No ring-buffer pointer/data exists in this fixture; dereferencing it would fail.
+    snapshot = observe_transport(session)
+    assert snapshot["available"] and snapshot["queued_bytes"] == 25
+    assert snapshot["queue_instance"] == "51000000"
+    assert snapshot["command_gate"] == "0AE2"
+    memory.write(outgoing + 0x10, struct.pack("<i", 0))
+    assert observe_transport(session)["queued_bytes"] == 0
+
+
+def test_unavailable_transport_is_diagnostic_and_does_not_discard_world_observation(session):
+    assert observe_transport(session)["available"] is False
+    assert observe_scene(session).player.map_id == 8
 
 
 @pytest.mark.parametrize("active_raw,moving_raw", [(0, 255), (2, 0), (255, 2), (1, 255)])

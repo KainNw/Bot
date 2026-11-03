@@ -63,7 +63,7 @@ def test_exports_only_bounded_code_and_manifest_with_auto_battle_off(session, tm
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["state_at_start"]["auto_battle"] is False
         assert str(session.directory) not in json.dumps(manifest)
-        assert sum(block["size"] for block in manifest["blocks"]) == 76 * 1024
+        assert sum(block["size"] for block in manifest["blocks"]) == 100 * 1024
         assert manifest["dispatch_resolution"] == {
             "owner_context_code": 2,
             "status": "captured",
@@ -94,6 +94,44 @@ def test_existing_output_is_not_overwritten(session, tmp_path):
     with pytest.raises(FileExistsError):
         export_code_context(session, output)
     assert output.read_bytes() == b"user file"
+
+
+def test_export_includes_same_instance_history_without_profile_names_or_arbitrary_fields(
+    session, tmp_path
+):
+    session.creation_time = 777
+    report = {
+        "pid": 123,
+        "detector": {"instance_creation_time": 777},
+        "events": [{"event": "attack_not_confirmed", "elapsed_seconds": 30}],
+        "profile": {"name": "private-mercenary-label"},
+        "directory": "private-installation-path",
+    }
+    output = tmp_path / "context.zip"
+    export_code_context(session, output, bot_context=report)
+    with ZipFile(output) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["bot_context"]["events"] == report["events"]
+    assert "private-mercenary-label" not in json.dumps(manifest)
+    assert "private-installation-path" not in json.dumps(manifest)
+
+
+@pytest.mark.parametrize("pid,created", [(999, 777), (123, 888)])
+def test_foreign_context_is_rejected_before_code_read_or_file_creation(
+    session, tmp_path, pid, created
+):
+    session.creation_time = 777
+    output = tmp_path / "context.zip"
+    with pytest.raises(DiagnosticError, match="otra instancia"):
+        export_code_context(
+            session,
+            output,
+            bot_context={
+                "pid": pid,
+                "detector": {"instance_creation_time": created},
+            },
+        )
+    assert not output.exists() and session.system.reads == []
 
 
 @pytest.mark.parametrize("failure", ["anchor", "short", "zero"])

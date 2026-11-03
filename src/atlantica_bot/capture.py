@@ -21,6 +21,8 @@ CODE_BLOCKS = (
     ("active-index", 0x00446000, 0x1000),
     ("target-command-validation", 0x00431000, 0x2000),
     ("send-buffer-pipeline", 0x009A1000, 0x5000),
+    ("navigation-route", 0x0043B000, 0x4000),
+    ("movement-dispatch", 0x00443000, 0x2000),
 )
 ANCHOR_ADDRESS = 0x0043CDA7
 ANCHOR_BYTES = bytes.fromhex("68 08 64 2c 04")
@@ -75,12 +77,51 @@ def _dispatcher_context(session: GameSession) -> tuple[dict, tuple[str, int, byt
     )
 
 
-def export_code_context(session: GameSession, destination: Path) -> None:
+def _bot_context(session: GameSession, report: dict | None) -> dict | None:
+    if report is None:
+        return None
+    if (
+        report.get("pid") != session.process.pid
+        or report.get("detector", {}).get("instance_creation_time") != session.creation_time
+    ):
+        raise DiagnosticError(
+            "El informe del bot pertenece a otra instancia; no se mezclan capturas."
+        )
+    allowed = (
+        "pid",
+        "phase",
+        "message",
+        "running",
+        "needs_reconnect",
+        "detector",
+        "scans",
+        "attempts",
+        "queued",
+        "battles_observed",
+        "last_attack",
+        "range",
+        "first_observation",
+        "recent_observations",
+        "events",
+        "pending_attack",
+        "transport",
+        "approach",
+    )
+    payload = json.dumps({key: report[key] for key in allowed if key in report}, ensure_ascii=False)
+    if len(payload.encode("utf-8")) > 128 * 1024:
+        raise DiagnosticError("El contexto del bot supera el límite del diagnóstico.")
+    return json.loads(payload)
+
+
+def export_code_context(
+    session: GameSession, destination: Path, *, bot_context: dict | None = None
+) -> None:
     """Capture bounded code regions; never execute them or alter the client/markers."""
     if destination.suffix.lower() != ".zip":
         raise DiagnosticError("Elige un archivo ZIP para guardar el diagnóstico.")
     state = session.snapshot()  # Reject stale PID, changed directory or unreadable client state.
     hunting.control_hunting(session.directory, "status")  # Revalidate the supported disk build.
+    context = _bot_context(session, bot_context)
     read = session.system.read_memory
     pid = session.process.pid
     if read(pid, ANCHOR_ADDRESS, len(ANCHOR_BYTES)) != ANCHOR_BYTES:
@@ -98,14 +139,15 @@ def export_code_context(session: GameSession, destination: Path) -> None:
         blocks.append(dispatch_block)
     session.snapshot()  # Do not label an export valid if the process exited during capture.
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "tool_version": __version__,
         "created_at": datetime.now(UTC).isoformat(),
         "client_sha256": hunting.SUPPORTED_CLIENT_SHA256,
         "process_name": session.process.name,
         "pid_at_capture": pid,
         "instance_creation_time": session.creation_time,
-        "purpose": "static_analysis_of_manual_attack_candidates",
+        "purpose": "attack_and_navigation_diagnostic",
+        "bot_context": context,
         "dispatch_resolution": dispatch,
         "state_at_start": {
             "auto_battle": state.auto_battle,

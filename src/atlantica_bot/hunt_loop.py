@@ -5,7 +5,7 @@ import queue
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from .clients import ClientWindow
 from .combat import CombatDetector
@@ -22,6 +22,7 @@ from .world import (
     Observation,
     WorldView,
     observe_scene,
+    observe_transport,
     scan_world,
 )
 
@@ -76,6 +77,29 @@ class HuntEngine:
     move_failures: int = 0
     last_move: dict = field(default_factory=dict)
     last_stop: dict = field(default_factory=dict)
+    arrival_target: Candidate | None = None
+    verify_arrival: bool = False
+    selection_source: str = "nearby"
+    pending_target: Candidate | None = None
+    attack_queued_at: float | None = None
+    trace_time: float = 0
+    events: deque = field(default_factory=lambda: deque(maxlen=32))
+    transport: deque = field(default_factory=lambda: deque(maxlen=12))
+    transport_first: dict = field(default_factory=dict)
+    last_failed_approach: dict = field(default_factory=dict)
+
+    def _event(self, kind: str, now: float | None = None, **data) -> None:
+        if now is not None:
+            self.trace_time = now
+        self.events.append(
+            {
+                "event": kind,
+                "elapsed_seconds": round(self.trace_time - self.started_at, 3)
+                if self.started_at is not None
+                else None,
+                **data,
+            }
+        )
 
     def __post_init__(self) -> None:
         if not self.detector.matches(self.pid, self.creation_time):
@@ -83,10 +107,12 @@ class HuntEngine:
         self.profile.validate()
 
     def stop(self, reason: str, *, reconnect: bool = False) -> None:
+        previous_phase = self.phase
         self.running = False
         self.phase = "stopped"
         self.message = reason
         self.needs_reconnect |= reconnect or self.deadline is not None
+        self._event("stopped", reason=reason, previous_phase=previous_phase)
 
     def observe(self, observation: Observation, now: float) -> bool:
         """Return True only when a fresh world scan may select a new target."""
@@ -95,6 +121,7 @@ class HuntEngine:
         classification = self.detector.classify(observation)
         if self.started_at is None:
             self.started_at = now
+        self.trace_time = now
         self.observation_count += 1
         self.scene_counts[observation.scene_code] = (
             self.scene_counts.get(observation.scene_code, 0) + 1
@@ -134,7 +161,14 @@ class HuntEngine:
                     "confirmation_scene": observation.scene_code,
                     "confirmation_signal": self.detector.signal,
                 }
+                self._event(
+                    "battle_confirmed",
+                    now,
+                    attempt=self.attempts,
+                    target=asdict(self.pending_target) if self.pending_target else None,
+                )
             self.deadline = None
+            self.pending_target = None
             self.phase, self.message = "battle", "Combate: solicitudes en pausa; juega los turnos."
             self.anchor = None
             return False
@@ -148,6 +182,12 @@ class HuntEngine:
             return False
         if self.deadline is not None:
             if now >= self.deadline:
+                self._event(
+                    "attack_not_confirmed",
+                    now,
+                    attempt=self.attempts,
+                    target=asdict(self.pending_target) if self.pending_target else None,
+                )
                 self.stop(
                     "No se observó el combate tras la solicitud; detenido sin repetirla.",
                     reconnect=True,
@@ -242,6 +282,45 @@ class HuntEngine:
             "available_in_range": len(available),
             "automatic_approach": self.approach.enabled,
         }
+        if self.arrival_target is not None:
+            pinned = self.arrival_target
+            candidate = next((c for c in available if target_key(c) == target_key(pinned)), None)
+            self.arrival_target = None
+            if candidate is None:
+                reason = (
+                    "target_missing_after_stop"
+                    if not any(target_key(c) == target_key(pinned) for c in view.candidates)
+                    else "target_left_range_after_stop"
+                )
+                if self.verify_arrival:
+                    self.move_failures += 1
+                    self.last_failed_approach = {"reason": reason, "target": asdict(pinned)}
+                self.verify_arrival = False
+                self.cooldowns[target_key(pinned)] = now + 3
+                self._event("arrival_target_unavailable", now, reason=reason, target=asdict(pinned))
+                self.message = "El objetivo cambió después de parar; consultando de nuevo."
+                if self.move_failures >= 3:
+                    self.stop(
+                        "Tres acercamientos no completados; revisa el terreno antes de iniciar."
+                    )
+                return None
+            if self.verify_arrival:
+                self.arrivals += 1
+                self._event("arrival_verified_after_route_finished", now, target=asdict(candidate))
+            self.verify_arrival = False
+            self.selection_source = "approach"
+            self.phase, self.message = (
+                "requesting",
+                f"Solicitando ataque al objetivo {candidate.slot}.",
+            )
+            self._event(
+                "target_selected",
+                now,
+                source="approach",
+                target=asdict(candidate),
+                player=asdict(view.player),
+            )
+            return candidate
         if not available:
             if self.approach.enabled and self.origin is not None:
                 distant = [
@@ -260,6 +339,12 @@ class HuntEngine:
                     candidate = min(distant, key=lambda candidate: candidate.distance_squared)
                     self.phase = "requesting_approach"
                     self.message = f"Solicitando acercamiento al objetivo {candidate.slot}."
+                    self._event(
+                        "approach_target_selected",
+                        now,
+                        target=asdict(candidate),
+                        player=asdict(view.player),
+                    )
                     return candidate
             self.message = (
                 "Sin objetivos disponibles dentro del radio de búsqueda."
@@ -270,7 +355,15 @@ class HuntEngine:
             )
             return None
         candidate = min(available, key=lambda candidate: candidate.distance_squared)
+        self.selection_source = "nearby"
         self.phase, self.message = "requesting", f"Solicitando ataque al objetivo {candidate.slot}."
+        self._event(
+            "target_selected",
+            now,
+            source="nearby",
+            target=asdict(candidate),
+            player=asdict(view.player),
+        )
         return candidate
 
     def _observe_movement(self, observation: Observation, classification: str, now: float) -> bool:
@@ -333,6 +426,7 @@ class HuntEngine:
             self.move_reason = "target_changed"
         elif target.distance_squared is not None and target.distance_squared <= limit * 0.8:
             self.move_reason = "in_range"
+            self.move_target = target
         elif abs(target.x - self.route.x) + abs(target.y - self.route.y) > 4:
             self.move_reason = "target_moved"
         if self.move_reason:
@@ -340,6 +434,7 @@ class HuntEngine:
 
     def record_approach(self, candidate: Candidate, report: dict, now: float) -> None:
         self.last_move = dict(report)
+        self._event("approach_result", now, target=asdict(candidate), report=dict(report))
         if report.get("pid") != self.pid or report.get("slot") != candidate.slot:
             self.stop("Respuesta de acercamiento de otra instancia; detenido.", reconnect=True)
             return
@@ -354,6 +449,7 @@ class HuntEngine:
                 self.stop("La ruta no corresponde al objetivo; detenido.", reconnect=True)
                 return
             self.route, self.move_target = route, candidate
+            self.arrival_target, self.verify_arrival = None, False
             self.move_started = self.move_progress = now
             self.move_position = self.anchor
             self.move_distance_squared = candidate.distance_squared
@@ -371,18 +467,34 @@ class HuntEngine:
 
     def record_movement_stop(self, report: dict, now: float, *, cleanup: bool = False) -> None:
         self.last_stop = dict(report)
+        self._event(
+            "movement_stop_result",
+            now,
+            reason=self.move_reason,
+            cleanup=cleanup,
+            target=asdict(self.move_target) if self.move_target else None,
+            report=dict(report),
+        )
         if report.get("pid") != self.pid or report.get("status") != 16:
             self.stop(
                 f"No se confirmó la parada del desplazamiento. {report.get('message', '')}",
                 reconnect=True,
             )
             return
-        if not cleanup and self.move_reason != "in_range":
+        if not cleanup and self.move_reason == "route_finished":
+            self.arrival_target, self.verify_arrival = self.move_target, True
+        elif not cleanup and self.move_reason != "in_range":
             if self.move_target is not None:
                 self.cooldowns[target_key(self.move_target)] = now + 30
             self.move_failures += 1
+            self.last_failed_approach = {
+                "reason": self.move_reason,
+                "target": asdict(self.move_target) if self.move_target else None,
+                "report": dict(report),
+            }
         elif not cleanup:
             self.arrivals += 1
+            self.arrival_target, self.verify_arrival = self.move_target, False
         self.route = self.move_target = None
         self.anchor = None
         if not cleanup:
@@ -399,12 +511,30 @@ class HuntEngine:
             self.stop("Respuesta de otra instancia u objetivo; bot detenido.", reconnect=True)
             return
         self.attempts += 1
-        self.last_attack = dict(report)
+        self.last_attack = {
+            **report,
+            "battle_confirmed": False,
+            "target": asdict(candidate),
+            "selection_source": self.selection_source,
+            "approach_id": self.moves if self.selection_source == "approach" else None,
+        }
+        self._event(
+            "attack_result",
+            now,
+            attempt=self.attempts,
+            target=asdict(candidate),
+            source=self.selection_source,
+            report=dict(report),
+        )
         code = report["status"]
         self.next_scan = now + 1.5
         if code == 1:
             self.queued += 1
             self.deadline = now + 30
+            self.pending_target = candidate
+            self.attack_queued_at = now
+            self.transport.clear()
+            self.transport_first = {}
             self.cooldowns[target_key(candidate)] = now + 10
             self.phase, self.message = "waiting_battle", "Solicitud enviada; esperando combate."
         elif code in (2, 3, 6):
@@ -417,6 +547,22 @@ class HuntEngine:
             self.stop("Bot detenido; solicitud pendiente cancelada.")
         else:
             self.stop(report["message"], reconnect=code in (7, 9, 10, 11, 12, 14))
+
+    def record_transport(self, report: dict, now: float) -> None:
+        self.trace_time = now
+        sample = {
+            **report,
+            "attempt": self.attempts,
+            "elapsed_since_queue": round(now - self.attack_queued_at, 3)
+            if self.attack_queued_at is not None
+            else None,
+        }
+        if not self.transport_first:
+            self.transport_first = sample
+        previous = self.transport[-1] if self.transport else None
+        self.transport.append(sample)
+        if previous is None or any(previous.get(key) != value for key, value in report.items()):
+            self._event("transport_observed", now, attempt=self.attempts, transport=report)
 
     def summary(self) -> dict:
         return {
@@ -437,6 +583,16 @@ class HuntEngine:
             "classification_counts": dict(self.classification_counts),
             "recent_observations": list(self.observations),
             "first_observation": dict(self.first_observation),
+            "events": list(self.events),
+            "pending_attack": {
+                "target": asdict(self.pending_target),
+                "elapsed_since_queue": round(self.trace_time - self.attack_queued_at, 3)
+                if self.attack_queued_at is not None
+                else None,
+            }
+            if self.pending_target is not None
+            else None,
+            "transport": {"first": dict(self.transport_first), "recent": list(self.transport)},
             "range": dict(self.range_diagnostic),
             "profile": self.profile.summary(),
             "approach": {
@@ -452,6 +608,8 @@ class HuntEngine:
                 "route": self.route.summary() if self.route else None,
                 "last_request": dict(self.last_move),
                 "last_stop": dict(self.last_stop),
+                "arrival_target": asdict(self.arrival_target) if self.arrival_target else None,
+                "last_failed": dict(self.last_failed_approach),
             },
         }
 
@@ -479,6 +637,7 @@ class HuntWorker:
         self.stop_event = threading.Event()
         self.cancellation: Cancellation | None = None
         self.stop_attempted = False
+        self.next_transport_sample = 0
         self.thread = threading.Thread(
             target=self._run, name=f"AtlanticaBot-{window.pid}", daemon=True
         )
@@ -585,6 +744,10 @@ class HuntWorker:
                     self.engine.record(candidate, report, time.monotonic())
         if self.engine.route is not None and self.engine.phase == "stopping_move":
             self._stop_route()
+        now = time.monotonic()
+        if self.engine.deadline is not None and now >= self.next_transport_sample:
+            self.engine.record_transport(observe_transport(self.session), time.monotonic())
+            self.next_transport_sample = now + 1
 
     def _stop_route(self, *, cleanup: bool = False) -> None:
         if self.engine.route is None or self.stop_attempted:

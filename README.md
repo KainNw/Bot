@@ -13,6 +13,11 @@ de 0/1. Conserva los bytes originales en el informe y comprueba el objeto y revi
 de ruta observados antes de iniciar el acercamiento. No interpreta un valor desconocido
 como prueba de que el personaje esté parado.
 
+La revisión 0.6.2 conserva el mismo objetivo tras acercarse y lo revalida después
+de parar. Guarda el historial de selección, movimiento, parada y ataque, además de
+los contadores de la cola mientras espera combate. El usuario confirmó un segundo
+ataque encolado que no inició combate; la causa de ese rechazo sigue en diagnóstico.
+
 **Comprobado por el usuario:** la prueba individual 0.3 inició el ataque con Auto Battle
 desactivado. También confirmó un combate iniciado por 0.4 que el detector no reconoció.
 La siguiente captura mostró `scene_code=2`: ese valor solo no distingue el combate.
@@ -106,6 +111,11 @@ Los estados de navegación incluyen `active_raw` y `moving_raw`. El apartado `ap
 ruta, acercamientos, llegadas, causa de parada y resultado de cancelación. Una cola confirmada no
 demuestra por sí sola que empezó un combate. Si la calibración no encuentra una
 señal, usa **Copiar calibración** para revisar los tres grupos antes de cambiar el detector.
+
+**Exportar diagnóstico** incorpora hasta 100 KiB de código, incluyendo el envío de
+movimiento, y el historial del bot si pertenece a esa misma instancia. No incorpora
+los nombres de perfiles ni el contenido de los paquetes de red. Una cola vacía
+indica que salió de ese búfer; no confirma recepción o aceptación del servidor.
 
 La selección de cliente queda bloqueada mientras termina el trabajador. Si se cierra
 el juego, se detiene; abrir otro cliente exige Conectar. Cambios de mapa, movimiento

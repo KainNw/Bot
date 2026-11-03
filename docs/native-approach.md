@@ -1,4 +1,4 @@
-# Acercamiento opcional 0.6.1
+# Acercamiento opcional 0.6.2
 
 El usuario confirmó dos encuentros con 0.5: entró en combate sin Auto Battle,
 reconoció la batalla por `local_context` y volvió a buscar. El límite restante era
@@ -57,6 +57,43 @@ llamar al método normal. Una revisión diferente rechaza la acción y no se rei
 automáticamente. La parada mantiene su comparación de propiedad completa y solo
 confirma flags desactivados cuando ambos bytes son exactamente cero. Un valor
 desconocido no autoriza detener una ruta ajena ni se considera una ruta terminada.
+
+## Mantener el objetivo después de acercarse
+
+El informe 0.6.1 del PID 10192 mostró dos rutas aceptadas, una llegada y una ruta
+contada como no completada. La última ruta pasó de distancia al cuadrado 78.4067
+a 6.71245, se confirmó parada 16 y se encoló un ataque a distancia 1.00211, con
+umbral 20. Se observó un combate; el segundo no comenzó según confirmó el usuario.
+Su última comprobación indica que el clic manual sí inicia combate. El informe
+anterior no conserva el motivo de la primera ruta no completada ni el objetivo
+completo de cada solicitud, por lo que no permite atribuir el fallo a una causa única.
+
+En 0.6.1, al terminar una ruta se liberaba el objetivo y se elegía de nuevo entre
+los candidatos cercanos. 0.6.2 conserva puesto e identidad completa durante la parada
+y estabilización, y exige encontrar ese mismo candidato actualizado antes de atacar.
+Si desaparece, cambia de identidad o queda fuera de alcance, descarta esa elección;
+no lo sustituye por otro en esa misma consulta. Esta corrección evita una selección
+incoherente y necesita contrastarse con el fallo observado; no se presenta como
+prueba de haber resuelto la aceptación del servidor.
+
+Una ruta terminada por el cliente se verifica después de la parada antes de
+contarla como llegada o fallo. El informe conserva el último fallo y una secuencia
+acotada de 32 eventos, con tiempos, identidad, posiciones y resultados. Cada ataque
+incluye el candidato completo y si procede de un acercamiento o de la búsqueda cercana.
+
+Mientras espera combate, consulta una vez por segundo únicamente metadatos del
+transporte: contexto disponible, instancia de cola, capacidad, ocupación y formato,
+así como el identificador y tiempos del control de comandos usado por `0095E871`.
+No copia el contenido del búfer, no fuerza su vaciado y no reenvía ataques.
+Una ocupación cero no acredita que el servidor haya aceptado el combate. Activar
+la ventana sin pulsar el mob tampoco inició la batalla en la prueba del usuario.
+
+**Exportar diagnóstico** añade los bloques de navegación `0043B000` (16 KiB) y
+despacho de movimiento `00443000` (8 KiB), hasta 100 KiB contando el envío global.
+El segundo contiene la función `00443382` usada por la parada; no estaba en las
+capturas anteriores. El manifiesto versión 2 incorpora la traza del bot de ese mismo
+PID y fecha de creación. Descarta campos ajenos, nombres de perfiles y contexto de
+otra instancia; el contexto tiene un límite de 128 KiB. La exportación solo consulta.
 
 | Operación | Función del cliente | Comprobación |
 | --- | --- | --- |

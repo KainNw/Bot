@@ -882,7 +882,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             if not filename:
                 return
             try:
-                export_code_context(session, Path(filename))
+                context = (
+                    self.bot_report
+                    if (
+                        self.bot_report.get("pid") == session.process.pid
+                        and self.bot_report.get("detector", {}).get("instance_creation_time")
+                        == session.creation_time
+                    )
+                    else None
+                )
+                export_code_context(session, Path(filename), bot_context=context)
                 self.detail.set(
                     f"Diagnóstico guardado en {filename}. "
                     "Adjunta ese ZIP al chat para continuar el análisis."

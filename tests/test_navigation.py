@@ -93,6 +93,72 @@ def test_walk_stop_stabilize_attack_battle_and_return_without_auto_battle():
     assert engine.origin == ORIGIN and engine.running
 
 
+def arrived_engine(*, reason="in_range"):
+    engine = moving_engine()
+    engine.move_reason = reason
+    engine.record_movement_stop(stopped(), 3)
+    assert not engine.observe(observation(), 3.1)
+    assert engine.observe(observation(), 5.2)
+    return engine
+
+
+def test_keeps_approached_identity_when_another_mob_becomes_closer():
+    engine = arrived_engine()
+    original = replace(TARGET, distance_squared=10)
+    closer = replace(original, slot=9, identity=(12053, 99, 0), distance_squared=0.1)
+    assert engine.select(view(closer, original), 5.2) == original
+    assert engine.selection_source == "approach"
+    selection = engine.summary()["events"][-1]
+    assert selection["event"] == "target_selected"
+    assert selection["target"]["identity"] == TARGET.identity
+
+
+def test_reused_slot_does_not_silently_replace_arrival_target():
+    engine = arrived_engine()
+    replacement = replace(TARGET, identity=(12053, 99, 0), distance_squared=1)
+    assert engine.select(view(replacement), 5.2) is None
+    assert engine.attempts == 0
+    assert engine.summary()["events"][-1]["event"] == "arrival_target_unavailable"
+    assert engine.observe(observation(), 6.3)
+    assert engine.select(view(replacement), 6.3) == replacement
+    assert engine.selection_source == "nearby"
+
+
+def test_naturally_finished_route_is_verified_before_counting_success_or_failure():
+    engine = arrived_engine(reason="route_finished")
+    assert engine.arrivals == engine.move_failures == 0
+    target = replace(TARGET, distance_squared=1)
+    assert engine.select(view(target), 5.2) == target
+    assert engine.arrivals == 1 and engine.move_failures == 0
+
+
+def test_finished_route_out_of_range_records_reason_without_attacking_other_mob():
+    engine = arrived_engine(reason="route_finished")
+    other = replace(TARGET, slot=9, identity=(12053, 99, 0), distance_squared=1)
+    assert engine.select(view(TARGET, other), 5.2) is None
+    assert engine.move_failures == 1 and engine.arrivals == engine.attempts == 0
+    assert engine.last_failed_approach["reason"] == "target_left_range_after_stop"
+
+
+def test_failed_approach_reason_survives_a_later_successful_arrival():
+    engine = moving_engine()
+    assert not engine.observe(observation(ORIGIN, ROUTE), 8)
+    engine.record_movement_stop(stopped(), 8)
+    assert engine.last_failed_approach["reason"] == "stalled"
+    assert not engine.observe(observation(), 8.1)
+    assert engine.observe(observation(), 10.2)
+    other = replace(TARGET, slot=9, identity=(12053, 99, 0))
+    assert engine.select(view(other), 10.2) == other
+    report = {**move_report(), "slot": 9}
+    engine.record_approach(other, report, 10.3)
+    engine.move_reason = "in_range"
+    engine.record_movement_stop(stopped(), 11)
+    assert engine.arrivals == engine.move_failures == 1
+    assert engine.last_failed_approach["reason"] == "stalled"
+    stops = [event for event in engine.events if event["event"] == "movement_stop_result"]
+    assert [event["reason"] for event in stops] == ["stalled", "in_range"]
+
+
 def test_nearby_mode_preserves_previous_behavior_and_radius_bounds_far_targets():
     assert ready_engine(enabled=False).select(view(TARGET), 2) is None
     limited = ready_engine(radius=5)

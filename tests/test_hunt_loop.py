@@ -92,6 +92,24 @@ def test_missing_battle_transition_stops_without_retry():
     assert engine.queued == 1 and engine.select(view(NEAR), 30) is None
 
 
+def test_drained_queue_is_not_treated_as_battle_confirmation_and_timeout_keeps_target_history():
+    engine = ready_engine()
+    engine.select(view(NEAR), 2)
+    engine.record(NEAR, report(), 2.1)
+    engine.record_transport({"available": True, "queued_bytes": 25, "queue_instance": "1234"}, 2.2)
+    engine.record_transport({"available": True, "queued_bytes": 0, "queue_instance": "1234"}, 3)
+    assert engine.battles == 0 and not engine.last_attack["battle_confirmed"]
+    assert engine.select(view(NEAR), 4) is None
+    engine.observe(observation(), 32.2)
+    summary = engine.summary()
+    assert not summary["running"] and summary["needs_reconnect"]
+    assert summary["pending_attack"]["target"]["identity"] == NEAR.identity
+    assert summary["transport"]["first"]["queued_bytes"] == 25
+    assert summary["transport"]["recent"][-1]["queued_bytes"] == 0
+    assert any(event["event"] == "attack_not_confirmed" for event in summary["events"])
+    assert summary["queued"] == 1
+
+
 @pytest.mark.parametrize(
     "changed",
     [

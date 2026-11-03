@@ -284,6 +284,47 @@ def observe_scene(
     )
 
 
+def observe_transport(session: GameSession) -> dict:
+    """Read queue metadata only; never copy packet contents or change transport state."""
+    try:
+        session.snapshot()
+        reader = Reader(session)
+        owner = reader.u32(OWNER_ADDRESS)
+        connection = reader.u32(owner + 0x1D70)
+        if not connection:
+            raise DiagnosticError("El cliente no publica el contexto de envío.")
+        queue_address, context = struct.unpack("<II", reader.read(connection + 0x6C, 8))
+        if not queue_address:
+            raise DiagnosticError("El cliente no publica la cola de envío.")
+        # These are the object fields used by the validated native sender, not its buffer.
+        capacity = reader.i32(queue_address + 4)
+        used = reader.i32(queue_address + 0x10)
+        if capacity <= 0 or not 0 <= used <= capacity:
+            raise DiagnosticError("Los contadores de la cola de envío no son coherentes.")
+        result = {
+            "available": True,
+            "send_gate_raw": reader.byte(owner + 0x11D8E),
+            "send_context_present": bool(context),
+            "queue_instance": f"{queue_address:08X}",
+            "queue_capacity": capacity,
+            "queued_bytes": used,
+            "queue_format": reader.i32(queue_address + 0x44),
+            "command_gate": f"{int.from_bytes(reader.read(owner + 0x16544, 2), 'little'):04X}",
+            "command_gate_tick": reader.u32(owner + 0x16548),
+            "client_tick": reader.u32(owner + 0xBA4),
+        }
+        session.snapshot()
+        if (
+            reader.u32(OWNER_ADDRESS) != owner
+            or reader.u32(owner + 0x1D70) != connection
+            or reader.u32(connection + 0x6C) != queue_address
+        ):
+            raise SceneChanged("El contexto de envío cambió durante la consulta.")
+        return result
+    except (DiagnosticError, OSError) as exc:
+        return {"available": False, "message": str(exc)}
+
+
 def scan_world(session: GameSession, *, allow_player_movement: bool = False) -> WorldView:
     """Read/rank candidate NPCs with no Auto Battle requirement and no game input."""
     session.snapshot()
