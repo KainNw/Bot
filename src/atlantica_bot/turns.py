@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import asdict, dataclass
 
 from .battle import BattleFrame, BattleTrial, BattleUnit
-from .profiles import ACTION_LABELS, TARGET_LABELS, BotProfile, Mercenary
+from .profiles import ACTION_LABELS, TARGET_LABELS, BotProfile, Mercenary, member_label
 
 
 def unit_key(unit: BattleUnit) -> tuple:
@@ -23,13 +23,14 @@ def roster_rows(
         rows.append(
             {
                 "slot": slot,
-                "label": f"Mercenario {slot}",
+                "label": member_label(slot),
                 "name": plan.name,
                 "enabled": plan.enabled,
                 "priority": priorities[slot],
                 "present": unit is not None if frame else None,
                 "alive": unit.life > 0 if unit else None,
                 "kind_id": unit.kind_id if unit else None,
+                "life": unit.life if unit is not None and unit.life >= 0 else None,
                 "target": TARGET_LABELS[plan.target],
                 "opening_action": ACTION_LABELS[plan.action] if plan.enabled else "Sin orden",
                 "later_action": (
@@ -110,7 +111,7 @@ class TurnEngine:
         value = {"slot": slot, "action": action, "message": message, "time": round(now, 3)}
         self.orders[str(slot)] = value
         self.events.append(value)
-        self.message = f"Mercenario {slot}: {message}"
+        self.message = f"{member_label(slot)}: {message}"
 
     @staticmethod
     def _value(frame: BattleFrame, slot: int) -> int | None:
@@ -156,7 +157,7 @@ class TurnEngine:
             )
         else:
             self.message = (
-                f"Mercenario {trial.source.member_slot}: esperando el resultado de la orden."
+                f"{member_label(trial.source.member_slot)}: esperando el resultado de la orden."
             )
         return False
 
@@ -233,7 +234,7 @@ class TurnEngine:
             if (*prefix, plan.slot) in self.ledger:
                 continue
             if source.action_state != 1:
-                self.message = f"Mercenario {plan.slot}: esperando que termine su animación."
+                self.message = f"{member_label(plan.slot)}: esperando que termine su animación."
                 return None
             action = plan.action if opening or not self.profile.magic_first_turn_only else "basic"
             if plan.slot in self.fallback:

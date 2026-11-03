@@ -18,7 +18,15 @@ from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
 from .native_action import try_attack, try_battle_action
 from .navigation import ApproachSettings
-from .profiles import ACTION_LABELS, TARGET_LABELS, BotProfile, Mercenary, ProfileStore
+from .overview import OverviewWindow
+from .profiles import (
+    ACTION_LABELS,
+    TARGET_LABELS,
+    BotProfile,
+    Mercenary,
+    ProfileStore,
+    member_label,
+)
 from .session import GameSession, LiveState
 from .turns import roster_rows
 from .world import observe_scene, scan_world
@@ -52,6 +60,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.calibrating = False
             self.calibration_window = None
             self.profile_editor = None
+            self.overview: OverviewWindow | None = None
             self.detector: CombatDetector | None = None
             self.profile_store = ProfileStore.for_windows()
             self.profile: BotProfile | None = None
@@ -137,6 +146,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 row, text="Configurar mercenarios", command=self.edit_profile
             )
             self.profile_button.pack(side="left")
+            ttk.Button(row, text="Vista general", command=self.show_overview).pack(
+                side="left", padx=8
+            )
             ttk.Label(frame, textvariable=self.profile_status, wraplength=760).pack(anchor="w")
             self.turns_check = ttk.Checkbutton(
                 frame,
@@ -266,6 +278,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             columns = (
                 "number",
                 "name",
+                "life",
                 "present",
                 "enabled",
                 "priority",
@@ -276,8 +289,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             )
             self.team_tree = ttk.Treeview(self.team_tab, columns=columns, show="headings", height=9)
             for key, label, width in (
-                ("number", "Mercenario", 105),
+                ("number", "Miembro", 110),
                 ("name", "Nombre del perfil", 135),
+                ("life", "Vida actual", 85),
                 ("present", "En combate", 95),
                 ("enabled", "Usar bot", 75),
                 ("priority", "Orden", 55),
@@ -308,6 +322,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Button(buttons, text="Prueba individual", command=self.show_members).pack(
                 side="left", padx=8
             )
+            ttk.Button(buttons, text="Vista general", command=self.show_overview).pack(side="left")
             self.paint_team(
                 roster_rows(BotProfile.default(1), None),
                 "Conecta con el cliente para leer la batalla.",
@@ -328,6 +343,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 values = (
                     row["label"],
                     row["name"],
+                    row.get("life") if row.get("life") is not None else "—",
                     present,
                     "Sí" if row["enabled"] else "No",
                     row["priority"],
@@ -341,6 +357,50 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     self.team_tree.item(item, values=values)
                 else:
                     self.team_tree.insert("", "end", iid=item, values=values)
+            if self.overview is not None and self.overview.alive:
+                self.overview.paint(
+                    rows, message, pid=self.session.process.pid if self.session else None
+                )
+
+        def show_overview(self) -> None:
+            if self.overview is not None and self.overview.alive:
+                self.overview.window.deiconify()
+                self.overview.window.lift()
+            else:
+                self.overview = OverviewWindow(
+                    self.root,
+                    execute_turns=self.turns_enabled,
+                    profile_number=self.profile_number,
+                    on_profile=self.load_profile,
+                    on_start=self.start_bot,
+                    on_stop=self.stop_bot,
+                    on_configure=self.edit_profile,
+                    on_refresh=self.refresh_team,
+                    on_copy=self.copy_bot,
+                )
+            self.refresh_team()
+            self.sync_overview_controls()
+
+        def sync_overview_controls(self) -> None:
+            if self.overview is None or not self.overview.alive:
+                return
+            editable = self.bot_worker is None and not self.closing and not self.calibrating
+            self.overview.set_controls(
+                start=editable and str(self.bot_start_button.cget("state")) == "normal",
+                stop=self.bot_worker is not None and not self.closing,
+                editable=editable,
+            )
+            report = self.bot_report
+            if (
+                self.session is None
+                or report.get("pid") != self.session.process.pid
+                or report.get("detector", {}).get("instance_creation_time")
+                != self.session.creation_time
+            ):
+                report = {}
+            self.overview.set_run_status(
+                self.bot_status.get() if report else "Bot detenido.", report
+            )
 
         def refresh_team(self) -> None:
             profile = self.profile or BotProfile.default(1)
@@ -380,7 +440,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def poll_team(self) -> None:
             if self.closing:
                 return
-            if self.tabs.select() == str(self.team_tab):
+            if self.tabs.select() == str(self.team_tab) or (
+                self.overview is not None and self.overview.alive
+            ):
                 self.refresh_team()
             self.root.after(1000, self.poll_team)
 
@@ -424,6 +486,11 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.request.set("Solicitud: sin consultar")
             if self.bot_worker is None:
                 self.bot_status.set("Bot detenido; sin conexión.")
+            self.paint_team(
+                roster_rows(self.profile or BotProfile.default(1), None),
+                "Conecta con el cliente para consultar el equipo.",
+            )
+            self.sync_overview_controls()
 
         def toggle_advanced(self) -> None:
             if self.advanced.winfo_manager():
@@ -456,6 +523,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.stop_button.configure(state="disabled")
                 self.trial_button.configure(state="disabled")
                 self.calibration_button.configure(state="disabled")
+            self.sync_overview_controls()
 
         def require_idle_bot(self) -> None:
             if self.bot_worker is not None or self.closing or self.calibrating:
@@ -553,6 +621,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     )
                     self.bot_copy_button.configure(state="normal")
                     self.bot_copy_button.configure(text=f"Copiar estado PID {info['pid']}")
+            self.sync_overview_controls()
             self.root.after(100, self.poll_bot)
 
         def copy_bot(self) -> None:
@@ -585,6 +654,11 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             except (DiagnosticError, OSError, ValueError) as exc:
                 self.profile = None
                 self.profile_status.set(f"No se pudo cargar el perfil: {exc}")
+            self.paint_team(
+                roster_rows(self.profile or BotProfile.default(1), None),
+                "Perfil cargado; actualiza el equipo para consultar la batalla.",
+            )
+            self.sync_overview_controls()
 
         def edit_profile(self) -> None:
             try:
@@ -650,7 +724,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 row = rows[slot] = ttk.Frame(body)
                 priorities[slot] = ttk.Label(row, width=3)
                 priorities[slot].pack(side="left")
-                ttk.Checkbutton(row, text=f"Mercenario {slot}", variable=enabled[slot]).pack(
+                ttk.Checkbutton(row, text=member_label(slot), variable=enabled[slot]).pack(
                     side="left"
                 )
                 ttk.Entry(row, textvariable=names[slot], width=18).pack(side="left", padx=8)
@@ -1207,7 +1281,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 frame, columns=("slot", "label", "kind", "present"), show="headings", height=9
             )
             for column, label, width in (
-                ("slot", "Puesto", 70),
+                ("slot", "Miembro", 115),
                 ("label", "Nombre del perfil", 190),
                 ("kind", "Tipo detectado", 120),
                 ("present", "Ocupado", 80),
@@ -1220,7 +1294,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             trial_result = {}
             source_choices, target_choices = {}, {}
             source_choice, target_choice = tk.StringVar(), tk.StringVar()
-            ttk.Label(frame, text="Mercenario para la prueba:").pack(anchor="w", pady=(8, 0))
+            ttk.Label(frame, text="Miembro para la prueba:").pack(anchor="w", pady=(8, 0))
             source_list = ttk.Combobox(
                 frame, textvariable=source_choice, state="readonly", width=65
             )
@@ -1273,13 +1347,11 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     )
                     for unit in targets:
                         label = (
-                            "Tu equipo"
+                            f"Tu equipo — {member_label(unit.member_slot)}"
                             if unit.world_slot == 1
-                            else f"Enemigo {groups[unit.world_slot]}"
+                            else f"Enemigo {groups[unit.world_slot]} — puesto {unit.member_slot}"
                         )
-                        target_choices[
-                            f"{label} — puesto {unit.member_slot} (tipo {unit.kind_id})"
-                        ] = unit
+                        target_choices[f"{label} (tipo {unit.kind_id})"] = unit
                 target_list.configure(values=tuple(target_choices))
                 target_choice.set(
                     selected if selected in target_choices else next(iter(target_choices), "")
@@ -1335,7 +1407,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                             "",
                             "end",
                             values=(
-                                member.slot,
+                                member_label(member.slot),
                                 names.get(member.slot, f"Puesto {member.slot}"),
                                 member.kind_id,
                                 "Sí" if member.kind_id else "No",
@@ -1351,7 +1423,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         last["battle_frame"] = live.summary()
                         source_choices.update(
                             {
-                                f"Puesto {u.member_slot} — "
+                                f"{member_label(u.member_slot)} — "
                                 f"{names.get(u.member_slot, 'Sin nombre')} "
                                 f"(tipo {u.kind_id})": u
                                 for u in live.sources
@@ -1633,14 +1705,58 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         )
         panel.tabs.select(panel.team_tab)
         assert len(panel.team_tree.get_children()) == 9
+        assert panel.team_tree.item("merc_1", "values")[0] == "Main (1)"
         panel.root.update_idletasks()
         panel.tabs.select(0)
+        panel.show_overview()
+        overview = panel.overview
+        assert overview is not None and overview.alive and len(overview.cells) == 9
+        assert overview.cells[1]["member"].cget("text") == "Main (1)"
+        assert overview.cells[9]["member"].cget("text") == "Mercenario 9"
+        assert str(overview.start_button.cget("state")) == "disabled"
+        assert str(overview.copy_button.cget("state")) == "disabled"
+        from types import SimpleNamespace
+
+        fake_frame = SimpleNamespace(
+            units=(SimpleNamespace(world_slot=1, member_slot=1, kind_id=2318, life=1234),)
+        )
+        panel.paint_team(roster_rows(BotProfile.default(1), fake_frame), "Comprobación de vista")
+        assert str(overview.cells[1]["life"].cget("text")) == "1234"
+        assert overview.cells[2]["life"].cget("text") == "—"
+        assert overview.cells[2]["present"].cget("text") == "No presente"
+        panel.show_overview()
+        assert panel.overview is overview
+        assert overview.cells[1]["life"].cget("text") == "—"
+        overview.window.destroy()
+        panel.show_overview()
+        assert panel.overview is not overview and panel.overview.alive
+        overview = panel.overview
+        for tab, cells in enumerate((overview.cells, overview.order_cells)):
+            overview.tabs.select(tab)
+            panel.root.update_idletasks()
+            last = cells[9]["member"]
+            assert last.winfo_rooty() + last.winfo_height() <= (
+                overview.tabs.winfo_rooty() + overview.tabs.winfo_height()
+            )
+        overview.tabs.select(0)
         panel.toggle_advanced()
         panel.edit_profile()
         panel.profile_editor.destroy()
-        from types import SimpleNamespace
-
         panel.session = SimpleNamespace(process=SimpleNamespace(pid=1), creation_time=1)
+        panel.bot_report = {
+            "pid": 2,
+            "detector": {"instance_creation_time": 2},
+            "battles_observed": 8,
+            "combat": {"queued": 9},
+        }
+        panel.sync_overview_controls()
+        assert overview.counts.get() == "Combates: 0 · Órdenes: 0"
+        assert str(overview.copy_button.cget("state")) == "disabled"
+        panel.bot_report.update(pid=1, detector={"instance_creation_time": 1})
+        panel.sync_overview_controls()
+        assert overview.counts.get() == "Combates: 8 · Órdenes: 9"
+        assert str(overview.copy_button.cget("state")) == "normal"
+        panel.bot_report = {}
         panel.show_members(load=False)
         panel.calibrate_combat()
         panel.calibration_window.destroy()

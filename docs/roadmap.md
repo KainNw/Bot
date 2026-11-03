@@ -57,8 +57,17 @@ miembros, los básicos posteriores y un equipo de dos miembros.
 
 La versión 0.11.1 elimina la pausa entre selección y magia, relee inmediatamente
 la barra y revisa la preparación del combate cada 100 ms. Busca dejar más tiempo al
-NeoACA para recoger y terminar en el primer turno. Ese resultado todavía requiere
-comprobación con el robot; el botín con X sigue pendiente.
+NeoACA para recoger y terminar en el primer turno. El usuario confirmó esa recogida
+y final en el primer turno en la prueba de 0.11.1; el botín con X sigue pendiente.
+
+## Vista general 0.12
+
+Se añade una ventana flotante con Main fijo en el puesto 1 y Mercenarios 2–9,
+vida actual en batalla, presencia, habilitación, prioridad y acción. Usa los
+controles y perfiles existentes. Durante los turnos automáticos muestra el estado
+que ya publica el trabajador, sin seleccionar unidades ni añadir lecturas del juego.
+Las columnas de maná, máximos y experiencia de la imagen de referencia requieren
+identificar sus lecturas antes de incorporarlas.
 
 ## Velocidad — etapa posterior
 

@@ -1,4 +1,4 @@
-# Turnos de mercenarios 0.11.1
+# Turnos de mercenarios 0.12.0
 
 El panel puede aplicar el perfil durante las batallas con Auto Battle apagado.
 Ordena una acción por mercenario y turno, siguiendo la prioridad configurada y
@@ -15,6 +15,12 @@ presentes. El usuario confirmó que Q derrotó a todos los enemigos; el bot omit
 reconexión. Esa captura aún no comprueba el regreso al mapa, una secuencia entre
 varios miembros, los básicos posteriores, un equipo de dos ni varias ventanas.
 La recogida con X sigue pendiente.
+
+Desde 0.12, **Vista general** abre el resumen flotante inspirado en la referencia
+del usuario. El puesto 1 se llama **Main (1)** en el resumen, tabla, editor,
+objetivos propios y órdenes; los demás conservan **Mercenario 2–9**. Esto identifica
+el puesto nativo y no cambia la prioridad configurada. La vida procede de las unidades
+presentes leídas; fuera de la batalla se limpia. Detalles: [Vista general](overview.md).
 
 ## Configurar y empezar
 
@@ -38,7 +44,7 @@ La recogida con X sigue pendiente.
 8. Tras una batalla, pulsa **Parar bot**, comprueba el orden en pantalla y comparte
    **Copiar estado PID …**. No hace falta adjuntar x32dbg.
 
-Ejemplo: coloca Mercenario 2 primero con Q y objetivo Enemigo; Mercenario 1 después
+Ejemplo: coloca Mercenario 2 primero con Q y objetivo Enemigo; Main (1) después
 con básico. Si ambos están presentes, solicita Q del 2 y luego básico del 1; en los
 turnos siguientes, básicos en ese mismo orden. Si el primer ataque elimina al último
 enemigo, no solicita la segunda acción.
@@ -59,8 +65,12 @@ la pausa de recuperación anterior, para que el sondeo más frecuente no acorte 
 tolerancia a transiciones. Los tiempos de caza en el mapa no cambian.
 
 El objetivo de adelantar Q es dejar más tiempo al robot NeoACA de la formación para
-recoger dentro del primer turno. La animación, recogida y cierre del combate siguen
-dependiendo del juego; esta mejora debe comprobarse con el robot en una batalla real.
+recoger dentro del primer turno. El registro de 0.11.1 mostró 63 ms entre selección y
+solicitud de Q, frente a 563 ms en 0.11.0, estado 32 sin excepción y solicitud en el
+turno 0. Se observó el regreso al mapa y una parada solicitada durante la reanudación.
+El usuario confirmó que NeoACA recogió y la batalla terminó en el primer turno.
+La animación, recogida y cierre del combate siguen dependiendo del juego; la prueba
+no valida todavía otras formaciones, habilidades o secuencias entre varios miembros.
 
 La ejecución espera el turno del grupo y el estado nativo del mercenario. Para magia,
 selecciona ese miembro con el selector del cliente, lee su barra actual y solicita
@@ -114,7 +124,7 @@ todavía requieren análisis. Tampoco se ha implementado la recogida automática
 
 ## Exportar el código de combate
 
-1. Abre el panel 0.11.1 y conecta con la ventana elegida.
+1. Abre el panel 0.12.0 y conecta con la ventana elegida.
 2. Mantén Auto Battle y caza nativa apagados.
 3. Entra en combate manualmente o con el ciclo de caza que ya funciona. El panel
    permite exportar en batalla. Para facilitar la captura, para el bot antes.

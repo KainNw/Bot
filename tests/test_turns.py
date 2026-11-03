@@ -64,12 +64,18 @@ def test_roster_has_nine_slots_and_distinguishes_disabled_dead_absent_and_unknow
     frame = changed(turn_frame, 1, life=0)
     rows = roster_rows(plan, frame)
     assert [r["slot"] for r in rows] == list(range(1, 10))
+    assert rows[0]["label"] == "Main (1)" and rows[0]["priority"] == 9
+    assert rows[1]["label"] == "Mercenario 2"
     assert rows[0]["present"] and rows[0]["alive"] and not rows[0]["enabled"]
+    assert rows[0]["life"] == 1000
     assert rows[0]["opening_action"] == rows[0]["later_action"] == "Sin orden"
     assert rows[1]["present"] and rows[1]["alive"] is False
+    assert rows[1]["life"] == 0
     assert all(r["present"] is False for r in rows[2:])
+    assert all(r["life"] is None for r in rows[2:])
     assert rows[1]["priority"] == 8
     assert all(r["present"] is None for r in roster_rows(plan, None))
+    assert all(r["life"] is None for r in roster_rows(plan, None))
     assert engine(plan).next(frame, 0) is None
 
 

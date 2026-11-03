@@ -16,10 +16,16 @@ ACTION_LABELS = {
     "R": "Magia R",
     "T": "Magia T",
 }
+
+
+def member_label(slot: int) -> str:
+    return "Main (1)" if slot == 1 else f"Mercenario {slot}"
+
+
 TARGET_LABELS = {
     "enemy": "Enemigo",
     "self": "Sí mismo",
-    **{f"slot_{n}": f"Mercenario {n}" for n in range(1, 10)},
+    **{f"slot_{n}": member_label(n) for n in range(1, 10)},
 }
 
 
