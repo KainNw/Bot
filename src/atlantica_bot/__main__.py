@@ -36,6 +36,11 @@ def parser() -> argparse.ArgumentParser:
     capture = commands.add_parser("capture", help="Exportar contexto de código para análisis.")
     capture.add_argument("--pid", type=positive_pid, help="PID opcional si hay varios clientes.")
     capture.add_argument("--output", type=Path, required=True, help="Archivo ZIP nuevo.")
+    capture.add_argument(
+        "--combat",
+        action="store_true",
+        help="Incluir funciones de turnos; requiere estar en combate.",
+    )
     hunt = commands.add_parser("hunt", help="Controlar el marcador del AutoHunting integrado.")
     hunt.add_argument("action", choices=("start", "stop", "status"))
     hunt.add_argument(
@@ -95,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
             from .session import GameSession
 
             session = GameSession.connect(system, args.pid)
-            export_code_context(session, args.output)
+            export_code_context(session, args.output, include_combat=args.combat)
             print(f"Contexto de código guardado en {args.output}.")
             return 0
         if args.command == "self-test":

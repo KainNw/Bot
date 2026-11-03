@@ -8,12 +8,23 @@ from pathlib import Path
 
 from .errors import DiagnosticError
 
+ACTION_LABELS = {
+    "basic": "Ataque básico",
+    "Q": "Magia Q",
+    "W": "Magia W",
+    "E": "Magia E",
+    "R": "Magia R",
+    "T": "Magia T",
+}
+
 
 @dataclass(frozen=True)
 class Mercenary:
     slot: int
     name: str
     enabled: bool = True
+    action: str = "basic"
+    fallback_basic: bool = True
 
 
 @dataclass(frozen=True)
@@ -38,10 +49,16 @@ class BotProfile:
                 or type(merc.enabled) is not bool
             ):
                 raise DiagnosticError("Revisa los nombres y la selección de mercenarios.")
+            if (
+                type(merc.action) is not str
+                or merc.action not in ACTION_LABELS
+                or type(merc.fallback_basic) is not bool
+            ):
+                raise DiagnosticError("Elige ataque básico o una magia Q/W/E/R/T por puesto.")
 
     def summary(self) -> dict:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "turn_execution_available": False,
@@ -82,11 +99,19 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] != 1
+                or payload["schema_version"] not in (1, 2)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
                 raise ValueError
+            for entry in payload["mercenaries"]:
+                if not isinstance(entry, dict):
+                    raise ValueError
+                if payload["schema_version"] == 1:
+                    if set(entry) - {"slot", "name", "enabled"}:
+                        raise ValueError
+                elif set(entry) != {"slot", "name", "enabled", "action", "fallback_basic"}:
+                    raise ValueError
             mercenaries = tuple(Mercenary(**entry) for entry in payload["mercenaries"])
             profile = BotProfile(number, mercenaries)
             profile.validate()

@@ -1,4 +1,4 @@
-# Calibración y perfiles 0.5
+# Calibración y perfiles
 
 Desde 0.6, conectar con la compilación compatible prepara automáticamente el
 detector local que se contrastó en mapa/combate/regreso y dos encuentros completos.
@@ -54,16 +54,18 @@ para analizar diferencias; no les asigna un significado de combate sin evidencia
 El ciclo exige dos observaciones consecutivas de combate, pausa durante estados
 desconocidos y estabiliza el regreso durante dos segundos. Tras una solicitud
 encolada espera hasta treinta segundos y se detiene sin repetirla si no observa el
-combate. Los tests verifican la lógica con datos simulados; la señal concreta y el
-ciclo completo siguen necesitando la prueba del cliente real.
+combate. Los tests verifican la lógica con datos simulados; en la captura 0.7 del
+cliente real se confirmaron seis solicitudes y seis combates.
 
 ## Configurar el equipo
 
 Elige perfil 1, 2 o 3 y abre **Configurar mercenarios**. Los nueve puestos son un
 plan definido por el usuario; todavía no se han vinculado a objetos de mercenarios
 del cliente. Puedes ponerles nombres, marcar los que participarán y moverlos con
-**Subir / Bajar**. El primero tiene mayor prioridad. **Guardar perfil** conserva
-el plan aunque cierres el panel.
+**Subir / Bajar**. El primero tiene mayor prioridad. Desde 0.8, cada puesto permite
+elegir **Ataque básico** o **Magia Q/W/E/R/T**. **Básico alternativo** guarda la
+preferencia de atacar normal si la magia no está disponible; solo se puede cambiar
+al elegir una magia. **Guardar perfil** conserva el plan aunque cierres el panel.
 
 Los perfiles se guardan como JSON separados en
 `%LOCALAPPDATA%/AtlanticaPanel/profiles/profile-N.json`. No contienen el PID ni se
@@ -71,9 +73,15 @@ asignan automáticamente al primer cliente abierto. El ciclo toma una copia inmu
 del perfil elegido al iniciar; el editor y selector quedan bloqueados durante la
 ejecución. Guardar un perfil no modifica el juego ni las otras ventanas.
 
-Esta versión guarda selección y prioridad. Los turnos siguen siendo manuales;
+Los archivos nuevos usan `schema_version=2`, con `action` (`basic`, `Q`, `W`, `E`,
+`R` o `T`) y `fallback_basic` por puesto. Los perfiles anteriores de esquema 1
+conservan nombres, selección y prioridad; cargan básico por defecto y solo se
+actualiza el archivo al pulsar Guardar. Un perfil inválido se conserva para revisión.
+
+Esta versión guarda selección, prioridad y acciones. Los turnos siguen siendo manuales;
 `turn_execution_available=false` lo refleja en el informe. Todavía faltan localizar
-las unidades del combate y validar la selección/orden de sus acciones.
+las unidades del combate y validar la selección/orden de sus acciones. Usa
+[Exportar combate](mercenary-turns.md) para aportar el código nativo de esa etapa.
 
 ## Alcance y observaciones
 
@@ -87,7 +95,8 @@ La espera pasa de 0.5 s a 0.25 s mientras hay una solicitud pendiente. El auxili
 nativo puede bloquear hasta ocho segundos durante el envío; no se afirma que el
 registro capture cada transición breve que ocurra durante esa llamada.
 
-En 0.5 se comprobó el ciclo cercano en dos combates. La versión 0.6 añade
-[acercamiento nativo opcional](native-approach.md), pendiente de prueba en el cliente.
+En 0.5 se comprobó el ciclo cercano en dos combates. La versión 0.7 sustituyó el
+[acercamiento de 0.6](native-approach.md) por
+[persecución y ataque nativos](native-attack.md), comprobados en seis combates.
 Mantiene el umbral de ataque y su revalidación nativa. Los turnos automáticos de
 mercenarios y una eventual velocidad de combate siguen sin implementarse.

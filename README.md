@@ -1,18 +1,24 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.7.0** añade **Ataque nativo por radio (experimental)**.
-Conserva **Calibrar combate**, observaciones y tres perfiles para
-guardar la selección y prioridad de mercenarios. Al conectar con la compilación
+con Auto Battle apagado. La versión **0.8.0** permite guardar ataque básico o magia
+Q/W/E/R/T por mercenario y añade **Exportar combate** para analizar las funciones
+nativas que faltan. Los turnos todavía se juegan manualmente.
+Conserva **Ataque nativo por radio (experimental)**, **Calibrar combate**,
+observaciones y tres perfiles. Al conectar con la compilación
 compatible vincula el detector local ya comprobado a ese PID y fecha de creación.
 **Calibrar combate** permite comparar manualmente las señales si hace falta.
-Los turnos de los mercenarios siguen siendo manuales.
 
 El modo nuevo usa las órdenes nativas observadas en Auto Battle: persecución del mob
 si está lejos y ataque cuando entra en el mismo alcance que establece el cliente.
 El radio de búsqueda selecciona objetivos; no amplía el alcance del golpe ni escribe
 el umbral nativo. El panel conserva la identidad del mob aunque cambie de puesto.
-Detalles y prueba pendiente en [ataque nativo por radio](docs/native-attack.md).
+Detalles y resultados en [ataque nativo por radio](docs/native-attack.md).
+
+La captura 0.7.0 del usuario confirmó seis solicitudes y seis combates, con Auto
+Battle apagado, cuatro persecuciones nativas sin fallos y parada normal sin exigir
+reconexión. También inició combate con el objetivo que fallaba antes. La versión
+0.8 conserva ese sistema y sus tiempos de persecución y ataque.
 
 **Comprobado por el usuario:** la prueba individual 0.3 inició el ataque con Auto Battle
 desactivado. También confirmó un combate iniciado por 0.4 que el detector no reconoció.
@@ -35,8 +41,8 @@ sincronización sobre procesos/objetos propios, compila el puente x86 y comprueb
 arranque del ejecutable empaquetado. La captura 0.6.4 confirmó dos combates después
 de recorridos completos y registró otro ataque sin combate observado durante veinte
 segundos. El clic manual sobre ese mob sí inició combate, según confirmó el usuario.
-El sistema de persecución de 0.7 necesita su propia prueba en el juego; todavía no
-se presenta como solución comprobada a todos los rechazos. Usa el cliente sin adjuntar x32dbg.
+La prueba 0.7 confirmó el nuevo sistema en esa sesión; no demuestra que se hayan
+resuelto todos los posibles rechazos. Usa el cliente sin adjuntar x32dbg.
 
 Solo se admite la compilación cuyo SHA-256 es
 `BC87A0CC5826AA7FB5E4FF10B6B7C1A349962BD8B146AD28EC3FFA9453FE04E6`.
@@ -48,8 +54,8 @@ El ciclo selecciona candidatos en el radio configurado. Si están fuera del alca
 Espera dos observaciones de combate
 según el detector calibrado antes de permitir otra. Al volver al mismo mapa, exige
 una posición estable durante dos segundos. Si no observa el combate en treinta
-segundos, se detiene sin repetir el envío. El ciclo cercano ya se observó en dos
-combates; el detector se sigue vinculando a cada instancia. Los objetivos de combates
+segundos, se detiene sin repetir el envío. El detector se sigue vinculando a cada
+instancia. Los objetivos de combates
 confirmados quedan excluidos mientras su identidad siga en la colección activa,
 aunque cambien de puesto o queden fuera de los candidatos filtrados. Una consulta
 completa que ya no encuentre esa identidad permite retirarla del historial de esa ejecución.
@@ -58,10 +64,14 @@ detecta por sí solo los mobs derrotados antes de iniciar el bot.
 Detalles y límites en [caza independiente](docs/independent-hunt.md).
 
 **Configurar mercenarios** guarda los nueve puestos, sus nombres, participación y
-orden de prioridad en el perfil elegido. Esta configuración todavía no ejecuta turnos.
+orden de prioridad en el perfil elegido. Cada puesto admite **Ataque básico** o
+**Magia Q/W/E/R/T**, con **Básico alternativo** para el plan de respaldo si la magia
+no está disponible. Esta configuración todavía no ejecuta turnos.
 Se conserva en `%LOCALAPPDATA%/AtlanticaPanel/profiles`, fuera de la carpeta del juego.
 El perfil activo queda fijado al iniciar el ciclo. Detalles de uso y diagnóstico:
 [calibración y perfiles](docs/combat-calibration.md).
+El análisis pendiente y la captura necesaria se describen en
+[turnos de mercenarios](docs/mercenary-turns.md).
 
 **Ataque nativo por radio (experimental)** viene marcado para la prueba solicitada.
 El radio va de 5 a 120 casillas alrededor del inicio de esa ejecución, con valor
@@ -126,6 +136,12 @@ movimiento, y el historial del bot si pertenece a esa misma instancia. No incorp
 los nombres de perfiles ni el contenido de los paquetes de red. Una cola vacía
 indica que salió de ese búfer; no confirma recepción o aceptación del servidor.
 
+**Exportar combate** requiere estar dentro de una batalla con Auto Battle y caza
+nativa apagados. Guarda hasta 252 KiB de código y las observaciones de combate de
+esa instancia, sin enviar acciones. Adjunta el archivo `Atlantica-PID…-combate-….zip`
+para continuar con la selección nativa, ataque básico y magias. **X** está registrado
+como el control manual de botín; aún no hay recogida automática.
+
 La selección de cliente queda bloqueada mientras termina el trabajador. Si se cierra
 el juego, se detiene; abrir otro cliente exige Conectar. Cambios de mapa, movimiento
 manual mientras busca, activación de Auto Battle o errores inciertos detienen el ciclo.
@@ -165,7 +181,7 @@ por identidad de los cambios de puntero observados. Valida que la lista no cambi
 durante la consulta.
 
 El botón **Exportar diagnóstico** está disponible después de Conectar, incluso con
-Auto Battle apagado. La captura ampliada guarda hasta 76 KiB de código más un
+Auto Battle apagado. La captura actual guarda hasta 100 KiB de código más un
 manifiesto para estudiar la validación del objetivo y preparación del envío.
 La operación solo lee esas regiones y no inicia la caza. Los detalles están en
 [el plan del modo independiente](docs/independent-mode.md).
@@ -247,9 +263,9 @@ informe del usuario; es un cliente x86 de 32 bits y muestra indicios de
 empaquetado/protección. Los resultados y sus límites están en
 [el informe de análisis](docs/client-analysis.md).
 
-La ruta encontrada permite aprovechar la caza nativa y consultar candidatos desde
-el panel. El ataque y el ciclo cercano se observaron en el cliente; el acercamiento
-experimental sigue pendiente de validación en el juego. Las
+La ruta encontrada permite consultar candidatos y solicitar persecución/ataque sin
+Auto Battle desde el panel. El ciclo nativo 0.7 se observó en seis combates; la
+ejecución de turnos sigue pendiente del análisis del código de batalla. Las
 actualizaciones del cliente requieren volver a comprobar la compilación, sus lecturas
 y el comportamiento del modo nativo antes de reutilizar este control.
 

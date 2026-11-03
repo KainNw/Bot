@@ -15,7 +15,7 @@ from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
 from .native_action import try_attack
 from .navigation import ApproachSettings
-from .profiles import BotProfile, Mercenary, ProfileStore
+from .profiles import ACTION_LABELS, BotProfile, Mercenary, ProfileStore
 from .session import GameSession, LiveState
 from .world import observe_scene, scan_world
 
@@ -167,6 +167,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 read_row, text="Exportar diagnóstico", command=self.export, state="disabled"
             )
             self.capture_button.pack(side="left", padx=10)
+            self.combat_capture_button = ttk.Button(
+                read_row,
+                text="Exportar combate",
+                command=lambda: self.export(combat=True),
+                state="disabled",
+            )
+            self.combat_capture_button.pack(side="left", padx=(0, 10))
             self.targets_button = ttk.Button(
                 read_row, text="Ver objetivos", command=self.show_targets, state="disabled"
             )
@@ -221,6 +228,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.start_button.configure(state="disabled")
             self.stop_button.configure(state="disabled")
             self.capture_button.configure(state="disabled")
+            self.combat_capture_button.configure(state="disabled")
             self.targets_button.configure(state="disabled")
             self.trial_button.configure(state="disabled")
             self.bot_start_button.configure(state="disabled")
@@ -376,9 +384,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.require_idle_bot()
                 self.profile = self.profile_store.load(int(self.profile_number.get()))
                 count = sum(merc.enabled for merc in self.profile.mercenaries)
+                magic_count = sum(
+                    merc.enabled and merc.action != "basic" for merc in self.profile.mercenaries
+                )
                 self.profile_status.set(
-                    f"Perfil {self.profile.number}: {count} puestos seleccionados. "
-                    "Los turnos siguen siendo manuales."
+                    f"Perfil {self.profile.number}: {count} puestos, {magic_count} con magia. "
+                    "Plan guardado; la ejecución de turnos aún no está habilitada."
                 )
             except (DiagnosticError, OSError, ValueError) as exc:
                 self.profile = None
@@ -402,12 +413,20 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Label(
                 frame,
                 text="Selecciona los puestos de tu equipo y ordénalos por prioridad.\n"
-                "Puedes asignar un nombre a cada puesto para identificarlo.",
-                wraplength=640,
+                "Elige ataque básico o la magia Q/W/E/R/T de cada mercenario.\n"
+                "Básico alternativo: usar ataque normal cuando la magia no esté disponible.",
+                wraplength=820,
             ).pack(anchor="w", pady=6)
             order = [merc.slot for merc in profile.mercenaries]
             names = {merc.slot: tk.StringVar(value=merc.name) for merc in profile.mercenaries}
             enabled = {merc.slot: tk.BooleanVar(value=merc.enabled) for merc in profile.mercenaries}
+            actions = {
+                merc.slot: tk.StringVar(value=ACTION_LABELS[merc.action])
+                for merc in profile.mercenaries
+            }
+            fallback = {
+                merc.slot: tk.BooleanVar(value=merc.fallback_basic) for merc in profile.mercenaries
+            }
             body = ttk.Frame(frame)
             body.pack(fill="x", pady=8)
             rows, priorities = {}, {}
@@ -433,7 +452,27 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 ttk.Checkbutton(row, text=f"Puesto {slot}", variable=enabled[slot]).pack(
                     side="left"
                 )
-                ttk.Entry(row, textvariable=names[slot], width=28).pack(side="left", padx=12)
+                ttk.Entry(row, textvariable=names[slot], width=18).pack(side="left", padx=8)
+                action = ttk.Combobox(
+                    row,
+                    textvariable=actions[slot],
+                    values=tuple(ACTION_LABELS.values()),
+                    state="readonly",
+                    width=15,
+                )
+                action.pack(side="left", padx=(0, 8))
+                alternate = ttk.Checkbutton(row, text="Básico alternativo", variable=fallback[slot])
+                alternate.pack(side="left", padx=(0, 8))
+
+                def update_fallback(event=None, slot=slot, alternate=alternate) -> None:
+                    alternate.configure(
+                        state="disabled"
+                        if actions[slot].get() == ACTION_LABELS["basic"]
+                        else "normal"
+                    )
+
+                action.bind("<<ComboboxSelected>>", update_fallback)
+                update_fallback()
                 ttk.Button(
                     row, text="Subir", width=6, command=lambda slot=slot: move(slot, -1)
                 ).pack(side="left")
@@ -457,15 +496,25 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     updated = BotProfile(
                         number,
                         tuple(
-                            Mercenary(slot, names[slot].get().strip(), enabled[slot].get())
+                            Mercenary(
+                                slot,
+                                names[slot].get().strip(),
+                                enabled[slot].get(),
+                                next(
+                                    key
+                                    for key, label in ACTION_LABELS.items()
+                                    if label == actions[slot].get()
+                                ),
+                                fallback[slot].get(),
+                            )
                             for slot in order
                         ),
                     )
                     self.profile_store.save(updated)
                     self.load_profile()
                     status.set(
-                        f"Perfil {number} guardado. La selección y el orden se conservarán "
-                        "al abrir el panel; los turnos siguen siendo manuales."
+                        f"Perfil {number} guardado con selección, prioridad y acciones. "
+                        "Los turnos siguen siendo manuales hasta validar las órdenes de combate."
                     )
                 except (DiagnosticError, OSError) as exc:
                     status.set(str(exc))
@@ -700,6 +749,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.last_state = None
                 self.start_button.configure(state="disabled")
                 self.capture_button.configure(state="disabled")
+                self.combat_capture_button.configure(state="disabled")
                 self.targets_button.configure(state="disabled")
                 self.trial_button.configure(state="disabled")
                 self.bot_start_button.configure(state="disabled")
@@ -736,6 +786,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.session = None
                 self.start_button.configure(state="disabled")
                 self.capture_button.configure(state="disabled")
+                self.combat_capture_button.configure(state="disabled")
                 self.targets_button.configure(state="disabled")
                 self.status.set("Cliente: sin conexión; estado real sin confirmar")
                 self.error(exc)
@@ -758,6 +809,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def refresh(self) -> None:
             self.start_button.configure(state="disabled")
             self.capture_button.configure(state="disabled")
+            self.combat_capture_button.configure(state="disabled")
             self.targets_button.configure(state="disabled")
             self.trial_button.configure(state="disabled")
             self.bot_start_button.configure(state="disabled")
@@ -769,6 +821,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             state = self.session.snapshot()
             self.last_state = state
             self.capture_button.configure(state="normal")
+            self.combat_capture_button.configure(state="normal")
             self.targets_button.configure(state="normal")
             self.calibration_button.configure(state="normal")
             calibrated = self.detector is not None and self.detector.matches(
@@ -873,7 +926,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
             finish_close()
 
-        def export(self) -> None:
+        def export(self, *, combat: bool = False) -> None:
             session = self.session
             if session is None:
                 self.error(
@@ -881,11 +934,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 )
                 return
             filename = filedialog.asksaveasfilename(
-                title="Guardar diagnóstico de código",
+                title="Guardar captura de combate" if combat else "Guardar diagnóstico de código",
                 defaultextension=".zip",
                 filetypes=[("Archivo ZIP", "*.zip")],
                 initialdir=str(session.directory),
-                initialfile=f"Atlantica-PID{session.process.pid}-contexto-{datetime.now():%Y%m%d-%H%M%S}.zip",
+                initialfile=(
+                    f"Atlantica-PID{session.process.pid}-"
+                    f"{'combate' if combat else 'contexto'}-{datetime.now():%Y%m%d-%H%M%S}.zip"
+                ),
             )
             if not filename:
                 return
@@ -899,7 +955,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     )
                     else None
                 )
-                export_code_context(session, Path(filename), bot_context=context)
+                export_code_context(
+                    session, Path(filename), bot_context=context, include_combat=combat
+                )
                 self.detail.set(
                     f"Diagnóstico guardado en {filename}. "
                     "Adjunta ese ZIP al chat para continuar el análisis."

@@ -15,6 +15,11 @@ def test_cli_can_import_and_show_help_without_windows(capsys):
     assert "diagnose" in capsys.readouterr().out
 
 
+def test_cli_exposes_readonly_battle_capture():
+    args = parser().parse_args(["capture", "--combat", "--pid", "123", "--output", "battle.zip"])
+    assert args.combat is True and args.pid == 123
+
+
 @pytest.mark.parametrize("pid", ["0", "-1", "not-a-pid", "4294967296"])
 def test_invalid_pid_is_rejected(pid):
     with pytest.raises(SystemExit) as result:

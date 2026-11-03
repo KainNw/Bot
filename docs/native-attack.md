@@ -19,8 +19,18 @@ Ese objetivo era `(5633, 68108322, 0)`, también presente en el envío sin comba
 de 0.6.3. En esta ocasión estaba en el puesto 7; antes estaba en el 9. El usuario
 confirmó que un clic manual sobre el mismo mob sí iniciaba el combate. Estos datos
 no prueban que fuera un cadáver ni que la causa fuese solo el recorrido anterior.
-La corrección de 0.7 cambia el sistema de desplazamiento para la prueba solicitada;
-todavía necesita contraste en el cliente real.
+La corrección de 0.7 cambia el sistema de desplazamiento para la prueba solicitada.
+
+La captura posterior `Atlantica-PID10192-contexto-20261103-063338.zip`, del panel
+0.7.0, confirmó seis ataques encolados y seis combates observados. Registró cuatro
+solicitudes de persecución nativa, cero fallos y una parada normal, sin necesidad
+de reconectar. Auto Battle y caza nativa estaban apagados. El objetivo
+`(5633, 68108322, 0)` entró en combate en esta prueba. El usuario confirmó que el
+resultado era mucho mejor. Solo se probó una ventana; el informe no demuestra
+la parada física durante una persecución activa ni descarta todos los rechazos.
+
+La versión 0.8 conserva estas órdenes y sus tiempos. Su cambio se centra en los
+perfiles de mercenarios y la captura de código de combate.
 
 ## Órdenes y alcance
 

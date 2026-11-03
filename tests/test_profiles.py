@@ -22,6 +22,71 @@ def test_persists_selection_names_and_priority_without_touching_other_profiles(t
     assert store.load(1).summary()["turn_execution_available"] is False
 
 
+def test_magic_actions_and_fallback_are_saved_per_mercenary_in_priority_order(tmp_path):
+    original = BotProfile.default(1)
+    actions = ("basic", "Q", "W", "E", "R", "T", "basic", "basic", "basic")
+    mercs = tuple(
+        replace(merc, action=action, fallback_basic=merc.slot % 2 == 0)
+        for merc, action in zip(original.mercenaries, actions, strict=True)
+    )
+    updated = replace(original, mercenaries=tuple(reversed(mercs)))
+    store = ProfileStore(tmp_path)
+    store.save(updated)
+    assert store.load(1) == updated
+    payload = json.loads((tmp_path / "profile-1.json").read_text())
+    assert payload["schema_version"] == 2
+    assert [m["action"] for m in payload["mercenaries"]] == list(reversed(actions))
+    assert payload["turn_execution_available"] is False
+
+
+def test_legacy_profile_migrates_in_memory_without_rewriting_or_losing_settings(tmp_path):
+    original = BotProfile.default(1)
+    mercs = list(reversed(original.mercenaries))
+    mercs[0] = replace(mercs[0], name="Sanadora", enabled=False)
+    legacy = {
+        "schema_version": 1,
+        "profile": 1,
+        "mercenaries": [{"slot": m.slot, "name": m.name, "enabled": m.enabled} for m in mercs],
+        "turn_execution_available": False,
+    }
+    path = tmp_path / "profile-1.json"
+    saved = json.dumps(legacy, ensure_ascii=False).encode()
+    path.write_bytes(saved)
+    store = ProfileStore(tmp_path)
+    loaded = store.load(1)
+    assert loaded.mercenaries == tuple(mercs)
+    assert all(m.action == "basic" and m.fallback_basic for m in loaded.mercenaries)
+    assert path.read_bytes() == saved
+    store.save(loaded)
+    assert json.loads(path.read_bytes())["schema_version"] == 2
+    assert store.load(1) == loaded
+
+
+@pytest.mark.parametrize(
+    "action,fallback", [("Z", True), ("q", True), ([], True), (1, True), ("Q", 1)]
+)
+def test_invalid_actions_preserve_existing_profile(tmp_path, action, fallback):
+    profile = BotProfile.default(1)
+    store = ProfileStore(tmp_path)
+    store.save(profile)
+    bad = replace(profile.mercenaries[0], action=action, fallback_basic=fallback)
+    with pytest.raises(DiagnosticError):
+        store.save(replace(profile, mercenaries=(bad, *profile.mercenaries[1:])))
+    assert store.load(1) == profile
+
+
+@pytest.mark.parametrize("missing", ["action", "fallback_basic"])
+def test_incomplete_new_schema_is_rejected_instead_of_silently_changing_actions(tmp_path, missing):
+    payload = BotProfile.default(1).summary()
+    del payload["mercenaries"][0][missing]
+    saved = json.dumps(payload).encode()
+    path = tmp_path / "profile-1.json"
+    path.write_bytes(saved)
+    with pytest.raises(DiagnosticError, match="archivo se conserva"):
+        ProfileStore(tmp_path).load(1)
+    assert path.read_bytes() == saved
+
+
 @pytest.mark.parametrize("number", [0, 4, True, "../game", 1.0])
 def test_profile_selection_cannot_write_outside_the_three_profiles(tmp_path, number):
     with pytest.raises(DiagnosticError):

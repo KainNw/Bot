@@ -8,8 +8,10 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from . import __version__, hunting
+from .combat import CombatDetector
 from .errors import DiagnosticError
 from .session import GameSession
+from .world import observe_scene
 
 # Fixed code-only regions for the one verified build, not arbitrary process-memory exports.
 CODE_BLOCKS = (
@@ -23,6 +25,12 @@ CODE_BLOCKS = (
     ("send-buffer-pipeline", 0x009A1000, 0x5000),
     ("navigation-route", 0x0043B000, 0x4000),
     ("movement-dispatch", 0x00443000, 0x2000),
+)
+COMBAT_CODE_BLOCKS = (
+    ("battle-character-actions", 0x00520000, 0x10000),
+    ("battle-character-data", 0x00530000, 0x10000),
+    ("member-info-manager", 0x004EC000, 0x4000),
+    ("battle-selection", 0x00444000, 0x2000),
 )
 ANCHOR_ADDRESS = 0x0043CDA7
 ANCHOR_BYTES = bytes.fromhex("68 08 64 2c 04")
@@ -116,7 +124,11 @@ def _bot_context(session: GameSession, report: dict | None) -> dict | None:
 
 
 def export_code_context(
-    session: GameSession, destination: Path, *, bot_context: dict | None = None
+    session: GameSession,
+    destination: Path,
+    *,
+    bot_context: dict | None = None,
+    include_combat: bool = False,
 ) -> None:
     """Capture bounded code regions; never execute them or alter the client/markers."""
     if destination.suffix.lower() != ".zip":
@@ -124,12 +136,22 @@ def export_code_context(
     state = session.snapshot()  # Reject stale PID, changed directory or unreadable client state.
     hunting.control_hunting(session.directory, "status")  # Revalidate the supported disk build.
     context = _bot_context(session, bot_context)
+    combat = None
+    detector = None
+    if include_combat:
+        detector = CombatDetector.for_supported_session(session)
+        before = observe_scene(session)
+        if detector.classify(before) != "battle":
+            raise DiagnosticError("Entra en combate antes de pulsar Exportar combate.")
+        if before.native_active:
+            raise DiagnosticError("Captura el combate con Auto Battle y caza nativa apagados.")
+        combat = {"before": before.summary()}
     read = session.system.read_memory
     pid = session.process.pid
     if read(pid, ANCHOR_ADDRESS, len(ANCHOR_BYTES)) != ANCHOR_BYTES:
         raise DiagnosticError("El código cargado no coincide con el contexto analizado.")
     blocks = []
-    for name, address, size in CODE_BLOCKS:
+    for name, address, size in CODE_BLOCKS + (COMBAT_CODE_BLOCKS if include_combat else ()):
         data = read(pid, address, size)
         if len(data) != size:
             raise DiagnosticError(f"Lectura incompleta del bloque {name}.")
@@ -140,15 +162,36 @@ def export_code_context(
     if dispatch_block is not None:
         blocks.append(dispatch_block)
     session.snapshot()  # Do not label an export valid if the process exited during capture.
+    if detector is not None:
+        after = observe_scene(session)
+        if detector.classify(after) != "battle" or after.native_active:
+            raise DiagnosticError("El combate cambió durante la captura; vuelve a exportarlo.")
+        combat.update(
+            {
+                "after": after.summary(),
+                "detector": detector.summary(),
+                "turn_state_verified": False,
+                "turn_execution_available": False,
+                "reported_controls": {
+                    "source": "user_reported",
+                    "mercenary_selection": "1-9",
+                    "basic_attack": "left_click",
+                    "magic_shortcuts": list("QWERT"),
+                    "loot": "X",
+                },
+            }
+        )
     manifest = {
-        "schema_version": 2,
+        "schema_version": 3 if include_combat else 2,
         "tool_version": __version__,
         "created_at": datetime.now(UTC).isoformat(),
         "client_sha256": hunting.SUPPORTED_CLIENT_SHA256,
         "process_name": session.process.name,
         "pid_at_capture": pid,
         "instance_creation_time": session.creation_time,
-        "purpose": "attack_and_navigation_diagnostic",
+        "purpose": "battle_turn_diagnostic"
+        if include_combat
+        else "attack_and_navigation_diagnostic",
         "bot_context": context,
         "dispatch_resolution": dispatch,
         "state_at_start": {
@@ -166,6 +209,8 @@ def export_code_context(
             for name, address, data in blocks
         ],
     }
+    if combat is not None:
+        manifest["combat"] = combat
     payload = io.BytesIO()
     with ZipFile(payload, "w", compression=ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
