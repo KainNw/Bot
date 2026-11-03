@@ -100,16 +100,47 @@ def test_status_does_not_create_marker_or_backup(game):
     assert sorted(p.name for p in game.iterdir()) == before
 
 
-def test_cli_controls_marker_without_instantiating_windows_api(game, monkeypatch, capsys):
+def test_cli_marker_status_does_not_instantiate_windows_api(game, monkeypatch, capsys):
     from atlantica_bot.__main__ import main
 
     def forbid_native_api():
         pytest.fail("El control de archivos no debe abrir procesos.")
 
     monkeypatch.setattr("atlantica_bot.__main__.WindowsSystem", forbid_native_api)
-    for action in ("status", "start", "stop", "start"):
-        assert main(["hunt", action, "--directory", str(game)]) == 0
+    assert main(["hunt", "status", "--directory", str(game)]) == 0
     assert "Marcador HuntingMode.txt" in capsys.readouterr().out
+
+
+def test_cli_marker_changes_check_open_clients_on_windows(game, monkeypatch):
+    from atlantica_bot.__main__ import main
+
+    class NoClients:
+        def processes(self):
+            return []
+
+    monkeypatch.setattr("atlantica_bot.__main__.sys.platform", "win32")
+    monkeypatch.setattr("atlantica_bot.__main__.WindowsSystem", NoClients)
+    for action in ("start", "stop", "start"):
+        assert main(["hunt", action, "--directory", str(game)]) == 0
+
+
+def test_cli_blocks_shared_marker_even_without_connecting_a_session(game, monkeypatch):
+    from atlantica_bot.__main__ import main
+    from atlantica_bot.report import Process
+
+    class SharedClients:
+        def processes(self):
+            return [Process(100, "Atlantica.exe"), Process(200, "Atlantica.exe")]
+
+        def working_directory(self, pid):
+            return game
+
+    marker = game / MARKER_NAME
+    marker.write_bytes(b"existing settings")
+    monkeypatch.setattr("atlantica_bot.__main__.sys.platform", "win32")
+    monkeypatch.setattr("atlantica_bot.__main__.WindowsSystem", SharedClients)
+    assert main(["hunt", "stop", "--directory", str(game)]) == 1
+    assert marker.read_bytes() == b"existing settings"
 
 
 def test_invalid_directory_returns_error_not_success(tmp_path, capsys):
