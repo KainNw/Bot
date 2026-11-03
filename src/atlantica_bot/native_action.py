@@ -46,6 +46,11 @@ RESULTS = {
     28: "El turno cambió antes del envío. Actualiza el combate; no se repitió la acción.",
     29: "El mercenario o el enemigo cambiaron. Actualiza el combate.",
     30: "El cliente rechazó el ataque básico. Elige otro objetivo o espera al turno.",
+    31: "Mercenario seleccionado en el cliente. Elige una acción de su barra.",
+    32: "El cliente encoló una magia del mercenario. Comprueba el lanzamiento en el juego.",
+    33: "El mercenario seleccionado o su barra de magia cambiaron. Selecciona y actualiza.",
+    34: "El cliente rechazó la magia por sus condiciones actuales. Comprueba habilidad y objetivo.",
+    35: "Esta habilidad usa una ruta especial todavía sin habilitar; no se solicitó la magia.",
 }
 
 
@@ -154,6 +159,12 @@ def stop_native_pursuit(
 
 
 def try_battle_basic(session: GameSession, window: ClientWindow, trial: BattleTrial) -> dict:
+    if trial.action != "basic":
+        raise DiagnosticError("La prueba de básico no admite otra acción.")
+    return try_battle_action(session, window, trial)
+
+
+def try_battle_action(session: GameSession, window: ClientWindow, trial: BattleTrial) -> dict:
     trial.validate()
     if (trial.frame.context.pid, trial.frame.context.creation_time) != (
         session.process.pid,
@@ -161,8 +172,12 @@ def try_battle_basic(session: GameSession, window: ClientWindow, trial: BattleTr
     ):
         raise DiagnosticError("La lectura del combate pertenece a otra instancia.")
     target = trial.target
-    candidate = Candidate(target.world_slot, target.kind_id, 0, 0, 0, 0, target.identity)
-    return _request(session, window, candidate, operation=6, battle=trial)
+    candidate = (
+        Candidate(target.world_slot, target.kind_id, 0, 0, 0, 0, target.identity)
+        if target
+        else None
+    )
+    return _request(session, window, candidate, operation=trial.operation, battle=trial)
 
 
 def _request(
@@ -228,7 +243,9 @@ def _try_action(
         or not window.thread_id
     ):
         raise DiagnosticError("La ventana no corresponde a la instancia conectada.")
-    if candidate is not None and (not 2 <= candidate.slot < 450 or len(candidate.identity) != 3):
+    if candidate is not None and (
+        not (1 if operation == 8 else 2) <= candidate.slot < 450 or len(candidate.identity) != 3
+    ):
         raise DiagnosticError("Actualiza los candidatos antes de solicitar un ataque.")
     helper = bridge_path()
     if not helper.is_file() or not helper.with_name("AtlanticaHook.dll").is_file():
@@ -243,6 +260,8 @@ def _try_action(
             "--native-attack",
             "--stop-native",
             "--battle-basic",
+            "--battle-select",
+            "--battle-magic",
         )[operation],
         "--pid",
         str(window.pid),
@@ -358,7 +377,7 @@ def _try_action(
             args.extend(("--map", str(pursuit.map_id)))
     elif operation == 5:
         raise DiagnosticError("Falta la persecución propia que se desea detener.")
-    if operation == 6:
+    if operation in (6, 7, 8):
         if battle is None:
             raise DiagnosticError("Falta la lectura del turno de combate.")
         battle.validate()
@@ -400,8 +419,9 @@ def _try_action(
         code = report["status"]
         if type(code) is not int or code not in RESULTS or type(report["thread_id"]) is not int:
             raise ValueError("Respuesta no válida")
-        if operation == 6:
-            if code not in {4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 26, 27, 28, 29, 30}:
+        if operation in (6, 7, 8):
+            outcomes = {6: {26, 30}, 7: {31, 33}, 8: {32, 33, 34, 35}}[operation]
+            if code not in {4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 27, 28, 29} | outcomes:
                 raise ValueError("Resultado de otra operación")
             expected = {
                 "manager": battle.frame.context.manager,
@@ -410,15 +430,33 @@ def _try_action(
                 "turn_number": battle.frame.turn_number,
                 "turn_tick": battle.frame.turn_tick,
                 "mercenary_slot": battle.source.member_slot,
-                "target_member_slot": battle.target.member_slot,
+                "target_member_slot": battle.target.member_slot if battle.target else 0,
                 "source_unit": battle.source.address,
-                "target_unit": battle.target.address,
+                "target_unit": battle.target.address if battle.target else 0,
             }
             if any(report["battle"].get(key) != value for key, value in expected.items()):
                 raise ValueError("Respuesta de otro turno o mercenario")
+            if operation == 8 and (
+                report["battle"].get("magic_key") != battle.arguments()["magic-key"]
+                or report["battle"].get("magic_action") != battle.arguments()["magic-action"]
+            ):
+                raise ValueError("Respuesta de otra magia")
+            if code in (31, 32):
+                count = report["battle"]["magic_count"]
+                actions = report["battle"]["magic_actions"]
+                if (
+                    type(count) is not int
+                    or not 0 <= count <= 5
+                    or len(actions) != 5
+                    or any(
+                        type(action) is not int or not 1 <= action <= 0x7CF
+                        for action in actions[:count]
+                    )
+                ):
+                    raise ValueError("Barra de magia no válida")
         if code >= 15 and code not in (
-            {26, 27, 28, 29, 30}
-            if operation == 6
+            {26, 27, 28, 29, 30, 31, 32, 33, 34, 35}
+            if operation in (6, 7, 8)
             else {15, 17, 18, 19, 20, 21}
             if operation == 2
             else {16, 17, 21}
@@ -465,9 +503,12 @@ def _try_action(
         "native_attack",
         "stop_native_pursuit",
         "battle_basic",
+        "battle_select",
+        "battle_magic",
     )[operation]
-    if operation == 6:
+    if operation in (6, 7, 8):
         report["attack_confirmed"] = False
-        report["target_identity"] = list(battle.target.identity)
+        report["target_identity"] = list(battle.target.identity) if battle.target else None
         report["actor_identity"] = list(battle.frame.context.actor_identity)
+        report["requested_action"] = battle.action
     return report

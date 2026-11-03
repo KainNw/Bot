@@ -155,3 +155,22 @@ def test_incomplete_member_read_does_not_return_a_partially_labelled_roster(norm
     result = read_normal_battle(session)
     assert not result.members and "incompleta" in result.member_read_error
     assert result.context == 0x700000
+
+
+def test_mutable_collection_data_word_is_not_used_as_the_context_identity(normal, monkeypatch):
+    session, memory = normal
+    original = memory.read_memory
+    versions = iter((0, 0x120000))
+
+    def read(pid, address, size):
+        if address == 0x900000:
+            return struct.pack("<I", next(versions))
+        return original(pid, address, size)
+
+    monkeypatch.setattr(memory, "read_memory", read)
+    before, after = read_normal_battle(session), read_normal_battle(session)
+    assert (
+        before.client_method_table_candidate == 0
+        and after.client_method_table_candidate == 0x120000
+    )
+    assert before.binding() == after.binding()

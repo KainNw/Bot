@@ -270,7 +270,6 @@ def test_related_client_table_is_captured_and_reuses_normal_client_and_manager_b
         ("context", 0x700100),
         ("method_table_candidate", 0x04303100),
         ("client_object", 0x900000),
-        ("client_method_table_candidate", 0x04304000),
     ],
 )
 def test_context_or_method_owner_replacement_during_capture_never_creates_a_valid_zip(

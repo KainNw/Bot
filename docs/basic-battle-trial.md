@@ -3,7 +3,10 @@
 **Ver mercenarios** permite elegir un miembro propio y una unidad enemiga viva y
 solicitar un único ataque básico, con Auto Battle apagado. El ciclo de caza sigue
 sin ejecutar el plan del perfil. Las magias Q/W/E/R/T, el básico alternativo y X
-todavía no se ejecutan. Falta comprobar esta primera solicitud en el cliente real.
+todavía no se ejecutaban en 0.9. El usuario confirmó visualmente el primer golpe
+tras un registro `status=26`, sin excepción, del puesto 1 contra el puesto 1 enemigo.
+En 0.10 se añade [selección y magia](magic-battle-trial.md). El programa sigue sin
+confirmar por sí solo el impacto; `attack_confirmed=false` no invalida lo observado.
 
 ## Uso
 
@@ -97,3 +100,13 @@ turno, alias incorrectos, firmas distintas, instancia/turno/mercenario de la res
 y una sola invocación al puente. Las firmas se contrastaron con este ZIP. La prueba
 aislada de Windows verifica el puente y la cancelación sobre una ventana propia;
 no sustituye la comprobación del ataque en Atlantica. La caza conserva sus tiempos.
+
+## Resultado real de 0.9
+
+El informe del PID 21076, creación `134381859857067996`, de las 10:01:43 del
+3 de noviembre de 2026 leyó nueve miembros propios y siete enemigos vivos.
+El grupo local tenía turno, fase 3. Se solicitó el básico del registro 1, tipo
+2318, contra el registro 1 enemigo, tipo 317, identidad `(6361, 68439793, 0)`.
+La respuesta fue `status=26`, `exception=0` y cuatro valores de error nativo en cero.
+El usuario confirmó que el mercenario ejecutó el golpe. No hay muestra posterior
+que mida automáticamente el daño y no se presenta como validación de varios clientes.

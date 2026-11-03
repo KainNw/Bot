@@ -48,7 +48,7 @@ class NormalBattleContext:
     client_method_table_candidate: int = 0
 
     def binding(self) -> tuple:
-        # The context starts with data, not a vptr or a verified identity field.
+        # Both context and unit collection start with data, not verified identity fields.
         return (
             self.pid,
             self.creation_time,
@@ -60,7 +60,6 @@ class NormalBattleContext:
             self.member_info,
             self.method_table_candidate,
             self.client_object,
-            self.client_method_table_candidate,
         )
 
     def summary(self) -> dict:
@@ -99,7 +98,6 @@ def _binding(reader: Reader) -> tuple:
     identity = struct.unpack("<3I", reader.read(actor + 0x204, 12))
     manager_table = reader.u32(manager)
     client_object = reader.u32(owner + 0x16358)
-    client_table = reader.u32(client_object) if client_object else 0
     return (
         owner,
         world,
@@ -112,7 +110,6 @@ def _binding(reader: Reader) -> tuple:
         info,
         manager_table,
         client_object,
-        client_table,
     )
 
 
@@ -145,9 +142,9 @@ def read_normal_battle(session: GameSession) -> NormalBattleContext:
         info,
         manager_table,
         client_object,
-        client_table,
     ) = binding
     context_word = reader.u32(context)
+    client_table = reader.u32(client_object) if client_object else 0
     members = []
     member_error = None
     try:

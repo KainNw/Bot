@@ -16,6 +16,7 @@ from atlantica_bot.native_action import (
     stop_native_pursuit,
     try_approach,
     try_attack,
+    try_battle_action,
     try_battle_basic,
     try_native_attack,
 )
@@ -367,12 +368,14 @@ def battle_trial(bridge):
     return BattleTrial(frame, source, target)
 
 
-def battle_reply(trial, status=26):
+def battle_reply(trial, status=None):
+    if status is None:
+        status = {6: 26, 7: 31, 8: 32}[trial.operation]
     return {
         "pid": 200,
-        "slot": 6,
+        "slot": trial.target.world_slot if trial.target else 0,
         "thread_id": 1234,
-        "operation": 6,
+        "operation": trial.operation,
         "status": status,
         "battle": {
             "manager": trial.frame.context.manager,
@@ -381,10 +384,15 @@ def battle_reply(trial, status=26):
             "turn_number": trial.frame.turn_number,
             "turn_tick": trial.frame.turn_tick,
             "mercenary_slot": trial.source.member_slot,
-            "target_member_slot": trial.target.member_slot,
+            "target_member_slot": trial.target.member_slot if trial.target else 0,
             "source_unit": trial.source.address,
-            "target_unit": trial.target.address,
+            "target_unit": trial.target.address if trial.target else 0,
             "native_error": [0, 0, 0, 0],
+            "magic_key": trial.arguments().get("magic-key", 0),
+            "magic_action": trial.arguments().get("magic-action", 0),
+            "magic_count": len(trial.frame.magic_actions),
+            "magic_actions": list(trial.frame.magic_actions)
+            + [0] * (5 - len(trial.frame.magic_actions)),
         },
     }
 
@@ -480,3 +488,80 @@ def test_world_attack_queue_result_cannot_be_accepted_as_a_battle_action(
     )
     with pytest.raises(DiagnosticError, match="respuesta no válida"):
         try_battle_basic(bridge[0], bridge[1], battle_trial)
+
+
+@pytest.fixture
+def magic_trial(battle_trial):
+    return replace(
+        battle_trial,
+        action="W",
+        frame=replace(
+            battle_trial.frame, selected_unit=battle_trial.source.address, magic_actions=(101, 102)
+        ),
+    )
+
+
+def test_selection_uses_only_own_member_and_never_sends_an_enemy_target(
+    bridge, battle_trial, monkeypatch
+):
+    trial = replace(battle_trial, action="select", target=None)
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        assert "--battle-select" in args and "--slot" not in args
+        assert "--enemy-member" not in args and "--target-unit" not in args
+        assert args[args.index("--mercenary") + 1] == "3"
+        return SimpleNamespace(returncode=0, stdout=json.dumps(battle_reply(trial)))
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    report = try_battle_action(bridge[0], bridge[1], trial)
+    assert len(calls) == 1 and report["status"] == 31 and report["action"] == "battle_select"
+
+
+def test_magic_can_request_own_target_with_the_exact_bar_shortcut(bridge, magic_trial, monkeypatch):
+    trial = replace(magic_trial, target=magic_trial.source)
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        assert "--battle-magic" in args
+        for key, value in {
+            "slot": 1,
+            "kind": 209,
+            "enemy-member": 3,
+            "magic-key": 2,
+            "magic-action": 102,
+        }.items():
+            assert args[args.index(f"--{key}") + 1] == str(value)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(battle_reply(trial)))
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    report = try_battle_action(bridge[0], bridge[1], trial)
+    assert len(calls) == 1 and report["status"] == 32 and report["requested_action"] == "W"
+    assert not report["attack_confirmed"]
+
+
+@pytest.mark.parametrize("status", [33, 34, 35])
+def test_magic_rejection_never_falls_back_or_retries(bridge, magic_trial, monkeypatch, status):
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(battle_reply(magic_trial, status)))
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    report = try_battle_action(bridge[0], bridge[1], magic_trial)
+    assert len(calls) == 1 and "--battle-magic" in calls[0] and report["status"] == status
+
+
+@pytest.mark.parametrize("field,value", [("magic_key", 1), ("magic_action", 999)])
+def test_response_for_other_magic_is_rejected(bridge, magic_trial, monkeypatch, field, value):
+    reply = battle_reply(magic_trial)
+    reply["battle"][field] = value
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run",
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps(reply)),
+    )
+    with pytest.raises(DiagnosticError, match="respuesta no válida"):
+        try_battle_action(bridge[0], bridge[1], magic_trial)

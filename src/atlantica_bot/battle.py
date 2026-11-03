@@ -19,6 +19,10 @@ OWN_TURN_ANCHOR = bytes.fromhex(
     "0000e8e110ebff3c0174b783ec348bcc682ce58a08e8bc6be6ffff76088b8e1c020000"
     "e87a62ebff3c0174966a0068008000008bcee869efffff84c00f95c05ec3"
 )
+MAGIC_KEYS_ANCHOR = bytes.fromhex(
+    "a10c29a9048b88300800006a01c7458051000000c7458457000000c7458845000000"
+    "c7458c52000000c7459054000000e83b8effff"
+)
 
 
 class BattleReadError(SceneChanged):
@@ -50,6 +54,9 @@ class BattleFrame:
     turn_number: int
     turn_tick: int
     units: tuple[BattleUnit, ...]
+    selected_unit: int = 0
+    magic_actions: tuple[int, ...] = ()
+    magic_error: str | None = None
 
     @property
     def own_turn(self) -> bool:
@@ -67,6 +74,10 @@ class BattleFrame:
             if u.group != self.local_group and 3500 <= u.identity[0] < 22000 and u.life > 0
         )
 
+    @property
+    def magic_targets(self) -> tuple[BattleUnit, ...]:
+        return (*self.sources, *self.enemies)
+
     def summary(self) -> dict:
         return {
             **asdict(self),
@@ -79,6 +90,8 @@ class BattleFrame:
             "native_eligibility_fully_validated": False,
             "turn_execution_available": False,
             "keyboard_slot_mapping_verified": False,
+            "magic_shortcuts": dict(zip("QWERT", self.magic_actions, strict=False)),
+            "magic_mapping_source": "004F44FF_QWERT_and_manager_25e8_25ec_for_selected_unit",
         }
 
 
@@ -86,21 +99,47 @@ class BattleFrame:
 class BattleTrial:
     frame: BattleFrame
     source: BattleUnit
-    target: BattleUnit
+    target: BattleUnit | None = None
+    action: str = "basic"
+
+    @property
+    def operation(self) -> int:
+        if self.action == "basic":
+            return 6
+        if self.action == "select":
+            return 7
+        if self.action in tuple("QWERT"):
+            return 8
+        raise DiagnosticError("La prueba solo admite básico, selección o magia Q/W/E/R/T.")
 
     def validate(self) -> None:
         if (
             self.source not in self.frame.sources
-            or self.target not in self.frame.enemies
             or self.frame.context.index != 0
             or self.frame.phase != 3
         ):
             raise DiagnosticError("Actualiza el combate y elige un mercenario y enemigo vivos.")
+        operation = self.operation
+        if operation == 7:
+            if self.target is not None:
+                raise DiagnosticError("La selección no admite un objetivo de ataque.")
+            return
+        targets = self.frame.magic_targets if operation == 8 else self.frame.enemies
+        if self.target not in targets:
+            raise DiagnosticError("Actualiza el combate y elige un mercenario y enemigo vivos.")
         if not self.frame.own_turn:
             raise DiagnosticError("Todavía no es el turno del grupo del personaje.")
-        if self.source.action_state != 1 or not self.source.flags & 0x8000:
+        if self.source.action_state != 1 or operation == 6 and not self.source.flags & 0x8000:
             raise DiagnosticError(
                 "El mercenario no está en el estado nativo para probar un ataque."
+            )
+        if operation == 8 and (
+            self.frame.magic_error
+            or self.frame.selected_unit != self.source.address
+            or "QWERT".index(self.action) >= len(self.frame.magic_actions)
+        ):
+            raise DiagnosticError(
+                "Selecciona ese mercenario en el juego y actualiza su barra de magia."
             )
 
     def key(self) -> tuple:
@@ -116,20 +155,28 @@ class BattleTrial:
 
     def arguments(self) -> dict[str, int]:
         ctx = self.frame.context
-        return {
+        arguments = {
             "battle-manager": ctx.manager,
             "battle-context": ctx.context,
             "battle-client": ctx.client_object,
             "turn-number": self.frame.turn_number,
             "turn-tick": self.frame.turn_tick,
             "mercenary": self.source.member_slot,
-            "enemy-member": self.target.member_slot,
             "source-unit": self.source.address,
-            "target-unit": self.target.address,
             "actor-kind": ctx.actor_identity[0],
             "actor-serial": ctx.actor_identity[1],
             "actor-unique": ctx.actor_identity[2],
         }
+        if self.target is not None:
+            arguments.update(
+                {"enemy-member": self.target.member_slot, "target-unit": self.target.address}
+            )
+        if self.operation == 8:
+            index = "QWERT".index(self.action)
+            arguments.update(
+                {"magic-key": index + 1, "magic-action": self.frame.magic_actions[index]}
+            )
+        return arguments
 
 
 def _turn(reader: Reader, context: NormalBattleContext) -> tuple[int, int, int, int]:
@@ -139,6 +186,24 @@ def _turn(reader: Reader, context: NormalBattleContext) -> tuple[int, int, int, 
         reader.u32(context.context + 0x6C74),
         reader.u32(context.context + 0x6C60),
     )
+
+
+def _magic_bar(reader: Reader, context: NormalBattleContext) -> tuple[int, tuple[int, ...]]:
+    if reader.read(0x004F44FF, len(MAGIC_KEYS_ANCHOR)) != MAGIC_KEYS_ANCHOR:
+        raise DiagnosticError("La barra Q/W/E/R/T no coincide con el código analizado.")
+    index = reader.u32(context.client_object + 0xD0)
+    count = reader.u32(context.manager + 0x25E8)
+    if not 0 <= index < 100 or not 0 <= count <= 5:
+        raise DiagnosticError("La selección o la barra de magia todavía no están listas.")
+    selected = reader.u32(context.client_object + 0x138 + index * 4) if index else 0
+    actions = (
+        struct.unpack(f"<{count}I", reader.read(context.manager + 0x25EC, count * 4))
+        if count
+        else ()
+    )
+    if any(not 1 <= action <= 0x7CF for action in actions):
+        raise DiagnosticError("La barra de magia contiene una acción no identificada.")
+    return selected, actions
 
 
 def read_battle_frame(session: GameSession) -> BattleFrame:
@@ -161,6 +226,12 @@ def read_battle_frame(session: GameSession) -> BattleFrame:
             manager_client=manager_client,
         )
     token = _turn(reader, context)
+    magic_error = None
+    try:
+        magic_bar = _magic_bar(reader, context)
+    except (DiagnosticError, OSError) as exc:
+        magic_bar = (0, ())
+        magic_error = str(exc)
     records = reader.read(context.context + 0xB4, 6 * 12)
     groups = struct.unpack("<6h", reader.read(context.context + 0x11A, 12))
     participants = {}
@@ -244,6 +315,8 @@ def read_battle_frame(session: GameSession) -> BattleFrame:
         or reader.read(client + 0x138, 400) != struct.pack("<100I", *pointers)
         or reader.read(context.context + 0xB4, 72) != records
         or reader.read(context.context + 0x11A, 12) != struct.pack("<6h", *groups)
+        or magic_error is None
+        and _magic_bar(reader, context) != magic_bar
     ):
         raise SceneChanged("El combate o su turno cambió; vuelve a actualizar.")
     phase, turn_group, turn_number, turn_tick = token
@@ -255,4 +328,6 @@ def read_battle_frame(session: GameSession) -> BattleFrame:
         turn_number,
         turn_tick,
         tuple(units),
+        *magic_bar,
+        magic_error,
     )

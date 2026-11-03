@@ -81,7 +81,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 6; command.pid = pid;
+        command.magic = kMagic; command.version = 7; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -124,14 +124,21 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
                     << "," << shared->world_goal[2] << "],\"pending_raw\":" << shared->route_active << "}";
             } else std::cout << "null";
             std::cout << ",\"battle\":";
-            if (shared->operation == BattleBasic) {
+            if (shared->operation >= BattleBasic && shared->operation <= BattleMagic) {
             std::cout << "{\"manager\":" << shared->battle_manager
                 << ",\"context\":" << shared->battle_context << ",\"client\":" << shared->battle_client
                 << ",\"turn_number\":" << shared->turn_number << ",\"turn_tick\":" << shared->turn_tick
                 << ",\"mercenary_slot\":" << shared->mercenary << ",\"target_member_slot\":" << shared->target_mercenary
                 << ",\"source_unit\":" << shared->source_unit << ",\"target_unit\":" << shared->target_unit
                 << ",\"native_error\":[" << shared->battle_error[0] << "," << shared->battle_error[1]
-                << "," << shared->battle_error[2] << "," << shared->battle_error[3] << "]}";
+                << "," << shared->battle_error[2] << "," << shared->battle_error[3] << "]"
+                << ",\"magic_key\":" << shared->magic_key << ",\"magic_action\":" << shared->magic_action
+                << ",\"magic_count\":" << shared->magic_count << ",\"magic_actions\":[";
+            for (unsigned i = 0; i < 5; ++i) {
+                if (i) std::cout << ",";
+                std::cout << shared->magic_actions[i];
+            }
+            std::cout << "]}";
             } else std::cout << "null";
             std::cout << "}" << std::endl;
             }
@@ -189,6 +196,11 @@ static int SelfTest() {
     SharedCommand battle_response = {};
     cancelled.operation = BattleBasic;
     const int battle_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &battle_response, true) : 32;
+    SharedCommand select_response = {}, magic_response = {};
+    cancelled.operation = BattleSelect;
+    const int select_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &select_response, true) : 32;
+    cancelled.operation = BattleMagic;
+    const int magic_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &magic_response, true) : 32;
     if (cancellation) CloseHandle(cancellation);
     const int missing_code = Run(test.window, GetCurrentProcessId(), cancelled, &missing_response, true);
     SharedCommand empty_channel = {}, empty_response = {};
@@ -205,6 +217,8 @@ static int SelfTest() {
         && !native_code && native_response.result == Cancelled
         && !native_stop_code && native_stop_response.result == Cancelled
         && !battle_code && battle_response.result == Cancelled
+        && !select_code && select_response.result == Cancelled
+        && !magic_code && magic_response.result == Cancelled
         && !missing_code && missing_response.result == CancellationUnavailable
         && !empty_code && empty_response.result == CancellationUnavailable ? 0 : 31);
     if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result
@@ -217,15 +231,17 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wcscmp(argv[1], L"--self-test") == 0) return SelfTest();
     try {
         DWORD pid = 0, expected_thread = 0; uint64_t created = 0, hwnd = 0; SharedCommand command = {};
-        bool operation = false; unsigned goal_fields = 0, battle_fields = 0;
+        bool operation = false; unsigned goal_fields = 0, battle_fields = 0, magic_fields = 0;
         for (int i = 1; i < argc; ++i) {
             std::wstring key(argv[i]);
             if (key == L"--attack" || key == L"--probe" || key == L"--approach" || key == L"--stop-move"
-                || key == L"--native-attack" || key == L"--stop-native" || key == L"--battle-basic") {
+                || key == L"--native-attack" || key == L"--stop-native" || key == L"--battle-basic"
+                || key == L"--battle-select" || key == L"--battle-magic") {
                 if (operation) return 2;
                 command.operation = key == L"--attack" ? Attack : key == L"--probe" ? Probe
                     : key == L"--approach" ? Approach : key == L"--stop-move" ? StopMovement
-                    : key == L"--native-attack" ? NativeAttack : key == L"--stop-native" ? StopNativePursuit : BattleBasic;
+                    : key == L"--native-attack" ? NativeAttack : key == L"--stop-native" ? StopNativePursuit
+                    : key == L"--battle-basic" ? BattleBasic : key == L"--battle-select" ? BattleSelect : BattleMagic;
                 operation = true; continue;
             }
             if (i + 1 >= argc) return 2;
@@ -265,6 +281,11 @@ int wmain(int argc, wchar_t** argv) {
                 else if (key == L"--origin-x" && small <= 32767) command.origin_x = static_cast<int32_t>(small);
                 else if (key == L"--origin-y" && small <= 32767) command.origin_y = static_cast<int32_t>(small);
                 else if (key == L"--radius" && small >= 5 && small <= 120) command.radius = small;
+                else if (key == L"--magic-key" && !(magic_fields & 1) && small >= 1 && small <= 5) {
+                    command.magic_key = small; magic_fields |= 1;
+                } else if (key == L"--magic-action" && !(magic_fields & 2) && small >= 1 && small <= 0x7cf) {
+                    command.magic_action = small; magic_fields |= 2;
+                }
                 else {
                     const wchar_t* names[] = {L"--battle-manager", L"--battle-context", L"--battle-client",
                         L"--turn-number", L"--turn-tick", L"--mercenary", L"--enemy-member", L"--source-unit",
@@ -287,11 +308,19 @@ int wmain(int argc, wchar_t** argv) {
             if (!command.route_player || !command.x || !command.y) return 2;
         } else if (command.operation == StopNativePursuit) {
             if (!command.route_player) return 2;
-        } else if (command.slot < 2 || command.slot >= 450) return 2;
-        if (command.operation == BattleBasic && (battle_fields != 0xfff || !command.battle_manager
-            || !command.battle_context || !command.battle_client || !command.source_unit || !command.target_unit
-            || command.mercenary < 1 || command.mercenary > 9
-            || command.target_mercenary < 1 || command.target_mercenary > 9)) return 2;
+        } else if (command.operation == BattleSelect) {
+            if (command.slot) return 2;
+        } else if (command.slot < (command.operation == BattleMagic ? 1u : 2u) || command.slot >= 450) return 2;
+        if (command.operation >= BattleBasic && command.operation <= BattleMagic) {
+            const auto expected_fields = command.operation == BattleSelect ? 0xebfu : 0xfffu;
+            if (battle_fields != expected_fields || !command.battle_manager || !command.battle_context
+                || !command.battle_client || !command.source_unit || command.mercenary < 1 || command.mercenary > 9)
+                return 2;
+            if (command.operation != BattleSelect && (!command.target_unit
+                || command.target_mercenary < 1 || command.target_mercenary > 9)) return 2;
+            if (command.operation == BattleMagic && magic_fields != 3) return 2;
+            if (command.operation != BattleMagic && magic_fields) return 2;
+        }
         if (command.operation == Approach && (!command.radius || !command.x || !command.y || !command.route_player)) return 2;
         if (command.operation == NativeAttack && !command.radius) return 2;
         if ((command.operation == StopNativePursuit

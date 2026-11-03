@@ -15,7 +15,7 @@ from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
 from .errors import DiagnosticError
 from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
-from .native_action import try_attack, try_battle_basic
+from .native_action import try_attack, try_battle_action
 from .navigation import ApproachSettings
 from .profiles import ACTION_LABELS, BotProfile, Mercenary, ProfileStore
 from .session import GameSession, LiveState
@@ -1021,20 +1021,76 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 frame, textvariable=target_choice, state="readonly", width=65
             )
             target_list.pack(fill="x", pady=4)
+            action_choice = tk.StringVar(value="Ataque básico")
+            ttk.Label(frame, text="Acción de la prueba:").pack(anchor="w")
+            action_list = ttk.Combobox(
+                frame, textvariable=action_choice, values=("Ataque básico",), state="readonly"
+            )
+            action_list.pack(fill="x", pady=4)
             trial_status = tk.StringVar(
-                value="Prueba experimental: solicita un solo ataque básico. Para el bot antes. "
-                "El perfil todavía no ejecuta turnos ni magias."
+                value="Para el bot antes de la prueba. Seleccionar en juego cambia el mercenario "
+                "activo y permite leer su barra Q/W/E/R/T. Probar acción solicita un solo básico "
+                "o magia; el perfil todavía no ejecuta turnos automáticamente."
             )
             ttk.Label(frame, textvariable=trial_status, wraplength=680).pack(anchor="w", pady=6)
+
+            def refresh_actions(event=None) -> None:
+                actions = ["Ataque básico"]
+                source = source_choices.get(source_choice.get())
+                if (
+                    live
+                    and source
+                    and live.selected_unit == source.address
+                    and not live.magic_error
+                ):
+                    actions.extend(f"Magia {key}" for key in "QWERT"[: len(live.magic_actions)])
+                action_list.configure(values=actions)
+                if action_choice.get() not in actions:
+                    action_choice.set("Ataque básico")
+                refresh_action_targets()
+
+            def refresh_action_targets(event=None) -> None:
+                selected = target_choice.get()
+                target_choices.clear()
+                if live:
+                    groups = {
+                        slot: n
+                        for n, slot in enumerate(sorted({u.world_slot for u in live.enemies}), 1)
+                    }
+                    targets = (
+                        live.enemies
+                        if action_choice.get() == "Ataque básico"
+                        else live.magic_targets
+                    )
+                    for unit in targets:
+                        label = (
+                            "Tu equipo"
+                            if unit.world_slot == 1
+                            else f"Enemigo {groups[unit.world_slot]}"
+                        )
+                        target_choices[
+                            f"{label} — puesto {unit.member_slot} (tipo {unit.kind_id})"
+                        ] = unit
+                target_list.configure(values=tuple(target_choices))
+                target_choice.set(
+                    selected if selected in target_choices else next(iter(target_choices), "")
+                )
+
+            source_list.bind("<<ComboboxSelected>>", refresh_actions)
+            action_list.bind("<<ComboboxSelected>>", refresh_action_targets)
 
             def refresh_members() -> None:
                 nonlocal live
                 live = None
                 trial_button.configure(state="disabled")
+                select_button.configure(state="disabled")
+                previous_source = source_choice.get()
                 table.delete(*table.get_children())
                 last.clear()
                 if trial_result:
-                    last["basic_trial"] = dict(trial_result)
+                    last["combat_trial"] = dict(trial_result)
+                    if trial_result.get("action") == "battle_basic":
+                        last["basic_trial"] = dict(trial_result)
                 source_choices.clear()
                 target_choices.clear()
                 source_list.configure(values=())
@@ -1083,28 +1139,20 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                                 for u in live.sources
                             }
                         )
-                        enemy_groups = {
-                            slot: n
-                            for n, slot in enumerate(
-                                sorted({u.world_slot for u in live.enemies}), 1
-                            )
-                        }
-                        target_choices.update(
-                            {
-                                f"Enemigo {enemy_groups[u.world_slot]} — puesto {u.member_slot} "
-                                f"(tipo {u.kind_id})": u
-                                for u in live.enemies
-                            }
-                        )
                         source_list.configure(values=tuple(source_choices))
-                        target_list.configure(values=tuple(target_choices))
-                        source_choice.set(next(iter(source_choices), ""))
-                        target_choice.set(next(iter(target_choices), ""))
+                        source_choice.set(
+                            previous_source
+                            if previous_source in source_choices
+                            else next(iter(source_choices), "")
+                        )
+                        refresh_actions()
                         trial_status.set(
                             ("Turno de tu grupo. " if live.own_turn else "Turno del otro grupo. ")
                             + "Comprueba el tipo de los puestos leídos. "
-                            "El botón comprueba el ataque con el cliente antes de enviarlo."
+                            "Selecciona en juego para cargar las magias de ese mercenario."
                         )
+                        if live.phase == 3 and source_choices:
+                            select_button.configure(state="normal")
                         if live.own_turn and live.phase == 3 and source_choices and target_choices:
                             trial_button.configure(state="normal")
                     except (DiagnosticError, OSError) as exc:
@@ -1125,7 +1173,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         }
                     )
 
-            def test_basic() -> None:
+            def test_action(*, select: bool = False) -> None:
                 try:
                     self.require_idle_bot()
                     if self.session is not selected_session or live is None:
@@ -1137,11 +1185,18 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     selected_window = self.selected_window(selected_session)
                     source = source_choices.get(source_choice.get())
                     target = target_choices.get(target_choice.get())
-                    if source is None or target is None:
+                    if source is None or not select and target is None:
                         raise DiagnosticError("Elige el mercenario y el objetivo de la prueba.")
-                    trial = BattleTrial(live, source, target)
+                    action = (
+                        "select"
+                        if select
+                        else "basic"
+                        if action_choice.get() == "Ataque básico"
+                        else action_choice.get()[-1]
+                    )
+                    trial = BattleTrial(live, source, None if select else target, action)
                     trial.validate()
-                    if trial.key() in self.battle_trials:
+                    if not select and trial.key() in self.battle_trials:
                         raise DiagnosticError(
                             "Ya se solicitó una prueba de este mercenario en este turno. "
                             "Espera al siguiente turno o continúa manualmente."
@@ -1150,19 +1205,23 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     trial_status.set(str(exc))
                     return
                 trial_button.configure(state="disabled")
-                self.battle_trials.add(trial.key())
+                select_button.configure(state="disabled")
+                if not select:
+                    self.battle_trials.add(trial.key())
                 try:
-                    result = try_battle_basic(selected_session, selected_window, trial)
+                    result = try_battle_action(selected_session, selected_window, trial)
                     self.last_trial = result
-                    if result["status"] not in (26, 10, 11):
+                    if not select and result["status"] not in (26, 32, 10, 11):
                         self.battle_trials.discard(trial.key())
                     self.trial_unknown |= result["status"] in (10, 11)
-                    last["basic_trial"] = result
+                    last["combat_trial"] = result
+                    if action == "basic":
+                        last["basic_trial"] = result
                     trial_result.clear()
                     trial_result.update(result)
-                    trial_status.set(
-                        result["message"] + " Actualizar solo vuelve a leer el combate."
-                    )
+                    if result["status"] == 31:
+                        refresh_members()
+                    trial_status.set(result["message"] + " Leer y elegir una acción no la ejecuta.")
                 except (DiagnosticError, OSError) as exc:
                     self.trial_unknown = True
                     result = {
@@ -1172,7 +1231,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         "attack_confirmed": False,
                     }
                     self.last_trial = result
-                    last["basic_trial"] = result
+                    last["combat_trial"] = result
                     trial_result.clear()
                     trial_result.update(result)
                     trial_status.set(str(exc))
@@ -1189,9 +1248,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 side="left", padx=8
             )
             trial_button = ttk.Button(
-                buttons, text="Probar básico (experimental)", command=test_basic, state="disabled"
+                buttons, text="Probar acción (experimental)", command=test_action, state="disabled"
             )
             trial_button.pack(side="left", padx=8)
+            select_button = ttk.Button(
+                buttons,
+                text="Seleccionar en juego",
+                command=lambda: test_action(select=True),
+                state="disabled",
+            )
+            select_button.pack(side="left", padx=8)
             if load:
                 refresh_members()
 

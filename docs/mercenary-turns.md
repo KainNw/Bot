@@ -1,16 +1,20 @@
-# Turnos de mercenarios 0.9.0
+# Turnos de mercenarios 0.10.0
 
 El panel guarda el plan de cada mercenario: puesto, nombre, participación, prioridad,
 ataque básico o magia Q/W/E/R/T y la preferencia de usar básico si la magia no está
 disponible. El ciclo todavía no ejecuta el plan; pausa durante la batalla para que
 juegues los turnos. En 0.9 se añade una prueba de un básico con mercenario y enemigo
-elegidos desde **Ver mercenarios**, después de **Parar bot**. Falta comprobar el
-golpe en el cliente real. Las magias y el botín siguen pendientes.
+elegidos desde **Ver mercenarios**, después de **Parar bot**. El usuario confirmó
+que ese básico ejecutó el golpe. En 0.10 se añaden selección nativa y una prueba
+de magia Q/W/E/R/T usando la barra del mercenario seleccionado. La prueba real de
+esa selección y magia sigue pendiente. El botín y el ciclo de turnos quedan pendientes.
 El delay de persecución y ataque de 0.7 se conserva.
 
 Para la prueba nueva, consulta [ataque básico individual](basic-battle-trial.md).
-**Actualizar** y **Copiar mercenarios** solo leen; **Probar básico (experimental)**
-sí solicita una acción. El panel no ejecuta automáticamente el perfil guardado.
+**Actualizar** y **Copiar mercenarios** solo leen; **Probar acción (experimental)**
+sí solicita un básico o magia. **Seleccionar en juego** cambia el mercenario activo
+sin lanzar un ataque. El panel no ejecuta automáticamente el perfil guardado.
+Las instrucciones nuevas están en [selección y magia](magic-battle-trial.md).
 
 ## Controles comunicados por el usuario
 
@@ -28,7 +32,7 @@ todavía requieren análisis. Tampoco se ha implementado la recogida automática
 
 ## Exportar el código de combate
 
-1. Abre el panel 0.9.0 y conecta con la ventana elegida.
+1. Abre el panel 0.10.0 y conecta con la ventana elegida.
 2. Mantén Auto Battle y caza nativa apagados.
 3. Entra en combate manualmente o con el ciclo de caza que ya funciona. El panel
    permite exportar mientras el ciclo está pausado dentro de la batalla.
@@ -109,7 +113,15 @@ El manifiesto registra por separado `normal_method_resolution` y
 El total fijo es 892 KiB y el máximo con métodos es 1916,5 KiB, más el manifiesto.
 La exportación normal sigue limitada a 100 KiB. No hay volcados de bloques de heap.
 
+Desde 0.10, la colección normal de unidades no se sigue como tabla virtual: su
+primera palabra es un dato que cambió de 0 a `00120000` en los informes recibidos.
+Se conserva como diagnóstico y se excluye del vínculo de identidad. Los punteros
+de colección, personaje, contexto y gestor siguen comprobándose.
+
 El ZIP no incluye nombres de los perfiles, chat ni contenido de paquetes de red.
 Los bloques tienen tamaño fijo y SHA-256; se conserva el archivo de destino si
 ya existe. La captura 0.8.3 permitió incorporar la primera prueba de básico por PID.
-La confirmación visual del golpe y la lectura del turno siguen pendientes en el juego.
+El registro del PID 21076 de las 10:01:43 y la respuesta del usuario confirmaron
+el primer básico. La lectura de los nueve miembros, siete enemigos y turno local
+se completó y el cliente encoló el ataque sin excepción. El golpe fue comprobado
+visualmente por el usuario; el programa todavía no lo confirma por sí solo.

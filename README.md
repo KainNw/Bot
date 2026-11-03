@@ -1,13 +1,14 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.9.0** añade una prueba individual de
-**ataque básico en combate** en **Ver mercenarios**: elige un mercenario y un
-enemigo y pulsa **Probar básico (experimental)**. Se usa el constructor y envío
-nativo de la ruta del clic manual, con comprobaciones de turno y objetivo.
+con Auto Battle apagado. La versión **0.10.0** añade selección nativa del mercenario
+y pruebas individuales de **magia Q/W/E/R/T** en **Ver mercenarios**. Pulsa
+**Seleccionar en juego**, elige la acción y el objetivo y pulsa **Probar acción
+(experimental)**. Se usa la barra del cliente y su función de magia.
 Permite guardar ataque básico o magia Q/W/E/R/T por mercenario.
 El ciclo todavía espera a que juegues los turnos. La prueba individual requiere
-**Parar bot** durante la batalla y aún debe comprobarse en el cliente real.
+**Parar bot** durante la batalla. El usuario confirmó el golpe del primer básico
+nativo en 0.9; la selección y la magia de 0.10 siguen pendientes de prueba en el juego.
 Conserva **Ataque nativo por radio (experimental)**, **Calibrar combate**,
 observaciones y tres perfiles. Al conectar con la compilación
 compatible vincula el detector local ya comprobado a ese PID y fecha de creación.
@@ -76,9 +77,9 @@ El perfil activo queda fijado al iniciar el ciclo. Detalles de uso y diagnóstic
 [calibración y perfiles](docs/combat-calibration.md).
 El análisis pendiente y la captura necesaria se describen en
 [turnos de mercenarios](docs/mercenary-turns.md).
-La prueba de 0.9 no ejecuta el perfil, magias ni botín: solicita un único básico
-del puesto elegido. Las instrucciones y límites están en
-[prueba de básico en combate](docs/basic-battle-trial.md).
+La prueba individual todavía no ejecuta el perfil ni recoge botín. Las instrucciones
+están en [prueba de básico](docs/basic-battle-trial.md) y
+[selección y magia](docs/magic-battle-trial.md).
 
 **Ataque nativo por radio (experimental)** viene marcado para la prueba solicitada.
 El radio va de 5 a 120 casillas alrededor del inicio de esa ejecución, con valor

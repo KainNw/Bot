@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from atlantica_bot.battle import (
+    MAGIC_KEYS_ANCHOR,
     OWN_TURN_ANCHOR,
     UNIT_LOOKUP_ANCHOR,
     BattleTrial,
@@ -52,6 +53,7 @@ def battle_memory(monkeypatch):
     monkeypatch.setattr("atlantica_bot.battle.read_normal_battle", lambda _: context)
     put(0x5A4519, UNIT_LOOKUP_ANCHOR)
     put(0x5A2955, OWN_TURN_ANCHOR)
+    put(0x4F44FF, MAGIC_KEYS_ANCHOR)
     word(0x6025E0, 0x900000)
     word(0x60234C, 3)
     word(0x706C5C, 0)
@@ -66,6 +68,9 @@ def battle_memory(monkeypatch):
     put(0x800000, struct.pack("<II", 0x1000000, 450))
     put(0x9000D4, bytes(100))
     put(0x900138, bytes(400))
+    word(0x9000D0, 1)
+    word(0x6025E8, 3)
+    put(0x6025EC, struct.pack("<3I", 101, 102, 103))
     for index, world_slot, member, identity, life in (
         (1, 1, 0, identities[0], 100),
         (2, 6, 0, identities[1], 40),
@@ -180,3 +185,70 @@ def test_trial_deduplication_key_does_not_change_when_only_enemy_selection_chang
     second = BattleTrial(replace(view, units=(*view.units, other)), first.source, other)
     second.validate()
     assert first.key() == second.key()
+
+
+def test_magic_shortcuts_follow_the_selected_units_compacted_native_bar(battle_memory):
+    session, _ = battle_memory
+    view = read_battle_frame(session)
+    assert view.selected_unit == view.sources[0].address
+    assert view.summary()["magic_shortcuts"] == {"Q": 101, "W": 102, "E": 103}
+    trial = BattleTrial(view, view.sources[0], view.enemies[0], "E")
+    trial.validate()
+    assert trial.operation == 8
+    assert trial.arguments()["magic-key"] == 3
+    assert trial.arguments()["magic-action"] == 103
+
+
+def test_magic_can_target_own_member_while_basic_cannot(battle_memory):
+    session, _ = battle_memory
+    view = read_battle_frame(session)
+    own = view.sources[0]
+    trial = BattleTrial(view, own, own, "Q")
+    trial.validate()
+    with pytest.raises(DiagnosticError, match="enemigo vivos"):
+        BattleTrial(view, own, own).validate()
+
+
+def test_magic_missing_from_bar_is_not_replaced_by_another_shortcut(battle_memory):
+    session, _ = battle_memory
+    view = read_battle_frame(session)
+    with pytest.raises(DiagnosticError, match="barra de magia"):
+        BattleTrial(view, view.sources[0], view.enemies[0], "T").validate()
+
+
+def test_foreign_selected_unit_cannot_supply_magic_for_own_member(battle_memory):
+    session, memory = battle_memory
+    memory.word(0x9000D0, 3)
+    view = read_battle_frame(session)
+    with pytest.raises(DiagnosticError, match="Selecciona ese mercenario"):
+        BattleTrial(view, view.sources[0], view.enemies[0], "Q").validate()
+
+
+def test_selection_has_no_attack_target_and_is_allowed_during_the_other_groups_turn(battle_memory):
+    session, memory = battle_memory
+    memory.word(0x706C5C, 1)
+    view = read_battle_frame(session)
+    trial = BattleTrial(view, view.sources[0], action="select")
+    trial.validate()
+    assert trial.operation == 7
+    assert "enemy-member" not in trial.arguments() and "target-unit" not in trial.arguments()
+
+
+def test_changed_magic_bar_during_read_is_not_returned_as_a_coherent_frame(
+    battle_memory, monkeypatch
+):
+    session, _ = battle_memory
+    versions = iter(((0xA01000, (101,)), (0xA01000, (102,))))
+    monkeypatch.setattr("atlantica_bot.battle._magic_bar", lambda *a: next(versions))
+    with pytest.raises(SceneChanged, match="turno cambió"):
+        read_battle_frame(session)
+
+
+def test_unreadable_magic_bar_keeps_basic_view_but_disables_magic_trial(battle_memory):
+    session, memory = battle_memory
+    memory.word(0x6025E8, 100)
+    view = read_battle_frame(session)
+    assert view.magic_error and not view.magic_actions
+    BattleTrial(view, view.sources[0], view.enemies[0]).validate()
+    with pytest.raises(DiagnosticError, match="barra de magia"):
+        BattleTrial(view, view.sources[0], view.enemies[0], "Q").validate()

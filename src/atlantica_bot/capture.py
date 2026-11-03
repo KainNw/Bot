@@ -66,6 +66,8 @@ def _normal_methods(
     session: GameSession, context: NormalBattleContext, blocks: list, *, role: str = "manager"
 ) -> dict:
     """Collect candidate methods from the normal manager and related client; never call them."""
+    if role == "client" and context.method_table_candidate == 0x042D8AA4:
+        return {"status": "unavailable", "reason": "normal_unit_collection_is_not_polymorphic"}
     table = (
         context.method_table_candidate
         if role == "manager"
