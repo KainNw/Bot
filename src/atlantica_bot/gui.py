@@ -1075,6 +1075,15 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 target_choice.set(
                     selected if selected in target_choices else next(iter(target_choices), "")
                 )
+                trial_button.configure(
+                    state="normal"
+                    if live
+                    and live.phase == 3
+                    and live.own_turn
+                    and source_choices
+                    and target_choices
+                    else "disabled"
+                )
 
             source_list.bind("<<ComboboxSelected>>", refresh_actions)
             action_list.bind("<<ComboboxSelected>>", refresh_action_targets)
