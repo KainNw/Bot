@@ -87,6 +87,7 @@ class Candidate:
     x: int
     y: int
     grid_distance: int
+    identity: tuple[int, int, int] = ()
 
 
 @dataclass(frozen=True)
@@ -166,7 +167,8 @@ def scan_world(session: GameSession) -> WorldView:
             if reader.u32(actor + 0x200) != slot:
                 reject("slot_mismatch")
                 continue
-            kind_id = reader.u32(actor + 0x204)
+            identity = struct.unpack("<III", reader.read(actor + 0x204, 12))
+            kind_id = identity[0]
             if not 3500 <= kind_id < 22000:
                 reject("kind_range")
                 continue
@@ -189,7 +191,9 @@ def scan_world(session: GameSession) -> WorldView:
                 continue
             distance = abs(position.x - player.x) + abs(position.y - player.y)
             candidates.append(
-                Candidate(slot, kind_id, position.map_id, position.x, position.y, distance)
+                Candidate(
+                    slot, kind_id, position.map_id, position.x, position.y, distance, identity
+                )
             )
         except (DiagnosticError, OSError):
             errors += 1

@@ -44,7 +44,14 @@ preparación y la validación `00431AC0`; la exportación añade esos bloques (h
 
 No se considera modo independiente el cambio artificial del indicador Auto Battle
 ni saltarse su comprobación en la rutina nativa. El controlador actual no hace ninguno
-de esos cambios ni escribe en la memoria del cliente.
+de esos cambios. La versión 0.3 añade una prueba individual que llama a los métodos
+analizados en el hilo de la ventana seleccionada, con controles de identidad, escena,
+alcance y cola. Requiere validar el resultado en el cliente real antes del ciclo
+automático. No hay movimiento hacia candidatos lejanos ni automatización de turnos.
+
+El panel selecciona ventana/PID y fecha de creación, evita reconectar automáticamente
+a otra instancia y bloquea el marcador nativo compartido por varios clientes. La
+prueba individual no cambia ese archivo ni introduce entradas en otras ventanas.
 
 ## Velocidad durante combate — mejora posterior
 

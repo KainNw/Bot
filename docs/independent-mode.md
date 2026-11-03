@@ -4,6 +4,14 @@ Objetivo activo: iniciar desde el panel manteniendo Auto Battle apagado. El modo
 nativo sigue necesitando ese indicador dentro del cliente; retirar únicamente el
 bloqueo de nuestra interfaz no elimina esa dependencia.
 
+Estado 0.3: tercera captura recibida, funciones de validación y cola analizadas,
+y primera prueba individual implementada. El botón experimental usa el hilo de la
+ventana elegida y métodos del cliente para una solicitud, sin mover ni repetir.
+Su resultado en el juego todavía requiere validación. Detalles en
+[el tercer análisis](context-analysis-20261102-190839.md) y
+[el aislamiento entre ventanas](multiple-clients.md). El ciclo autónomo no se
+considera completado por esa prueba.
+
 La primera captura se recibió con Auto Battle apagado, B=28 y HUNT=0. Se verificó
 su integridad y se analizaron los cuatro bloques: hay información de tabla/getters,
 constructor de mensajes y un despachador indirecto. Falta identificar el destino

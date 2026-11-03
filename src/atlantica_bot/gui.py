@@ -7,8 +7,10 @@ from pathlib import Path
 
 from . import __version__
 from .capture import export_code_context
+from .clients import control_native_marker, marker_scope
 from .errors import DiagnosticError
 from .hunting import control_hunting, marker_state
+from .native_action import try_attack
 from .session import GameSession, LiveState
 from .world import scan_world
 
@@ -25,23 +27,42 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def __init__(self) -> None:
             self.root = tk.Tk()
             self.root.title(f"Atlantica — Control de caza {__version__}")
-            self.root.minsize(720, 390)
+            self.root.minsize(800, 490)
             self.directory: Path | None = None
             self.session: GameSession | None = None
             self.last_state: LiveState | None = None
+            self.system = WindowsSystem()
+            self.windows = {}
+            self.window_choice = tk.StringVar()
+            self.last_trial = {}
+            self.trial_unknown = False
             self.pid = tk.StringVar()
             self.folder = tk.StringVar(value="Conecta con el juego o selecciona su carpeta.")
             self.request = tk.StringVar(value="Solicitud: sin consultar")
             self.status = tk.StringVar(value="Cliente: sin conexión")
             self.detail = tk.StringVar(value="El panel abre sin activar la caza.")
+            self.scope_status = tk.StringVar()
             frame = ttk.Frame(self.root, padding=18)
             frame.pack(fill="both", expand=True)
             ttk.Label(frame, text="Control de caza", font=("Segoe UI", 18)).pack(anchor="w")
             ttk.Label(
                 frame,
-                text="Iniciar requiere Auto Battle. Ver objetivos: solo lectura.",
+                text="Iniciar: caza nativa con Auto Battle. "
+                "Prueba de ataque: una solicitud sin Auto Battle.",
             ).pack(anchor="w", pady=4)
             ttk.Label(frame, textvariable=self.folder, wraplength=680).pack(anchor="w", pady=8)
+            ttk.Label(frame, textvariable=self.scope_status, wraplength=760).pack(anchor="w")
+            row = ttk.Frame(frame)
+            row.pack(fill="x", pady=4)
+            self.window_list = ttk.Combobox(
+                row, textvariable=self.window_choice, state="readonly", width=65
+            )
+            self.window_list.pack(side="left", fill="x", expand=True)
+            self.window_list.bind("<<ComboboxSelected>>", self.choose_window)
+            ttk.Button(row, text="Actualizar lista", command=self.list_windows).pack(
+                side="left", padx=8
+            )
+            ttk.Button(row, text="Elegir ventana", command=self.pick_window).pack(side="left")
             row = ttk.Frame(frame)
             row.pack(fill="x", pady=4)
             ttk.Button(row, text="Seleccionar carpeta", command=self.browse).pack(side="left")
@@ -64,6 +85,23 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 row, text="Ver objetivos", command=self.show_targets, state="disabled"
             )
             self.targets_button.pack(side="left")
+            row = ttk.Frame(frame)
+            row.pack(fill="x", pady=4)
+            self.trial_button = ttk.Button(
+                row,
+                text="Probar un ataque (experimental)",
+                command=self.attack_once,
+                state="disabled",
+            )
+            self.trial_button.pack(side="left")
+            self.copy_trial_button = ttk.Button(
+                row, text="Copiar prueba", command=self.copy_trial, state="disabled"
+            )
+            self.copy_trial_button.pack(side="left", padx=8)
+            ttk.Label(
+                frame,
+                text="La prueba requiere un mob cercano; no mueve al personaje ni repite ataques.",
+            ).pack(anchor="w")
             ttk.Label(frame, textvariable=self.request).pack(anchor="w", pady=4)
             ttk.Label(frame, textvariable=self.status, font=("Segoe UI", 12, "bold")).pack(
                 anchor="w", pady=4
@@ -76,7 +114,69 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 wraplength=680,
             ).pack(anchor="w", pady=10)
             self.root.protocol("WM_DELETE_WINDOW", self.close)
+            self.pid.trace_add("write", self.pid_changed)
+            if not smoke_test:
+                self.root.after(100, self.list_windows)
             self.root.after(750, self.poll)
+
+        def disconnect(self) -> None:
+            self.session = None
+            self.directory = None
+            self.start_button.configure(state="disabled")
+            self.stop_button.configure(state="disabled")
+            self.capture_button.configure(state="disabled")
+            self.targets_button.configure(state="disabled")
+            self.trial_button.configure(state="disabled")
+            self.status.set("Cliente: sin conexión; selecciona y pulsa Conectar")
+            self.folder.set("Selecciona una ventana y pulsa Conectar.")
+            self.scope_status.set("")
+            self.request.set("Solicitud: sin consultar")
+
+        def pid_changed(self, *args) -> None:
+            selected = self.windows.get(self.window_choice.get())
+            if selected is not None and self.pid.get().strip() != str(selected.pid):
+                self.window_choice.set("")
+            if self.session is not None and self.pid.get().strip() != str(self.session.process.pid):
+                self.disconnect()
+
+        def list_windows(self) -> None:
+            try:
+                self.windows = {window.label: window for window in self.system.game_windows()}
+                self.window_list.configure(values=list(self.windows))
+                if self.window_choice.get() not in self.windows:
+                    self.window_choice.set("")
+                self.detail.set(
+                    f"{len(self.windows)} ventanas encontradas. Elige una y pulsa Conectar. "
+                    "Elegir ventana te da 3 segundos para activarla con Alt+Tab "
+                    "o desde su barra de título."
+                )
+            except (DiagnosticError, OSError) as exc:
+                self.error(exc)
+
+        def choose_window(self, event=None) -> None:
+            window = self.windows.get(self.window_choice.get())
+            if window is not None:
+                self.disconnect()
+                self.pid.set(str(window.pid))
+                self.detail.set(f"Seleccionado: {window.label}. Pulsa Conectar.")
+
+        def pick_window(self) -> None:
+            self.disconnect()
+            self.root.iconify()
+
+            def capture_active() -> None:
+                try:
+                    window = self.system.active_game_window()
+                    self.windows[window.label] = window
+                    self.window_list.configure(values=list(self.windows))
+                    self.window_choice.set(window.label)
+                    self.choose_window()
+                except (DiagnosticError, OSError) as exc:
+                    self.detail.set(str(exc))
+                finally:
+                    self.root.deiconify()
+
+            self.root.after(3000, capture_active)
 
         def error(self, exc: Exception) -> None:
             self.detail.set(str(exc))
@@ -104,13 +204,19 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def connect(self) -> None:
             from .__main__ import positive_pid
 
+            self.disconnect()
             try:
                 pid = positive_pid(self.pid.get().strip()) if self.pid.get().strip() else None
-                session = GameSession.connect(WindowsSystem(), pid)
+                session = GameSession.connect(self.system, pid)
+                self.pid.set(str(session.process.pid))
                 self.session = session
+                self.trial_unknown = False
                 self.directory = session.directory
                 self.folder.set(str(session.directory))
-                self.detail.set("Conectado. El panel observa el cliente y controla su marcador.")
+                self.detail.set(
+                    f"Conectado al PID {session.process.pid}. "
+                    "Las lecturas quedan vinculadas a ese cliente."
+                )
                 self.refresh()
             except Exception as exc:
                 self.session = None
@@ -130,11 +236,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 else "Solicitud: caza desactivada"
             )
             self.stop_button.configure(state="normal" if files.marker_present else "disabled")
+            scope = marker_scope(self.system, self.directory)
+            self.scope_status.set(scope.explanation)
+            if not scope.allowed:
+                self.stop_button.configure(state="disabled")
 
         def refresh(self) -> None:
             self.start_button.configure(state="disabled")
             self.capture_button.configure(state="disabled")
             self.targets_button.configure(state="disabled")
+            self.trial_button.configure(state="disabled")
             self.refresh_files()
             if self.session is None:
                 return
@@ -142,16 +253,28 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.last_state = state
             self.capture_button.configure(state="normal")
             self.targets_button.configure(state="normal")
-            self.status.set(f"Cliente: {state.label}")
-            if state.auto_battle and state.condition_b > 0 and not state.files.marker_present:
+            if not (
+                state.auto_battle
+                or state.hunting
+                or state.files.marker_present
+                or self.trial_unknown
+            ):
+                self.trial_button.configure(state="normal")
+            self.status.set(f"PID {self.session.process.pid}: {state.label}")
+            scope = marker_scope(self.system, self.directory)
+            if (
+                scope.allowed
+                and state.auto_battle
+                and state.condition_b > 0
+                and not state.files.marker_present
+            ):
                 self.start_button.configure(state="normal")
 
         def poll(self) -> None:
             try:
                 self.refresh()
             except (DiagnosticError, OSError) as exc:
-                self.session = None
-                self.start_button.configure(state="disabled")
+                self.disconnect()
                 self.status.set("Cliente: sin confirmación actual")
                 self.detail.set(str(exc))
             self.root.after(750, self.poll)
@@ -170,7 +293,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             try:
                 if self.directory is None:
                     raise DiagnosticError("Selecciona la carpeta del juego.")
-                control_hunting(self.directory, "stop")
+                if self.session is not None:
+                    self.session.stop()
+                else:
+                    control_native_marker(self.system, self.directory, "stop")
                 self.detail.set(
                     "Parada solicitada. Espera confirmación; apaga Auto Battle antes de moverte."
                 )
@@ -216,7 +342,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 defaultextension=".zip",
                 filetypes=[("Archivo ZIP", "*.zip")],
                 initialdir=str(session.directory),
-                initialfile=f"Atlantica-contexto-{datetime.now():%Y%m%d-%H%M%S}.zip",
+                initialfile=f"Atlantica-PID{session.process.pid}-contexto-{datetime.now():%Y%m%d-%H%M%S}.zip",
             )
             if not filename:
                 return
@@ -229,12 +355,64 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             except (DiagnosticError, OSError) as exc:
                 self.error(exc)
 
+        def attack_once(self) -> None:
+            session = self.session
+            if session is None:
+                self.error(DiagnosticError("Conecta con la ventana elegida antes de probar."))
+                return
+            self.trial_button.configure(state="disabled")
+            try:
+                window = self.windows.get(self.window_choice.get())
+                if window is None or window.pid != session.process.pid:
+                    windows = [
+                        w for w in self.system.game_windows() if w.pid == session.process.pid
+                    ]
+                    if len(windows) != 1:
+                        raise DiagnosticError(
+                            "Usa Elegir ventana para identificar el cliente exacto."
+                        )
+                    window = windows[0]
+                view = scan_world(session)
+                if not view.candidates:
+                    raise DiagnosticError(
+                        "No hay candidatos de mapa; acércate a un mob y actualiza."
+                    )
+                self.detail.set(
+                    f"Prueba individual en PID {session.process.pid}; esperando al cliente..."
+                )
+                self.root.update_idletasks()
+                self.last_trial = try_attack(session, window, view.candidates[0])
+                self.trial_unknown = self.last_trial["status"] in (1, 10, 11)
+                self.copy_trial_button.configure(state="normal")
+                self.copy_trial_button.configure(text=f"Copiar prueba PID {session.process.pid}")
+                self.detail.set(f"PID {session.process.pid}: {self.last_trial['message']}")
+            except (DiagnosticError, OSError) as exc:
+                self.trial_unknown = True
+                self.last_trial = {
+                    "pid": session.process.pid,
+                    "result": "unconfirmed",
+                    "message": str(exc),
+                }
+                self.copy_trial_button.configure(state="normal")
+                self.copy_trial_button.configure(text=f"Copiar prueba PID {session.process.pid}")
+                self.error(exc)
+            finally:
+                self.trial_button.configure(state="disabled")
+
+        def copy_trial(self) -> None:
+            if self.last_trial:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(
+                    json.dumps(self.last_trial, ensure_ascii=False, indent=2)
+                )
+
         def show_targets(self) -> None:
             if self.session is None:
                 self.error(DiagnosticError("Conecta con el juego para leer los objetivos."))
                 return
+            selected_session = self.session
             window = tk.Toplevel(self.root)
-            window.title("Candidatos de mapa — solo lectura")
+            window.title(f"PID {selected_session.process.pid} — candidatos de mapa")
             window.minsize(680, 330)
             frame = ttk.Frame(window, padding=12)
             frame.pack(fill="both", expand=True)
@@ -252,11 +430,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
             def refresh_targets() -> None:
                 try:
-                    if self.session is None:
-                        raise DiagnosticError("El cliente se desconectó; vuelve a conectar.")
-                    view = scan_world(self.session)
+                    if self.session is not selected_session:
+                        raise DiagnosticError(
+                            "La conexión cambió. Cierra este visor y abre el del cliente elegido."
+                        )
+                    view = scan_world(selected_session)
                     last.clear()
                     last.update(view.summary())
+                    last["pid"] = selected_session.process.pid
                     table.delete(*table.get_children())
                     if view.player is None:
                         summary.set(

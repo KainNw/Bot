@@ -42,7 +42,7 @@ def test_report_checks_only_header_and_does_not_include_installation_path(execut
     assert report["memory_read"] == {"status": "verified", "bytes_verified": 2}
     assert report["executable_on_disk"]["file_version"] == "1.2.3.4"
     assert report["main_module"]["base_address"] == "0x140000000"
-    assert report["attack_automation"] == "not_implemented"
+    assert report["attack_automation"] == "not_exercised_by_diagnostic"
     assert report["game_mapping"] == "not_configured"
     assert str(executable.parent) not in json.dumps(report)
 

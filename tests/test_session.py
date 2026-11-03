@@ -99,6 +99,16 @@ def test_new_pid_requires_reconnect_and_is_detected_without_fixed_pid(live):
     assert new_session.snapshot().auto_battle
 
 
+def test_reused_pid_for_same_executable_requires_reconnect(live):
+    live.creation = 1234
+    live.process_creation_time = lambda pid: live.creation
+    old_session = GameSession.connect(live)
+    live.creation = 5678
+    with pytest.raises(DiagnosticError, match="instancia"):
+        old_session.snapshot()
+    assert GameSession.connect(live).creation_time == 5678
+
+
 def test_reloads_dynamic_owner_pointer_on_every_snapshot(live):
     session = GameSession.connect(live)
     live.owner = 0x40000000

@@ -6,6 +6,7 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
+from .clients import ClientWindow
 from .errors import DiagnosticError, NativeError
 from .report import Module, Process
 
@@ -101,6 +102,19 @@ class WindowsSystem:
                 "Ejecuta este diagnóstico en el PC Windows donde tienes el juego."
             )
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        user = ctypes.WinDLL("user32", use_last_error=True)
+        self._window_callback_type = ctypes.WINFUNCTYPE(BOOL, HANDLE, ctypes.c_ssize_t)
+        self._enum_windows = _bind(
+            user, "EnumWindows", [self._window_callback_type, ctypes.c_ssize_t], BOOL
+        )
+        self._window_pid = _bind(
+            user, "GetWindowThreadProcessId", [HANDLE, ctypes.POINTER(DWORD)], DWORD
+        )
+        self._window_visible = _bind(user, "IsWindowVisible", [HANDLE], BOOL)
+        self._window_title = _bind(
+            user, "GetWindowTextW", [HANDLE, ctypes.c_wchar_p, ctypes.c_int], ctypes.c_int
+        )
+        self._foreground = _bind(user, "GetForegroundWindow", [], HANDLE)
         version = ctypes.WinDLL("version", use_last_error=True)
         ntdll = ctypes.WinDLL("ntdll", use_last_error=True)
         self._query_information = _bind(
@@ -124,6 +138,12 @@ class WindowsSystem:
             kernel, "Module32NextW", [HANDLE, ctypes.POINTER(ModuleEntry)], BOOL
         )
         self._open = _bind(kernel, "OpenProcess", [DWORD, BOOL, DWORD], HANDLE)
+        self._process_times = _bind(
+            kernel,
+            "GetProcessTimes",
+            [HANDLE, *([ctypes.POINTER(ctypes.c_uint64)] * 4)],
+            BOOL,
+        )
         self._query_path = _bind(
             kernel,
             "QueryFullProcessImageNameW",
@@ -194,6 +214,31 @@ class WindowsSystem:
                     break
         return found
 
+    def game_windows(self) -> list[ClientWindow]:
+        pids = {p.pid for p in self.processes() if p.name.casefold() == "atlantica.exe"}
+        windows = []
+
+        def visit(handle, parameter):
+            pid = DWORD()
+            self._window_pid(handle, ctypes.byref(pid))
+            if pid.value in pids and self._window_visible(handle):
+                title = ctypes.create_unicode_buffer(512)
+                self._window_title(handle, title, len(title))
+                windows.append(ClientWindow(pid.value, int(handle), title.value))
+            return True
+
+        callback = self._window_callback_type(visit)
+        if not self._enum_windows(callback, 0):
+            _fail("Enumerar ventanas del juego")
+        return sorted(windows, key=lambda window: (window.pid, window.handle))
+
+    def active_game_window(self) -> ClientWindow:
+        active = self._foreground()
+        for window in self.game_windows():
+            if window.handle == active:
+                return window
+        raise DiagnosticError("La ventana activa no pertenece a Atlantica.exe.")
+
     def executable_path(self, pid: int) -> Path:
         # PROCESS_QUERY_LIMITED_INFORMATION, not PROCESS_ALL_ACCESS.
         with self._managed(self._open(0x1000, False, pid), "Consultar proceso") as handle:
@@ -202,6 +247,13 @@ class WindowsSystem:
             if not self._query_path(handle, 0, buffer, ctypes.byref(length)):
                 _fail("Consultar ejecutable")
             return Path(buffer.value)
+
+    def process_creation_time(self, pid: int) -> int:
+        with self._managed(self._open(0x1000, False, pid), "Consultar instancia") as handle:
+            times = [ctypes.c_uint64() for _ in range(4)]
+            if not self._process_times(handle, *(ctypes.byref(value) for value in times)):
+                _fail("Consultar inicio del proceso")
+            return times[0].value
 
     def main_module(self, pid: int, name: str) -> Module:
         # Include WOW64 modules when this interpreter is 64-bit.

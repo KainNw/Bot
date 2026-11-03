@@ -29,11 +29,19 @@ jobs:
         run: uv run --frozen --group build ruff check .
       - name: Check formatting
         run: uv run --frozen --group build ruff format --check .
+      - name: Build 32-bit client bridge
+        run: |
+          cmake -S native -B build/native -G "Visual Studio 17 2022" -A Win32
+          cmake --build build/native --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build/native -C Release --output-on-failure
       - name: Build executable
         run: >-
           uv run --frozen --group build pyinstaller
           --noconfirm --clean --onefile --windowed --noupx
-          --name AtlanticaPanel --paths src panel_caza.py
+          --name AtlanticaPanel --paths src
+          --add-binary "build/native/Release/AtlanticaBridge.exe;native"
+          --add-binary "build/native/Release/AtlanticaHook.dll;native" panel_caza.py
       - name: Verify executable opens and closes its GUI
         shell: pwsh
         run: |

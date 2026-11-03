@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from .clients import control_native_marker
 from .errors import DiagnosticError
 from .hunting import HuntingResult, control_hunting, marker_state
 from .report import Module, Process, select_process
@@ -49,6 +50,7 @@ class GameSession:
     process: Process
     executable: Path
     directory: Path
+    creation_time: int | None = None
 
     @classmethod
     def connect(cls, system: LiveSystem, pid: int | None = None) -> GameSession:
@@ -68,11 +70,17 @@ class GameSession:
         mode = system.read_memory(process.pid, 0x042C3108, 6)
         if mode != "rt\0".encode("utf-16le"):
             raise DiagnosticError("El cliente todavía no tiene el código esperado cargado.")
-        session = cls(system, process, executable, directory)
+        creation = getattr(system, "process_creation_time", None)
+        session = cls(
+            system, process, executable, directory, creation(process.pid) if creation else None
+        )
         session.snapshot()
         return session
 
     def snapshot(self) -> LiveState:
+        if self.creation_time is not None:
+            if self.system.process_creation_time(self.process.pid) != self.creation_time:
+                raise DiagnosticError("La instancia del cliente cambió; vuelve a conectar.")
         if self.system.executable_path(self.process.pid).resolve(strict=True) != self.executable:
             raise DiagnosticError("El proceso cambió; vuelve a conectar.")
         if self.system.working_directory(self.process.pid).resolve(strict=True) != self.directory:
@@ -96,4 +104,8 @@ class GameSession:
             raise DiagnosticError("Activa Auto Battle desde el juego antes de iniciar la caza.")
         if state.condition_b <= 0:
             raise DiagnosticError("El estado del cliente no permite habilitar la caza ahora.")
-        return control_hunting(self.directory, "start")
+        return control_native_marker(self.system, self.directory, "start")
+
+    def stop(self) -> HuntingResult:
+        self.snapshot()
+        return control_native_marker(self.system, self.directory, "stop")

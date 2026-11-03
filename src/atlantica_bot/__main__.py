@@ -64,9 +64,18 @@ def main(argv: list[str] | None = None) -> int:
             from .gui import launch_panel
 
             launch_panel(smoke_test=args.smoke_test)
+            if args.smoke_test:
+                from .native_action import self_test_bridge
+
+                self_test_bridge()
             return 0
         if args.command == "hunt":
-            result = control_hunting(args.directory, args.action)
+            if sys.platform == "win32" and args.action != "status":
+                from .clients import control_native_marker
+
+                result = control_native_marker(WindowsSystem(), args.directory, args.action)
+            else:
+                result = control_hunting(args.directory, args.action)
             print(
                 f"Marcador HuntingMode.txt: {'presente' if result.marker_present else 'ausente'}."
             )

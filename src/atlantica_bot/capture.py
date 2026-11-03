@@ -104,6 +104,7 @@ def export_code_context(session: GameSession, destination: Path) -> None:
         "client_sha256": hunting.SUPPORTED_CLIENT_SHA256,
         "process_name": session.process.name,
         "pid_at_capture": pid,
+        "instance_creation_time": session.creation_time,
         "purpose": "static_analysis_of_manual_attack_candidates",
         "dispatch_resolution": dispatch,
         "state_at_start": {

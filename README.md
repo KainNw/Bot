@@ -4,6 +4,10 @@ Controla la lógica AutoHunting que ya incluye el cliente analizado del servidor
 privado en Windows 10/11. El inicio y la parada usan `HuntingMode.txt`; el panel
 consulta el estado del proceso para distinguir una solicitud de la confirmación del cliente.
 
+La versión 0.3 añade selección de ventanas/PID y una **prueba experimental de un
+ataque sin Auto Battle**, dirigida al cliente conectado. Esa prueba requiere
+validación en el juego real; no es todavía un ciclo autónomo de caza.
+
 **Comprobado por el usuario:** tras activar Auto Battle y crear el marcador, el cliente
 mostró HUNT=1 y el personaje atacó mobs. También se comunicó un cierre al moverlo
 manualmente con x32dbg adjunto. La causa sigue pendiente y el registro de esa sesión
@@ -32,10 +36,10 @@ etapa solicitada es la caza independiente. El primer modo disponible sigue siend
 control de la caza nativa.
 
 El usuario ha pedido que Iniciar bot funcione manteniendo Auto Battle apagado.
-**Ese modo independiente todavía no está implementado.** El panel actual controla
-el modo nativo identificado y lo indica expresamente. La siguiente investigación
-debe localizar y validar la ruta del clic manual con el marcador desactivado y
-Auto Battle apagado, separándola de la rutina nativa que exige ese indicador.
+**La caza autónoma independiente todavía no está completada.** Se ha implementado
+una primera prueba de una solicitud de ataque usando los métodos nativos analizados,
+con Auto Battle y caza nativa apagados. Quedan su prueba en el cliente real y, después,
+el ciclo de caza, movimiento y confirmación de entrada en combate.
 
 Como mejora posterior se solicitó estudiar una velocidad configurable solo durante
 batallas, restaurando la velocidad normal al salir del combate o parar. No está
@@ -43,6 +47,15 @@ implementada ni se ha comprobado qué aceleración admitiría el cliente o el se
 Se priorizan los controles, la estabilidad y la caza independiente antes de esa función.
 
 ## Panel de inicio, parada y estado
+
+Si abres varios clientes, selecciona su ventana en la lista antes de **Conectar**.
+**Elegir ventana** permite activarla con Alt+Tab durante tres segundos. El panel
+muestra el PID y vincula la conexión también a la fecha de creación de ese proceso.
+No cambia automáticamente a otro cliente cuando se cierra el elegido.
+
+Si varios clientes comparten carpeta, **Iniciar/Parar nativos se bloquean** porque
+`HuntingMode.txt` es compartido. Las consultas de objetivos siguen siendo por PID.
+Detalles: [varias ventanas](docs/multiple-clients.md).
 
 Requiere Python 3.11 o posterior de 64 bits, con Tkinter (incluido en el instalador
 normal de Python para Windows). En la carpeta de este proyecto:
@@ -76,6 +89,19 @@ desactiva automáticamente la función del cliente; si puede seguir activa, apar
 una confirmación antes de cerrar la ventana.
 
 ## Contexto para la siguiente etapa
+
+En 0.3, **Probar un ataque (experimental)** comprueba el candidato más cercano y
+envía como máximo una solicitud desde el hilo de la ventana elegida. Acércate antes
+al mob y deja Auto Battle y caza nativa apagados. No mueve al personaje ni repite
+ataques. **Copiar prueba** guarda el resultado en el portapapeles para contrastarlo
+con lo ocurrido en el juego. Tras encolar o recibir un resultado incierto, comprueba
+el cliente y reconecta antes de otra prueba. No se confirma batalla por el mero envío.
+
+El ejecutable incluye un auxiliar y DLL x86 propios para esa solicitud. Solo se
+cargan en el cliente al pulsar el botón de prueba. La conexión normal y Ver objetivos
+siguen usando las APIs de consulta y lectura. La prueba no cambia Auto Battle ni
+el marcador de ninguna carpeta. El código está en `native/`; sus controles y límites
+se explican en [el tercer análisis](docs/context-analysis-20261102-190839.md).
 
 La versión 0.2 añade **Ver objetivos** después de Conectar. La consulta no exige
 Auto Battle ni un contador positivo: muestra candidatos del mapa y su distancia
@@ -171,8 +197,8 @@ informe del usuario; es un cliente x86 de 32 bits y muestra indicios de
 empaquetado/protección. Los resultados y sus límites están en
 [el informe de análisis](docs/client-analysis.md).
 
-La ruta encontrada permite aprovechar la caza nativa. No se ha desarrollado una
-implementación independiente de selección de mobs ni de llamadas de ataque. Las
+La ruta encontrada permite aprovechar la caza nativa y consultar candidatos desde
+el panel. La llamada independiente experimental requiere validación en el juego. Las
 actualizaciones del cliente requieren volver a comprobar la compilación, sus lecturas
 y el comportamiento del modo nativo antes de reutilizar este control.
 
@@ -206,7 +232,8 @@ El diagnóstico no necesita un servidor local, Docker ni servicios en segundo pl
 
 El workflow preparado en `.github/workflows/windows-panel.yml` ejecuta los tests en
 Windows, compila `AtlanticaPanel.exe` con PyInstaller y prueba su arranque sin conectarse
-al juego. Se inicia manualmente desde
+al juego. Compila además el auxiliar/DLL x86 con MSVC y prueba su hook sobre una
+ventana propia, exigiendo el rechazo de la compilación ajena al juego. Se inicia manualmente desde
 GitHub Actions o al subir la rama `codex/panel-caza`. Su artefacto será
 `AtlanticaPanel-Windows`, con el ejecutable y su SHA-256. La primera compilación
 remota terminó correctamente en
@@ -216,7 +243,10 @@ También se puede compilar localmente en Windows:
 
 ```powershell
 uv sync --frozen --group build
-uv run --frozen --group build pyinstaller --noconfirm --clean --onefile --windowed --noupx --name AtlanticaPanel --paths src panel_caza.py
+cmake -S native -B build/native -G "Visual Studio 17 2022" -A Win32
+cmake --build build/native --config Release
+ctest --test-dir build/native -C Release --output-on-failure
+uv run --frozen --group build pyinstaller --noconfirm --clean --onefile --windowed --noupx --name AtlanticaPanel --paths src --add-binary "build/native/Release/AtlanticaBridge.exe;native" --add-binary "build/native/Release/AtlanticaHook.dll;native" panel_caza.py
 ```
 
 La compilación de Windows debe hacerse en Windows. El ZIP de fuentes se prepara con

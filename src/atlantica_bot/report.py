@@ -83,7 +83,7 @@ def diagnose(system: System, *, name: str, pid: int | None = None) -> dict:
         "main_module": None,
         "memory_read": {"status": "unavailable"},
         "game_mapping": "not_configured",
-        "attack_automation": "not_implemented",
+        "attack_automation": "not_exercised_by_diagnostic",
     }
     stage = "module_snapshot"
     try:
