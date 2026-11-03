@@ -75,6 +75,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     auto library = path_size && path_size < 32768 ? LoadLibraryW(dll_path.c_str()) : nullptr;
     auto callback = library ? reinterpret_cast<HOOKPROC>(GetProcAddress(library, "AtlanticaHookProc")) : nullptr;
     auto hook = callback ? SetWindowsHookExW(WH_GETMESSAGE, callback, library, tid) : nullptr;
+    if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
         command.magic = kMagic; command.version = 1; command.pid = pid;
@@ -133,7 +134,9 @@ static int SelfTest() {
     PostThreadMessageW(tid, WM_QUIT, 0, 0);
     WaitForSingleObject(thread, 5000); CloseHandle(thread); CloseHandle(test.ready);
     // The bridge executable's base/build must be rejected before any client address is read.
-    return code ? code : (response.result == Unsupported && response.thread_id == tid ? 0 : 31);
+    const int result = code ? code : (response.result == Unsupported && response.thread_id == tid ? 0 : 31);
+    if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result << std::endl;
+    return result;
 }
 int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wcscmp(argv[1], L"--self-test") == 0) return SelfTest();
