@@ -33,7 +33,7 @@ def parser() -> argparse.ArgumentParser:
         "panel", help="Abrir el panel de inicio, parada y estado en Windows."
     )
     panel.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
-    capture = commands.add_parser("capture", help="Exportar contexto de código para análisis.")
+    capture = commands.add_parser("capture", help="Exportar código y constantes para análisis.")
     capture.add_argument("--pid", type=positive_pid, help="PID opcional si hay varios clientes.")
     capture.add_argument("--output", type=Path, required=True, help="Archivo ZIP nuevo.")
     capture.add_argument(

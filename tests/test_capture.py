@@ -9,6 +9,7 @@ from atlantica_bot.capture import (
     ANCHOR_BYTES,
     CODE_BLOCKS,
     COMBAT_CODE_BLOCKS,
+    COMBAT_READONLY_BLOCKS,
     export_code_context,
 )
 from atlantica_bot.errors import DiagnosticError
@@ -26,6 +27,7 @@ class CaptureSystem:
         self.zero = False
         self.unsupported_table = False
         self.short_combat = False
+        self.short_readonly = False
 
     def read_memory(self, pid, address, size):
         assert pid == 123
@@ -44,9 +46,12 @@ class CaptureSystem:
         if (address, size) == (0x00500000, 0x2000):
             return b"\x90" * size
         assert (address, size) in [
-            (address, size) for _, address, size in CODE_BLOCKS + COMBAT_CODE_BLOCKS
+            (address, size)
+            for _, address, size in CODE_BLOCKS + COMBAT_CODE_BLOCKS + COMBAT_READONLY_BLOCKS
         ]
         if self.short_combat and address == COMBAT_CODE_BLOCKS[0][1]:
+            return bytes(size - 1)
+        if self.short_readonly and address == COMBAT_READONLY_BLOCKS[0][1]:
             return bytes(size - 1)
         if self.short:
             return bytes(size - 1)
@@ -99,7 +104,7 @@ def battle_observation(*, active=True, native=False, pid=123, created=777):
     )
 
 
-def test_combat_export_contains_fixed_battle_code_and_labelled_controls_only(
+def test_combat_export_contains_fixed_code_dependencies_readonly_tables_and_controls(
     session, tmp_path, monkeypatch
 ):
     session.creation_time = 777
@@ -109,13 +114,23 @@ def test_combat_export_contains_fixed_battle_code_and_labelled_controls_only(
     with ZipFile(output) as archive:
         assert archive.testzip() is None
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["schema_version"] == 3 and manifest["purpose"] == "battle_turn_diagnostic"
-        assert sum(b["size"] for b in manifest["blocks"]) == 252 * 1024
-        assert len(archive.namelist()) == len(CODE_BLOCKS) + len(COMBAT_CODE_BLOCKS) + 2
+        assert manifest["schema_version"] == 4 and manifest["purpose"] == "battle_turn_diagnostic"
+        assert sum(b["size"] for b in manifest["blocks"]) == 492 * 1024
+        assert len(archive.namelist()) == (
+            len(CODE_BLOCKS) + len(COMBAT_CODE_BLOCKS) + len(COMBAT_READONLY_BLOCKS) + 2
+        )
         for block in manifest["blocks"]:
             data = archive.read(block["file"])
             assert len(data) == block["size"]
             assert hashlib.sha256(data).hexdigest() == block["sha256"]
+            address = int(block["address"], 16)
+            if block["kind"] == "readonly_constants":
+                assert 0x03F85000 <= address < address + block["size"] <= 0x044F9000
+            else:
+                assert block["kind"] == "code"
+                assert 0x00401000 <= address < address + block["size"] <= 0x03F85000
+        constants = [b for b in manifest["blocks"] if b["kind"] == "readonly_constants"]
+        assert len(constants) == 1 and constants[0]["size"] == 8 * 1024
     combat = manifest["combat"]
     assert combat["before"]["local"]["context_a"] == combat["after"]["local"]["context_a"] == 0
     assert combat["reported_controls"]["magic_shortcuts"] == list("QWERT")
@@ -123,6 +138,18 @@ def test_combat_export_contains_fixed_battle_code_and_labelled_controls_only(
     assert not combat["turn_state_verified"] and not combat["turn_execution_available"]
     assert str(session.directory) not in json.dumps(manifest)
     assert not (session.directory / MARKER_NAME).exists()
+
+
+def test_incomplete_method_tables_are_not_saved_as_a_complete_battle_capture(
+    session, tmp_path, monkeypatch
+):
+    session.creation_time = 777
+    session.system.short_readonly = True
+    monkeypatch.setattr("atlantica_bot.capture.observe_scene", lambda _: battle_observation())
+    output = tmp_path / "battle.zip"
+    with pytest.raises(DiagnosticError, match="incompleta"):
+        export_code_context(session, output, include_combat=True)
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(

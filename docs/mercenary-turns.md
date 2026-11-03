@@ -1,4 +1,4 @@
-# Turnos de mercenarios 0.8
+# Turnos de mercenarios 0.8.1
 
 El panel guarda el plan de cada mercenario: puesto, nombre, participación, prioridad,
 ataque básico o magia Q/W/E/R/T y la preferencia de usar básico si la magia no está
@@ -22,16 +22,16 @@ todavía requieren análisis. Tampoco se ha implementado la recogida automática
 
 ## Exportar el código de combate
 
-1. Abre el panel 0.8 y conecta con la ventana elegida.
+1. Abre el panel 0.8.1 y conecta con la ventana elegida.
 2. Mantén Auto Battle y caza nativa apagados.
 3. Entra en combate manualmente o con el ciclo de caza que ya funciona. El panel
    permite exportar mientras el ciclo está pausado dentro de la batalla.
 4. Durante el combate, pulsa **Exportar combate** y guarda un archivo nuevo.
 5. Adjunta al chat el ZIP `Atlantica-PID…-combate-….zip`.
 
-La exportación solo lee código y observaciones. No selecciona mercenarios, envía
-teclas ni ejecuta funciones del juego. Comprueba que la instancia siga en combate
-antes y después de la lectura; si sale de la batalla o la lectura falla, no crea
+La exportación solo lee código, constantes del ejecutable y observaciones. No
+selecciona mercenarios, envía teclas ni ejecuta funciones del juego. Comprueba que
+la instancia siga en combate antes y después de la lectura; si sale de la batalla o la lectura falla, no crea
 una captura etiquetada como válida. No hace falta adjuntar x32dbg.
 
 Desde fuentes también se puede exportar con:
@@ -42,8 +42,9 @@ py -3 diagnosticar.py capture --pid 1234 --combat --output combate.zip
 
 ## Contenido y siguiente análisis
 
-El manifiesto de combate usa esquema 3 y contiene PID/creación, hash de la
+El manifiesto de combate usa esquema 4 y contiene PID/creación, hash de la
 compilación, observaciones antes/después, detector y los controles comunicados.
+Cada bloque indica `kind=code` o `kind=readonly_constants`.
 Conserva `turn_state_verified=false` y `turn_execution_available=false`: detectar
 la batalla no identifica el turno del mercenario.
 
@@ -56,11 +57,18 @@ Añade estos bloques a la exportación normal de hasta 100 KiB:
 | Gestor de información de miembros | `004EC000` | 16 KiB |
 | Selección de personajes | `00444000` | 8 KiB |
 
-El máximo total es 252 KiB de código, más el manifiesto. Los bloques cubren
+Estos bloques de 0.8.0 suman 152 KiB. Cubren
 referencias observadas a `CanAttackObject`, `IsInAttackRange`, `CanMoveAttack` y
 `IsEnableRangeAttackByMan`. Sus nombres son pistas para el análisis, no funciones
 de ejecución ya verificadas. El ejecutable en disco tiene código protegido y
 no proporciona por sí solo estas instrucciones cargadas.
+
+La [primera captura](combat-analysis-20261103-074421.md) identificó llamadas a
+implementaciones del cliente fuera de esos bloques. La versión 0.8.1 añade
+232 KiB de sus dependencias de código y 8 KiB de tablas de métodos/cadenas
+constantes en la sección de solo lectura de la imagen. El total máximo es
+492 KiB más el manifiesto; la exportación normal conserva su máximo de 100 KiB.
+El cambio no habilita acciones ni recoge bloques de memoria de objetos del juego.
 
 El ZIP no incluye nombres de los perfiles, chat ni contenido de paquetes de red.
 Los bloques tienen tamaño fijo y SHA-256; se conserva el archivo de destino si

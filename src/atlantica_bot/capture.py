@@ -13,7 +13,7 @@ from .errors import DiagnosticError
 from .session import GameSession
 from .world import observe_scene
 
-# Fixed code-only regions for the one verified build, not arbitrary process-memory exports.
+# Fixed regions of the verified executable image, never arbitrary heap-memory exports.
 CODE_BLOCKS = (
     ("request-builder", 0x0040C000, 0x2000),
     ("character-dispatch", 0x00435000, 0x2000),
@@ -31,6 +31,23 @@ COMBAT_CODE_BLOCKS = (
     ("battle-character-data", 0x00530000, 0x10000),
     ("member-info-manager", 0x004EC000, 0x4000),
     ("battle-selection", 0x00444000, 0x2000),
+    # Direct dependencies found in the 0.8.0 battle capture, including the client
+    # implementations instantiated by 00528B9D/00528BA2 and callbacks from common code.
+    ("battle-character-client", 0x008A8000, 0x8000),
+    ("battle-client-actions", 0x008B0000, 0x10000),
+    ("battle-client-controller", 0x008C0000, 0x10000),
+    ("battle-interface-resolution", 0x00A55000, 0x2000),
+    ("battle-grid-resolution", 0x004A1000, 0x2000),
+    ("character-property-flags", 0x00427000, 0x2000),
+    ("member-properties", 0x00447000, 0x3000),
+    ("battle-effect-query", 0x0044F000, 0x1000),
+    ("magic-catalog", 0x00503000, 0x1000),
+    ("magic-property-query", 0x008F8000, 0x6000),
+    ("magic-policy", 0x00544000, 0x1000),
+)
+COMBAT_READONLY_BLOCKS = (
+    # Common character/manager method tables at 042DE14C/042DE770 and their strings.
+    ("battle-method-tables-and-labels", 0x042DE000, 0x2000),
 )
 ANCHOR_ADDRESS = 0x0043CDA7
 ANCHOR_BYTES = bytes.fromhex("68 08 64 2c 04")
@@ -130,7 +147,7 @@ def export_code_context(
     bot_context: dict | None = None,
     include_combat: bool = False,
 ) -> None:
-    """Capture bounded code regions; never execute them or alter the client/markers."""
+    """Read bounded executable regions without executing code or changing the client."""
     if destination.suffix.lower() != ".zip":
         raise DiagnosticError("Elige un archivo ZIP para guardar el diagnóstico.")
     state = session.snapshot()  # Reject stale PID, changed directory or unreadable client state.
@@ -151,7 +168,8 @@ def export_code_context(
     if read(pid, ANCHOR_ADDRESS, len(ANCHOR_BYTES)) != ANCHOR_BYTES:
         raise DiagnosticError("El código cargado no coincide con el contexto analizado.")
     blocks = []
-    for name, address, size in CODE_BLOCKS + (COMBAT_CODE_BLOCKS if include_combat else ()):
+    selected = CODE_BLOCKS + (COMBAT_CODE_BLOCKS + COMBAT_READONLY_BLOCKS if include_combat else ())
+    for name, address, size in selected:
         data = read(pid, address, size)
         if len(data) != size:
             raise DiagnosticError(f"Lectura incompleta del bloque {name}.")
@@ -170,6 +188,7 @@ def export_code_context(
             {
                 "after": after.summary(),
                 "detector": detector.summary(),
+                "scope": "common_code_client_dependencies_and_readonly_tables",
                 "turn_state_verified": False,
                 "turn_execution_available": False,
                 "reported_controls": {
@@ -181,8 +200,9 @@ def export_code_context(
                 },
             }
         )
+    readonly_names = {name for name, _, _ in COMBAT_READONLY_BLOCKS}
     manifest = {
-        "schema_version": 3 if include_combat else 2,
+        "schema_version": 4 if include_combat else 2,
         "tool_version": __version__,
         "created_at": datetime.now(UTC).isoformat(),
         "client_sha256": hunting.SUPPORTED_CLIENT_SHA256,
@@ -205,6 +225,11 @@ def export_code_context(
                 "address": f"{address:08X}",
                 "size": len(data),
                 "sha256": hashlib.sha256(data).hexdigest(),
+                **(
+                    {"kind": "readonly_constants" if name in readonly_names else "code"}
+                    if include_combat
+                    else {}
+                ),
             }
             for name, address, data in blocks
         ],
