@@ -726,10 +726,17 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.sync_overview_controls()
 
         def configured_profile(self, profile: BotProfile) -> BotProfile:
+            try:
+                delay = float(self.attack_delay.get().strip().replace(",", "."))
+                radius = int(self.search_radius.get())
+            except ValueError as exc:
+                raise DiagnosticError(
+                    "Escribe una espera de 0 a 60 s y un radio entero de 5 a 500."
+                ) from exc
             updated = replace(
                 profile,
-                attack_delay_seconds=float(self.attack_delay.get().strip().replace(",", ".")),
-                search_radius=int(self.search_radius.get()),
+                attack_delay_seconds=delay,
+                search_radius=radius,
                 collect_remaining_loot=self.collect_loot.get(),
             )
             updated.validate()

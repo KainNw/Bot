@@ -260,7 +260,7 @@ static bool EnemiesDefeated(uint32_t client, uint32_t world, uint32_t context, i
         const auto unit = Read<uint32_t>(client + 0x138 + i * 4);
         if (!unit) return false;
         const auto slot = Read<uint32_t>(unit + 4), member = Read<uint32_t>(unit + 8) + 1;
-        if (!slot || slot >= 450 || slot >= info_count || member < 1 || member > 9) return false;
+        if (!slot || slot >= 450 || slot >= info_count) return false;
         const auto actor = Read<uint32_t>(world + 0x28 + slot * 4);
         if (!actor) return false;
         uint32_t identity[3];
@@ -268,6 +268,8 @@ static bool EnemiesDefeated(uint32_t client, uint32_t world, uint32_t context, i
         const int group = BattleGroup(context, identity);
         if (group < 0) return false;
         if (group == own_group || identity[0] < 3500 || identity[0] >= 22000) continue;
+        // Own companions are not enemy formation members. Validate the enemy member before reading its record.
+        if (member < 1 || member > 9) return false;
         if (!BattleUnitMatches(client, unit, world, slot, member, info_base, info_count, false)) return false;
         dead_enemy = true;
     }
