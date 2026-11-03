@@ -103,7 +103,7 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
     if (cmd->operation == StopMovement) {
         if (!NavigationSupported()) return Unsupported;
         if (Idle(player)) { ReadRoute(player, cmd); return MovementStopped; }
-        if (!OwnRoute(player, cmd)) return MovementChanged;
+        if (!OwnRoute(player, cmd)) { ReadRoute(player, cmd); return MovementChanged; }
         if (IsCancelled(cancellation)) return Cancelled;
         using Stop = void(__thiscall*)(void*);
         reinterpret_cast<Stop>(0x43b211)(reinterpret_cast<void*>(player));
@@ -134,8 +134,13 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
         if (!NavigationSupported()) return Unsupported;
         if (distance <= limit) return AlreadyInRange;
         const auto linked = Read<uint32_t>(player + 0x14);
-        if (Read<uint8_t>(player + 0x338) || !linked || Read<int>(linked + 0x380) != 2) return Blocked;
-        if (!Idle(player)) return MovementBusy;
+        if (Read<uint8_t>(player + 0x338) == 1 || !linked || Read<int>(linked + 0x380) != 2) return Blocked;
+        // This byte is compared with exactly 1 by the client's route consumer.
+        // +B78 is diagnostic here; starting requires the observed actor and route revision.
+        if (Read<uint8_t>(player + 0x1012) == 1) { ReadRoute(player, cmd); return MovementBusy; }
+        if (player != cmd->route_player || Read<uint32_t>(player + 0x1014) != cmd->route_tick) {
+            ReadRoute(player, cmd); return MovementChanged;
+        }
         if (cmd->map_id != Read<int16_t>(ti + 0xca) || cmd->x != Read<int16_t>(ti + 0xcc)
             || cmd->y != Read<int16_t>(ti + 0xce)) return TargetChanged;
         if (cmd->map_id < 0 || cmd->map_id > 0x157b || cmd->x <= 0 || cmd->x > 32767
@@ -225,7 +230,7 @@ extern "C" LRESULT CALLBACK AtlanticaHookProc(int code, WPARAM removed, LPARAM d
                 if (mapping) {
                     auto cmd = static_cast<SharedCommand*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedCommand)));
                     if (cmd) {
-                        if (cmd->magic == kMagic && cmd->version == 3 && cmd->pid == pid
+                        if (cmd->magic == kMagic && cmd->version == 4 && cmd->pid == pid
                             && cmd->nonce_lo == msg->wParam && cmd->nonce_hi == static_cast<DWORD>(msg->lParam)
                             && InterlockedCompareExchange(&cmd->state, 2, 1) == 1) {
                             cmd->thread_id = GetCurrentThreadId();

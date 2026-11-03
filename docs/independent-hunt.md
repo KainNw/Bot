@@ -76,7 +76,7 @@ también cuando el auxiliar agota su tiempo de respuesta.
 Cada ejecución crea un evento nuevo; no se restablece un evento cancelado para otra
 ejecución. Así, un mensaje antiguo no se habilita al volver a iniciar el bot. La prueba
 individual también cancela su canal al terminar o fallar. El protocolo helper/DLL
-es versión 3 y comprueba su tamaño (300 bytes), identificador, operación y PID.
+es versión 4 y comprueba su tamaño (300 bytes), identificador, operación y PID.
 Al parar con una ruta conocida, cancela primero nuevas solicitudes y utiliza un
 canal nuevo para detener esa ruta antes de liberar la reserva del PID. No repite
 una parada cuyo resultado sea incierto.

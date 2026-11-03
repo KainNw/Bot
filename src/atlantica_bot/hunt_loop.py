@@ -58,6 +58,7 @@ class HuntEngine:
     scene_counts: dict[int, int] = field(default_factory=dict)
     classification_counts: dict[str, int] = field(default_factory=dict)
     observations: deque = field(default_factory=lambda: deque(maxlen=24))
+    first_observation: dict = field(default_factory=dict)
     started_at: float | None = None
     battle_samples: int = 0
     battle_active: bool = False
@@ -101,13 +102,14 @@ class HuntEngine:
         self.classification_counts[classification] = (
             self.classification_counts.get(classification, 0) + 1
         )
-        self.observations.append(
-            {
-                "elapsed_seconds": round(now - self.started_at, 3),
-                "classification": classification,
-                **observation.summary(),
-            }
-        )
+        sample = {
+            "elapsed_seconds": round(now - self.started_at, 3),
+            "classification": classification,
+            **observation.summary(),
+        }
+        if not self.first_observation:
+            self.first_observation = sample
+        self.observations.append(sample)
         if (observation.pid, observation.creation_time) != (self.pid, self.creation_time):
             self.stop("La instancia cambió; vuelve a conectar.", reconnect=True)
             return False
@@ -287,7 +289,7 @@ class HuntEngine:
             )
             return False
         elif navigation.key != self.route.key:
-            if not navigation.active and not navigation.moving:
+            if navigation.active is False and navigation.moving is False:
                 self.move_reason = "route_finished"
             else:
                 self.stop("El movimiento cambió fuera del bot; detenido sin sustituirlo.")
@@ -434,6 +436,7 @@ class HuntEngine:
             "scene_counts": dict(self.scene_counts),
             "classification_counts": dict(self.classification_counts),
             "recent_observations": list(self.observations),
+            "first_observation": dict(self.first_observation),
             "range": dict(self.range_diagnostic),
             "profile": self.profile.summary(),
             "approach": {
@@ -569,6 +572,7 @@ class HuntWorker:
                         candidate,
                         self.engine.origin,
                         self.engine.approach,
+                        navigation=observation.navigation,
                         cancellation=self.cancellation,
                     )
                     self.engine.record_approach(candidate, report, time.monotonic())

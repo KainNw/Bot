@@ -1,4 +1,4 @@
-# Acercamiento opcional 0.6
+# Acercamiento opcional 0.6.1
 
 El usuario confirmó dos encuentros con 0.5: entró en combate sin Auto Battle,
 reconoció la batalla por `local_context` y volvió a buscar. El límite restante era
@@ -34,6 +34,29 @@ Respeta el bloqueo de movimiento `player+0x338` y el estado vinculado de mapa.
 No amplía la distancia de ataque ni activa Auto Battle o archivos compartidos.
 El detector por defecto usa la comparación local validada y se vincula de nuevo al
 PID y fecha de creación de cada conexión. La calibración manual sigue disponible.
+
+## Corrección de la lectura inicial en 0.6.1
+
+El informe de 0.6.0 del PID 10192 se detuvo con cero observaciones, consultas y
+acciones: «El estado de desplazamiento del cliente no es válido». El lector exigía
+que ambos bytes de navegación fuesen 0/1 y descartaba toda la observación si no
+lo eran. El informe no incluía sus valores originales, por lo que no permite
+identificar cuál de los dos provocó el rechazo.
+
+La revisión conserva `active_raw` y `moving_raw`, incluso cuando tienen otro valor.
+`active` sigue la comparación exacta con 1 encontrada en el consumidor de ruta
+`0043E35F`. Para `moving`, un byte diferente de 0/1 se representa como `null`
+(desconocido), nunca como prueba de inactividad. La primera observación se conserva
+además de las últimas 24. **Ver objetivos → Copiar resultados** permite obtener
+estos valores mediante una consulta sin iniciar movimientos.
+
+El inicio de acercamiento no depende de tratar `+0xB78` como booleano: mantiene
+posición estable, contexto, radio, identidad y ausencia de ruta activa. La orden
+lleva el objeto y tick leídos; el hook exige que sigan coincidiendo justo antes de
+llamar al método normal. Una revisión diferente rechaza la acción y no se reintenta
+automáticamente. La parada mantiene su comparación de propiedad completa y solo
+confirma flags desactivados cuando ambos bytes son exactamente cero. Un valor
+desconocido no autoriza detener una ruta ajena ni se considera una ruta terminada.
 
 | Operación | Función del cliente | Comprobación |
 | --- | --- | --- |
@@ -76,7 +99,7 @@ descriptor válido, no se inventa la propiedad de una ruta: se informa resultado
 desconocido y se exige comprobar el juego/reconectar. Parar no deshace un ataque
 ya encolado ni cancela un combate iniciado.
 
-El protocolo es versión 3, con mensajes de 300 bytes y operaciones distintas para
+El protocolo es versión 4, con mensajes de 300 bytes y operaciones distintas para
 consulta, ataque, acercamiento y parada. La respuesta debe coincidir en PID, hilo,
 operación y objetivo. Las pruebas cubren el ciclo de estados, límites, cancelación
 durante la aceptación, limpieza antes de liberar el PID, falta de progreso,

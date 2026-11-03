@@ -4,7 +4,7 @@
 #include <cstdio>
 
 constexpr uint32_t kMagic = 0x414F5031;
-constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.3";
+constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.4";
 enum Operation : uint32_t { Probe = 0, Attack = 1, Approach = 2, StopMovement = 3 };
 enum Result : uint32_t {
     Verified = 0, Queued = 1, Blocked = 2, OutOfRange = 3, InvalidScene = 4,

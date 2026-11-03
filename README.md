@@ -8,6 +8,11 @@ compatible vincula el detector local ya comprobado a ese PID y fecha de creació
 **Calibrar combate** permite comparar manualmente las señales si hace falta.
 Los turnos de los mercenarios siguen siendo manuales.
 
+La revisión 0.6.1 corrige el rechazo inicial de valores de desplazamiento distintos
+de 0/1. Conserva los bytes originales en el informe y comprueba el objeto y revisión
+de ruta observados antes de iniciar el acercamiento. No interpreta un valor desconocido
+como prueba de que el personaje esté parado.
+
 **Comprobado por el usuario:** la prueba individual 0.3 inició el ataque con Auto Battle
 desactivado. También confirmó un combate iniciado por 0.4 que el detector no reconoció.
 La siguiente captura mostró `scene_code=2`: ese valor solo no distingue el combate.
@@ -96,7 +101,8 @@ py -3 panel_caza.py
    pulsa **Parar bot** y espera el estado detenido.
 
 **Copiar estado del bot** copia el PID, fase, contadores, detector, perfil, alcance,
-últimas 24 observaciones y resultado de las solicitudes. El apartado `approach` incluye
+primera observación, últimas 24 observaciones y resultado de las solicitudes.
+Los estados de navegación incluyen `active_raw` y `moving_raw`. El apartado `approach` incluye
 ruta, acercamientos, llegadas, causa de parada y resultado de cancelación. Una cola confirmada no
 demuestra por sí sola que empezó un combate. Si la calibración no encuentra una
 señal, usa **Copiar calibración** para revisar los tres grupos antes de cambiar el detector.

@@ -155,7 +155,9 @@ class NavigationState:
     x: int
     y: int
     active: bool
-    moving: bool
+    moving: bool | None
+    active_raw: int | None = None
+    moving_raw: int | None = None
 
     @property
     def key(self) -> tuple[int, ...]:
@@ -176,7 +178,17 @@ class NavigationState:
                 or not 0 < result.x <= 32767
                 or not 0 < result.y <= 32767
                 or type(result.active) is not bool
-                or type(result.moving) is not bool
+                or (result.moving is not None and type(result.moving) is not bool)
+                or any(
+                    value is not None and (type(value) is not int or not 0 <= value <= 255)
+                    for value in (result.active_raw, result.moving_raw)
+                )
+                or (result.active_raw is not None and result.active != (result.active_raw == 1))
+                or (
+                    result.moving_raw is not None
+                    and result.moving
+                    is not (bool(result.moving_raw) if result.moving_raw in (0, 1) else None)
+                )
             ):
                 raise ValueError
             return result
@@ -216,14 +228,14 @@ def _local_state(reader: Reader, actor: int) -> LocalState:
 def _navigation(reader: Reader, actor: int) -> NavigationState:
     data = reader.read(actor + 0x1012, 12)
     moving = reader.byte(actor + 0xB78)
-    if data[0] not in (0, 1) or moving not in (0, 1):
-        raise DiagnosticError("El estado de desplazamiento del cliente no es válido.")
     return NavigationState(
         actor,
         struct.unpack_from("<I", data, 2)[0],
         *struct.unpack_from("<hhh", data, 6),
-        bool(data[0]),
-        bool(moving),
+        data[0] == 1,  # The captured route consumer compares this byte to exactly 1.
+        bool(moving) if moving in (0, 1) else None,
+        data[0],
+        moving,
     )
 
 

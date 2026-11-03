@@ -964,7 +964,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                             "La conexión cambió. Cierra este visor y abre el del cliente elegido."
                         )
                     view = scan_world(selected_session)
-                    observation = observe_scene(selected_session)
+                    observation = observe_scene(selected_session, include_navigation=True)
                     if (view.scene_code, view.player) != (
                         observation.scene_code,
                         observation.player,

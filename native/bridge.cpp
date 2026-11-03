@@ -79,7 +79,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 3; command.pid = pid;
+        command.magic = kMagic; command.version = 4; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -101,12 +101,16 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
             if (std::isfinite(shared->range_limit_squared)) std::cout << shared->range_limit_squared;
             else std::cout << "null";
             std::cout << ",\"navigation\":";
-            if (shared->result == ApproachRequested || shared->result == MovementStopped || shared->result == MovementNotConfirmed) {
+            if (shared->result == ApproachRequested || shared->result == MovementStopped
+                || shared->result == MovementNotConfirmed || shared->result == MovementChanged
+                || shared->result == MovementBusy) {
                 std::cout << "{\"player_address\":" << shared->route_player
                     << ",\"tick\":" << shared->route_tick << ",\"map_id\":" << shared->map_id
                     << ",\"x\":" << shared->x << ",\"y\":" << shared->y
-                    << ",\"active\":" << (shared->route_active ? "true" : "false")
-                    << ",\"moving\":" << (shared->route_moving ? "true" : "false") << "}";
+                    << ",\"active\":" << (shared->route_active == 1 ? "true" : "false")
+                    << ",\"moving\":" << (shared->route_moving == 0 ? "false" : shared->route_moving == 1 ? "true" : "null")
+                    << ",\"active_raw\":" << shared->route_active
+                    << ",\"moving_raw\":" << shared->route_moving << "}";
             } else std::cout << "null";
             std::cout << "}" << std::endl;
             }
@@ -226,7 +230,7 @@ int wmain(int argc, wchar_t** argv) {
         if (command.operation == StopMovement) {
             if (!command.route_player || !command.x || !command.y) return 2;
         } else if (command.slot < 2 || command.slot >= 450) return 2;
-        if (command.operation == Approach && (!command.radius || !command.x || !command.y)) return 2;
+        if (command.operation == Approach && (!command.radius || !command.x || !command.y || !command.route_player)) return 2;
         auto process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
         if (!process) return 3;
         FILETIME start, exit_time, kernel, user;

@@ -158,6 +158,42 @@ def test_starting_with_a_foreign_route_does_not_attack_or_replace_it():
     assert not engine.running and engine.route is None and engine.attempts == engine.moves == 0
 
 
+def test_unknown_movement_flag_is_reported_and_only_fresh_route_can_be_selected():
+    idle_unknown = replace(IDLE, active_raw=255, moving=None, moving_raw=255)
+    engine = HuntEngine(100, 777, DETECTOR, approach=ApproachSettings(True))
+    assert not engine.observe(observation(ORIGIN, idle_unknown), 0)
+    assert engine.observe(observation(ORIGIN, idle_unknown), 2)
+    assert engine.select(view(TARGET), 2) == TARGET
+    assert engine.phase == "requesting_approach"
+    assert engine.summary()["recent_observations"][-1]["navigation"]["moving_raw"] == 255
+    assert engine.summary()["first_observation"]["navigation"]["moving_raw"] == 255
+    assert engine.moves == engine.attempts == 0
+
+
+def test_unknown_movement_flag_does_not_prove_a_foreign_route_finished():
+    engine = moving_engine()
+    changed = replace(IDLE, tick=9999, moving=None, moving_raw=255)
+    assert not engine.observe(observation(ORIGIN, changed), 3)
+    assert not engine.running and engine.move_reason != "route_finished"
+    assert engine.route == ROUTE
+
+
+def test_route_revision_rejection_does_not_register_a_movement_or_an_attack():
+    engine = ready_engine()
+    engine.record_approach(
+        TARGET, {"pid": 100, "slot": 6, "status": 17, "message": "route changed"}, 3
+    )
+    assert not engine.running and engine.route is None and engine.moves == engine.attempts == 0
+
+
+@pytest.mark.parametrize("field,value", [("active", False), ("moving", False)])
+def test_inconsistent_raw_navigation_flags_are_rejected(field, value):
+    payload = replace(ROUTE, active_raw=1, moving_raw=255, moving=None).summary()
+    payload[field] = value
+    with pytest.raises(DiagnosticError):
+        NavigationState.from_report(payload)
+
+
 @pytest.mark.parametrize("radius", [0, 121, True, "60"])
 def test_invalid_search_radius_is_rejected(radius):
     with pytest.raises(DiagnosticError):

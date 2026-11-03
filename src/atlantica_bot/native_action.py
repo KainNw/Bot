@@ -86,6 +86,7 @@ def try_approach(
     origin: GridPosition,
     settings: ApproachSettings,
     *,
+    navigation: NavigationState,
     cancellation: Cancellation | None = None,
 ) -> dict:
     if not settings.enabled or not settings.contains(
@@ -99,6 +100,7 @@ def try_approach(
         operation=2,
         origin=origin,
         radius=settings.radius,
+        route=navigation,
         cancellation=cancellation,
     )
 
@@ -197,8 +199,20 @@ def _try_action(
             )
         )
     if operation == 2:
-        if origin is None or candidate is None:
-            raise DiagnosticError("Falta el punto de inicio del acercamiento.")
+        if origin is None or candidate is None or route is None:
+            raise DiagnosticError(
+                "Falta el punto de inicio o la revisión de ruta del acercamiento."
+            )
+        if (
+            type(route.player_address) is not int
+            or not 0 < route.player_address <= 0xFFFFFFFF
+            or type(route.tick) is not int
+            or not 0 <= route.tick <= 0xFFFFFFFF
+            or route.active is not False
+        ):
+            raise DiagnosticError(
+                "Actualiza la ruta del personaje antes de solicitar el acercamiento."
+            )
         args.extend(
             (
                 "--map",
@@ -215,6 +229,10 @@ def _try_action(
                 str(origin.y),
                 "--radius",
                 str(radius),
+                "--route-player",
+                str(route.player_address),
+                "--route-tick",
+                str(route.tick),
             )
         )
     elif operation == 3:
@@ -272,7 +290,11 @@ def _try_action(
         if type(code) is not int or code not in RESULTS or type(report["thread_id"]) is not int:
             raise ValueError("Respuesta no válida")
         if code >= 15 and code not in (
-            {15, 18, 19, 20, 21} if operation == 2 else {16, 17, 21} if operation == 3 else set()
+            {15, 17, 18, 19, 20, 21}
+            if operation == 2
+            else {16, 17, 21}
+            if operation == 3
+            else set()
         ):
             raise ValueError("Resultado de otra operación")
         if code == 15:
@@ -286,6 +308,8 @@ def _try_action(
         if code == 16 and (
             report["navigation"]["active"] is not False
             or report["navigation"]["moving"] is not False
+            or report["navigation"].get("active_raw") != 0
+            or report["navigation"].get("moving_raw") != 0
         ):
             raise ValueError("La ruta sigue activa")
     except (ValueError, KeyError, TypeError) as exc:

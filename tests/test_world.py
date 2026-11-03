@@ -180,6 +180,23 @@ def test_navigation_observation_reads_route_destination_and_flags(session):
     assert result.navigation.active and result.navigation.moving
 
 
+@pytest.mark.parametrize("active_raw,moving_raw", [(0, 255), (2, 0), (255, 2), (1, 255)])
+def test_noncanonical_navigation_bytes_are_preserved_without_dropping_observation(
+    session, active_raw, moving_raw
+):
+    actor = 0x30010000
+    session.system.write(
+        actor + 0x1012, bytes([active_raw, 0]) + struct.pack("<Ihhh", 1234, -1, 0, 0)
+    )
+    session.system.write(actor + 0xB78, bytes([moving_raw]))
+    observation = observe_scene(session, include_navigation=True)
+    assert observation.scene_code == 2 and observation.player.map_id == 8
+    assert observation.navigation.active is (active_raw == 1)
+    assert observation.navigation.moving is (False if moving_raw == 0 else None)
+    assert observation.summary()["navigation"]["active_raw"] == active_raw
+    assert observation.summary()["navigation"]["moving_raw"] == moving_raw
+
+
 def test_moving_observation_allows_grid_progress_but_keeps_scene_validation(session):
     info = 0x40010000
     memory = session.system

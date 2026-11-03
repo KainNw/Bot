@@ -242,6 +242,7 @@ def test_report_preserves_bounded_observations_and_counts_unchanged_scene_two():
     assert len(summary["recent_observations"]) == 24
     assert summary["recent_observations"][-1]["local"]["context_a"] == -1
     assert summary["classification_counts"] == {"map": 42}
+    assert summary["first_observation"]["elapsed_seconds"] == 0
     assert summary["profile"]["turn_execution_available"] is False
 
 

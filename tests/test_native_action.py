@@ -152,7 +152,12 @@ def test_approach_supplies_selected_instance_origin_radius_and_target(bridge, mo
 
     monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
     result = try_approach(
-        session, window, candidate, GridPosition(52, 193, 300), ApproachSettings(True)
+        session,
+        window,
+        candidate,
+        GridPosition(52, 193, 300),
+        ApproachSettings(True),
+        navigation=NavigationState(0x123456, 1001, -1, 0, 0, False, None, 2, 255),
     )
     assert result["status"] == 15 and result["action"] == "approach"
     assert len(calls) == 1
@@ -161,6 +166,8 @@ def test_approach_supplies_selected_instance_origin_radius_and_target(bridge, mo
     assert args[args.index("--radius") + 1] == "60"
     assert args[args.index("--origin-x") + 1] == "193"
     assert args[args.index("--x") + 1] == "202"
+    assert args[args.index("--route-player") + 1] == str(0x123456)
+    assert args[args.index("--route-tick") + 1] == "1001"
 
 
 def test_stop_uses_route_ownership_and_a_fresh_cancellation_channel(bridge, monkeypatch):
@@ -188,7 +195,12 @@ def test_stop_uses_route_ownership_and_a_fresh_cancellation_channel(bridge, monk
                     "status": 16,
                     "thread_id": 1234,
                     "operation": 3,
-                    "navigation": {"active": False, "moving": False},
+                    "navigation": {
+                        "active": False,
+                        "moving": False,
+                        "active_raw": 0,
+                        "moving_raw": 0,
+                    },
                 }
             ),
         )
