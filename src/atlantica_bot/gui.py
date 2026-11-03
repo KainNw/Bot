@@ -55,8 +55,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.detector_status = tk.StringVar(
                 value="Detector de combate: conecta con el cliente."
             )
-            self.approach_enabled = tk.BooleanVar(value=False)
-            self.approach_radius = tk.StringVar(value="60")
+            self.native_attack_enabled = tk.BooleanVar(value=True)
+            self.search_radius = tk.StringVar(value="60")
             self.bot_status = tk.StringVar(value="Bot detenido.")
             self.pid = tk.StringVar()
             self.folder = tk.StringVar(value="Conecta con el juego o selecciona su carpeta.")
@@ -128,15 +128,22 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Label(frame, textvariable=self.profile_status, wraplength=760).pack(anchor="w")
             row = ttk.Frame(frame)
             row.pack(fill="x", pady=6)
-            self.approach_check = ttk.Checkbutton(
-                row, text="Acercamiento automático (experimental)", variable=self.approach_enabled
+            self.native_attack_check = ttk.Checkbutton(
+                row,
+                text="Ataque nativo por radio (experimental)",
+                variable=self.native_attack_enabled,
             )
-            self.approach_check.pack(side="left")
+            self.native_attack_check.pack(side="left")
             ttk.Label(row, text="Radio de búsqueda (casillas):").pack(side="left", padx=(12, 4))
-            self.approach_entry = ttk.Spinbox(
-                row, from_=5, to=120, textvariable=self.approach_radius, width=5
+            self.radius_entry = ttk.Spinbox(
+                row, from_=5, to=120, textvariable=self.search_radius, width=5
             )
-            self.approach_entry.pack(side="left")
+            self.radius_entry.pack(side="left")
+            ttk.Label(
+                frame,
+                text="El radio selecciona mobs; el alcance de ataque lo establece el cliente.",
+                wraplength=760,
+            ).pack(anchor="w")
             read_row = ttk.Frame(frame)
             read_row.pack(fill="x", pady=6)
             self.advanced = ttk.Frame(frame)
@@ -176,7 +183,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             row.pack(fill="x", pady=4)
             self.trial_button = ttk.Button(
                 row,
-                text="Probar un ataque (experimental)",
+                text="Probar un ataque cercano (experimental)",
                 command=self.attack_once,
                 state="disabled",
             )
@@ -243,8 +250,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.connect_button,
                 self.pid_entry,
                 self.profile_button,
-                self.approach_check,
-                self.approach_entry,
+                self.native_attack_check,
+                self.radius_entry,
             ):
                 button.configure(state="disabled" if active else "normal")
             self.bot_stop_button.configure(
@@ -304,7 +311,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     self.selected_window(session),
                     self.detector,
                     self.profile,
-                    ApproachSettings(self.approach_enabled.get(), int(self.approach_radius.get())),
+                    ApproachSettings(False, int(self.search_radius.get())),
+                    native_attack=self.native_attack_enabled.get(),
                 )
                 self.bot_report = worker.engine.summary()
                 self.bot_worker = worker

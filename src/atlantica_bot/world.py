@@ -200,6 +200,56 @@ class NavigationState:
 
 
 @dataclass(frozen=True)
+class NativePursuit:
+    player_address: int
+    issued_tick: int
+    map_id: int
+    x: int
+    y: int
+    world_goal: tuple[float, float, float]
+    pending_raw: int
+
+    def summary(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_report(cls, payload: dict) -> NativePursuit:
+        try:
+            result = cls(**payload)
+            if (
+                type(result.player_address) is not int
+                or not 0 < result.player_address <= 0xFFFFFFFF
+                or type(result.issued_tick) is not int
+                or not 0 <= result.issued_tick <= 0xFFFFFFFF
+                or type(result.map_id) is not int
+                or not 0 <= result.map_id <= 0x157B
+                or any(type(v) is not int or not 0 <= v <= 32767 for v in (result.x, result.y))
+                or type(result.pending_raw) is not int
+                or not 0 <= result.pending_raw <= 255
+                or len(result.world_goal) != 3
+                or any(
+                    type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 1e7
+                    for v in result.world_goal
+                )
+            ):
+                raise ValueError
+            # The bridge prints enough decimal digits to round-trip float32 goals.
+            # Normalize back to float32 before comparing with ReadProcessMemory.
+            goal = struct.unpack("<fff", struct.pack("<fff", *result.world_goal))
+            return cls(
+                result.player_address,
+                result.issued_tick,
+                result.map_id,
+                result.x,
+                result.y,
+                goal,
+                result.pending_raw,
+            )
+        except (ValueError, TypeError, KeyError, OverflowError, struct.error) as exc:
+            raise DiagnosticError("La respuesta de persecución nativa no es válida.") from exc
+
+
+@dataclass(frozen=True)
 class Observation:
     pid: int
     creation_time: int | None
@@ -209,6 +259,8 @@ class Observation:
     local: LocalState | None = None
     navigation: NavigationState | None = None
     world_position: tuple[float, float, float] | None = None
+    native_goal: tuple[float, float, float] | None = None
+    native_goal_pending_raw: int | None = None
 
     def summary(self) -> dict:
         return asdict(self)
@@ -244,7 +296,11 @@ def _navigation(reader: Reader, actor: int) -> NavigationState:
 
 
 def observe_scene(
-    session: GameSession, *, include_navigation: bool = False, allow_player_movement: bool = False
+    session: GameSession,
+    *,
+    include_navigation: bool = False,
+    allow_player_movement: bool = False,
+    include_native_goal: bool = False,
 ) -> Observation:
     state = session.snapshot()
     reader = Reader(session)
@@ -253,6 +309,7 @@ def observe_scene(
         raise DiagnosticError("El cliente todavía no publica una escena válida.")
     scene = reader.i32(owner + 0xB98)
     player = local = navigation = world_position = None
+    native_goal = native_goal_pending = None
     if scene == 2:
         manager = reader.u32(owner + 0x828)
         if not manager:
@@ -264,6 +321,12 @@ def observe_scene(
         local = _local_state(reader, actor)
         navigation = _navigation(reader, actor) if include_navigation else None
         world_position = _world_position(reader, actor) if include_navigation else None
+        if include_native_goal:
+            data = reader.read(owner + 0x1674, 17)
+            native_goal = struct.unpack_from("<fff", data)
+            native_goal_pending = data[16]
+            if not all(math.isfinite(value) for value in native_goal):
+                raise DiagnosticError("El destino nativo del cliente no es válido.")
         current_position = _grid(reader, actor)
         if (
             reader.u32(owner + 0x828) != manager
@@ -287,6 +350,8 @@ def observe_scene(
         local,
         navigation,
         world_position,
+        native_goal,
+        native_goal_pending,
     )
 
 

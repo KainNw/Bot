@@ -11,7 +11,7 @@ from .hunting import control_hunting
 from .ipc import BotLease, Cancellation
 from .navigation import ApproachSettings
 from .session import GameSession
-from .world import Candidate, GridPosition, NavigationState
+from .world import Candidate, GridPosition, NativePursuit, NavigationState
 
 RESULTS = {
     0: "Contexto comprobado; no se solicitó un ataque.",
@@ -36,6 +36,10 @@ RESULTS = {
     19: "El objetivo ya está en alcance; se comprobará de nuevo antes de atacar.",
     20: "El personaje ya tiene un desplazamiento activo; no se sustituyó.",
     21: "No se confirmó el cambio de desplazamiento; comprueba el juego antes de reconectar.",
+    22: "El cliente encoló la persecución nativa del mob; esperando entrar en alcance.",
+    23: "Se encoló la parada de la persecución nativa; esperando una posición estable.",
+    24: "El destino nativo cambió fuera del bot; no se modificó ese movimiento.",
+    25: "El cliente ya está en combate; no se envió una orden de movimiento.",
 }
 
 
@@ -111,6 +115,38 @@ def stop_movement(session: GameSession, window: ClientWindow, route: NavigationS
     return _request(session, window, None, operation=3, route=route)
 
 
+def try_native_attack(
+    session: GameSession,
+    window: ClientWindow,
+    candidate: Candidate,
+    origin: GridPosition,
+    settings: ApproachSettings,
+    *,
+    pursuit: NativePursuit | None = None,
+    cancellation: Cancellation | None = None,
+) -> dict:
+    if not settings.contains(origin, GridPosition(candidate.map_id, candidate.x, candidate.y)):
+        raise DiagnosticError("El objetivo está fuera del radio de búsqueda configurado.")
+    return _request(
+        session,
+        window,
+        candidate,
+        operation=4,
+        origin=origin,
+        radius=settings.radius,
+        pursuit=pursuit,
+        cancellation=cancellation,
+    )
+
+
+def stop_native_pursuit(
+    session: GameSession,
+    window: ClientWindow,
+    pursuit: NativePursuit,
+) -> dict:
+    return _request(session, window, None, operation=5, pursuit=pursuit)
+
+
 def _request(
     session: GameSession,
     window: ClientWindow,
@@ -121,6 +157,7 @@ def _request(
     origin: GridPosition | None = None,
     radius: int = 0,
     route: NavigationState | None = None,
+    pursuit: NativePursuit | None = None,
 ) -> dict:
     with BotLease(session.process.pid):
         signal = cancellation or Cancellation(session.process.pid)
@@ -134,6 +171,7 @@ def _request(
                 origin=origin,
                 radius=radius,
                 route=route,
+                pursuit=pursuit,
             )
         finally:
             if cancellation is None:
@@ -153,6 +191,7 @@ def _try_action(
     origin: GridPosition | None,
     radius: int,
     route: NavigationState | None,
+    pursuit: NativePursuit | None,
 ) -> dict:
     """Issue one explicit request on the selected window's thread; never retry or move input."""
     if sys.platform != "win32":
@@ -175,7 +214,9 @@ def _try_action(
         raise DiagnosticError("Esta copia no contiene el puente Windows de 32 bits compilado.")
     args = [
         str(helper),
-        ("--probe", "--attack", "--approach", "--stop-move")[operation],
+        ("--probe", "--attack", "--approach", "--stop-move", "--native-attack", "--stop-native")[
+            operation
+        ],
         "--pid",
         str(window.pid),
         "--created",
@@ -253,6 +294,43 @@ def _try_action(
                 str(route.player_address),
             )
         )
+    elif operation == 4:
+        if origin is None or candidate is None or not 5 <= radius <= 120:
+            raise DiagnosticError("Falta el área de búsqueda del ataque nativo.")
+        args.extend(
+            (
+                "--map",
+                str(candidate.map_id),
+                "--origin-map",
+                str(origin.map_id),
+                "--origin-x",
+                str(origin.x),
+                "--origin-y",
+                str(origin.y),
+                "--radius",
+                str(radius),
+            )
+        )
+    if operation in (4, 5) and pursuit is not None:
+        NativePursuit.from_report(pursuit.summary())
+        args.extend(
+            (
+                "--route-player",
+                str(pursuit.player_address),
+                "--route-tick",
+                str(pursuit.issued_tick),
+                "--goal-x",
+                str(pursuit.world_goal[0]),
+                "--goal-y",
+                str(pursuit.world_goal[1]),
+                "--goal-z",
+                str(pursuit.world_goal[2]),
+            )
+        )
+        if operation == 5:
+            args.extend(("--map", str(pursuit.map_id)))
+    elif operation == 5:
+        raise DiagnosticError("Falta la persecución propia que se desea detener.")
     if cancellation is not None:
         args.extend(("--cancel-event", cancellation.name))
     try:
@@ -294,7 +372,11 @@ def _try_action(
             if operation == 2
             else {16, 17, 21}
             if operation == 3
-            else set()
+            else {18, 20, 22, 24}
+            if operation == 4
+            else {23, 24, 25}
+            if operation == 5
+            else {20}
         ):
             raise ValueError("Resultado de otra operación")
         if code == 15:
@@ -312,11 +394,24 @@ def _try_action(
             or report["navigation"].get("moving_raw") != 0
         ):
             raise ValueError("La ruta sigue activa")
+        if code in (22, 23):
+            native = NativePursuit.from_report(report["pursuit"])
+            if native.map_id != (candidate.map_id if candidate else pursuit.map_id):
+                raise ValueError("Persecución de otro mapa")
+            if pursuit is not None and native.player_address != pursuit.player_address:
+                raise ValueError("Persecución de otro personaje")
     except (ValueError, KeyError, TypeError) as exc:
         raise DiagnosticError(
             "El puente devolvió una respuesta no válida. No se reintenta."
         ) from exc
     report["message"] = RESULTS[code]
     report["battle_confirmed"] = False
-    report["action"] = ("probe", "attack", "approach", "stop_movement")[operation]
+    report["action"] = (
+        "probe",
+        "attack",
+        "approach",
+        "stop_movement",
+        "native_attack",
+        "stop_native_pursuit",
+    )[operation]
     return report

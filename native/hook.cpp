@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <limits>
 
 template<class T> T Read(uintptr_t address) {
     return *reinterpret_cast<const T*>(address);
@@ -82,9 +83,89 @@ static void ReadRoute(uint32_t player, SharedCommand* cmd) {
 }
 static bool InsideArea(int map, int x, int y, const SharedCommand* cmd) {
     return cmd->radius >= 5 && cmd->radius <= 120 && map == cmd->origin_map
+        && x >= 0 && x <= 32767 && y >= 0 && y <= 32767
         && cmd->origin_x >= 0 && cmd->origin_x <= 32767
         && cmd->origin_y >= 0 && cmd->origin_y <= 32767
         && std::abs(x - cmd->origin_x) + std::abs(y - cmd->origin_y) <= static_cast<int>(cmd->radius);
+}
+static bool NativePursuitSupported() {
+    // The captured Auto Battle far-target branch: goal fields and 0xAE5/20-byte payload.
+    return HexAnchor(0x43ced0,
+        "8b45fca34c2ce5048d45e0508bcfe837f7ffff8bf08dbb74160000a5a5a58b75f883a380160000008d45e0508bcec6838416"
+        "000001e810f7ffff8bced9008d45a850d95dcce800f7ffffd940048d45b850d95dd08bcee8eff6ffffd9400833c0d95dd4d9"
+        "ee6a01668945d8d95ddc8d45cc506a1468e50a00008d8d6c8affffe895f5fcff8b038d8d6c8affff518bcbff5064")
+        && HexAnchor(0x43c61a,
+        "56578b3d18ce39156a008bf1e8c7815c00518d86880a00008b108bcc89118b4004894104e8db815c008b4018"
+        "ff7424148bc8e8f1815d0057e89b815c008b442410595f5ec20400");
+}
+static uint32_t SendQueue(uint32_t owner, uint32_t* outgoing) {
+    if (Read<uint32_t>(Read<uint32_t>(owner) + 0x64) != 0x0095ec3a
+        || !Read<uint8_t>(owner + 0x11d8e)) return Unsupported;
+    const auto connection = Read<uint32_t>(owner + 0x1d70);
+    if (!connection || !Read<uint32_t>(connection + 0x70)) return InvalidQueue;
+    const auto queue = Read<uint32_t>(connection + 0x6c);
+    if (!queue || Read<int>(queue + 0x44) != 0
+        || !LockImport(0x03f850d0, "EnterCriticalSection", "RtlEnterCriticalSection")
+        || !LockImport(0x03f850d4, "LeaveCriticalSection", "RtlLeaveCriticalSection")) return InvalidQueue;
+    *outgoing = queue;
+    return Verified;
+}
+static bool OwnNativePursuit(uint32_t owner, uint32_t player, const SharedCommand* cmd) {
+    if (player != cmd->route_player || Read<uint8_t>(player + 0x1012) == 1) return false;
+    for (unsigned i = 0; i < 3; ++i)
+        if (Read<float>(owner + 0x1674 + i * 4) != cmd->world_goal[i]) return false;
+    return true;
+}
+static bool WorldPoint(uint32_t actor, float (&point)[3]) {
+    // Auto Battle uses this native getter for the movement command's destination.
+    using Position = float*(__thiscall*)(void*, float*);
+    for (float& value : point) value = std::numeric_limits<float>::quiet_NaN();
+    if (reinterpret_cast<Position>(0x43c61a)(reinterpret_cast<void*>(actor), point) != point) return false;
+    for (float value : point) if (!std::isfinite(value) || std::abs(value) > 1.e7f) return false;
+    return true;
+}
+static uint32_t QueueNativePursuit(uint32_t owner, uint32_t player, uint32_t queue,
+    const float (&goal)[3], SharedCommand* cmd, HANDLE cancellation, bool stopping) {
+    alignas(4) unsigned char payload[20] = {}, message[64] = {};
+    std::memcpy(payload, goal, 12);
+    using Message = void*(__thiscall*)(void*, unsigned, int, const void*, int);
+    using Send = int(__thiscall*)(void*, const void*);
+    reinterpret_cast<Message>(0x40c4e9)(message, 0xae5, 20, payload, 1);
+    if (Read<uint16_t>(reinterpret_cast<uintptr_t>(message)) != 29) return Unsupported;
+    auto lock = reinterpret_cast<CRITICAL_SECTION*>(queue + 0x20);
+    uint32_t result = NotQueued;
+    EnterCriticalSection(lock);
+    __try {
+        const auto capacity = Read<int>(queue + 4), used = Read<int>(queue + 0x10);
+        if (IsCancelled(cancellation)) result = Cancelled;
+        else if (capacity <= 0 || used < 0 || used > capacity || capacity - used < 29) result = QueueFull;
+        else {
+            float previous_goal[3];
+            std::memcpy(previous_goal, reinterpret_cast<void*>(owner + 0x1674), 12);
+            const auto previous_progress = Read<uint32_t>(owner + 0x1680);
+            const auto previous_pending = Read<uint8_t>(owner + 0x1684);
+            std::memcpy(reinterpret_cast<void*>(owner + 0x1674), goal, 12);
+            *reinterpret_cast<uint32_t*>(owner + 0x1680) = 0;
+            *reinterpret_cast<uint8_t*>(owner + 0x1684) = 1;
+            reinterpret_cast<Send>(0x0095ec3a)(reinterpret_cast<void*>(owner), message);
+            const auto after = Read<int>(queue + 0x10);
+            if (after == used + 29) {
+                std::memcpy(cmd->world_goal, goal, 12);
+                cmd->route_player = player;
+                cmd->route_tick = Read<uint32_t>(owner + 0xba4);
+                cmd->route_active = Read<uint8_t>(owner + 0x1684);
+                result = stopping ? NativePursuitStopRequested : NativePursuitRequested;
+            } else if (after == used
+                && std::memcmp(reinterpret_cast<void*>(owner + 0x1674), goal, 12) == 0
+                && Read<uint32_t>(owner + 0x1680) == 0 && Read<uint8_t>(owner + 0x1684) == 1) {
+                // No command was copied; restore only the state still owned by this invocation.
+                std::memcpy(reinterpret_cast<void*>(owner + 0x1674), previous_goal, 12);
+                *reinterpret_cast<uint32_t*>(owner + 0x1680) = previous_progress;
+                *reinterpret_cast<uint8_t*>(owner + 0x1684) = previous_pending;
+            }
+        }
+    } __finally { LeaveCriticalSection(lock); }
+    return result;
 }
 static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
     if (IsCancelled(cancellation)) return Cancelled;
@@ -99,7 +180,23 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
     const auto player = Read<uint32_t>(manager + 0x2c);
     if (!player || Read<uint32_t>(player + 0x200) != 1
         || Read<uint32_t>(player + 0x2c) != manager) return TargetChanged;
-    if (Read<int>(player + 0x318) >= 0 || Read<int>(player + 0x254) >= 0) return InvalidScene;
+    if (Read<int>(player + 0x318) >= 0 || Read<int>(player + 0x254) >= 0)
+        return cmd->operation == StopNativePursuit ? NativePursuitInBattle : InvalidScene;
+    if (cmd->operation == StopNativePursuit) {
+        if (!NativePursuitSupported()) return Unsupported;
+        const auto info = Read<uint32_t>(player + 0x30);
+        if (!info || Read<int16_t>(info + 0xca) != cmd->map_id
+            || !OwnNativePursuit(owner, player, cmd)) return NativePursuitChanged;
+        float current[3];
+        if (!WorldPoint(player, current)) return RangeUnavailable;
+        cmd->x = Read<int16_t>(info + 0xcc);
+        cmd->y = Read<int16_t>(info + 0xce);
+        if (cmd->x < 0 || cmd->y < 0) return RangeUnavailable;
+        uint32_t queue = 0;
+        const auto validation = SendQueue(owner, &queue);
+        if (validation != Verified) return validation;
+        return QueueNativePursuit(owner, player, queue, current, cmd, cancellation, true);
+    }
     if (cmd->operation == StopMovement) {
         if (!NavigationSupported()) return Unsupported;
         if (Idle(player)) { ReadRoute(player, cmd); return MovementStopped; }
@@ -154,19 +251,19 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
         ReadRoute(player, cmd);
         return Read<uint8_t>(player + 0x1012) == 1 ? ApproachRequested : MovementNotConfirmed;
     }
-    if (distance > limit) return OutOfRange;
-    if (Read<uint32_t>(Read<uint32_t>(owner) + 0x64) != 0x0095ec3a
-        || !Read<uint8_t>(owner + 0x11d8e)) return Unsupported;
-    const auto connection = Read<uint32_t>(owner + 0x1d70);
-    if (!connection || !Read<uint32_t>(connection + 0x70)) return InvalidQueue;
-    const auto queue = Read<uint32_t>(connection + 0x6c);
-    if (!queue || Read<int>(queue + 0x44) != 0
-        || !LockImport(0x03f850d0, "EnterCriticalSection", "RtlEnterCriticalSection")
-        || !LockImport(0x03f850d4, "LeaveCriticalSection", "RtlLeaveCriticalSection"))
-        return InvalidQueue;
+    if (cmd->operation == NativeAttack) {
+        if (!NativePursuitSupported()) return Unsupported;
+        if (!InsideArea(Read<int16_t>(ti + 0xca), Read<int16_t>(ti + 0xcc), Read<int16_t>(ti + 0xce), cmd)
+            || !InsideArea(Read<int16_t>(pi + 0xca), Read<int16_t>(pi + 0xcc), Read<int16_t>(pi + 0xce), cmd))
+            return OutsideArea;
+        if (cmd->route_player && !OwnNativePursuit(owner, player, cmd)) return NativePursuitChanged;
+    } else if (distance > limit) return OutOfRange;
+    uint32_t queue = 0;
+    const auto validation = SendQueue(owner, &queue);
+    if (validation != Verified) return validation;
     if (Read<uint8_t>(player + 0x1012) == 1) { ReadRoute(player, cmd); return MovementBusy; }
     if (cmd->operation == Probe) return Verified; // Probe never calls any client function.
-    if (cmd->operation != Attack) return Unsupported;
+    if (cmd->operation != Attack && cmd->operation != NativeAttack) return Unsupported;
     if (IsCancelled(cancellation)) return Cancelled;
     using Can = int(__thiscall*)(void*, int);
     using Ready = bool(__thiscall*)(void*);
@@ -177,9 +274,23 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
     if (!reinterpret_cast<Can>(0x433a4a)(reinterpret_cast<void*>(player), static_cast<int>(cmd->slot))) return Blocked;
     if (IsCancelled(cancellation)) return Cancelled;
     if (Read<uint32_t>(0x04a9290c) != owner || !Identity(target, cmd)
+        || Read<uint32_t>(owner + 0x828) != manager || Read<uint32_t>(manager + 0x2c) != player
         || Read<uint32_t>(manager + 0x28 + cmd->slot * 4) != target
         || Read<uint32_t>(target + 0x200) != cmd->slot || !Active(index, cmd->slot)) return TargetChanged;
+    if (Read<int>(owner + 0xb98) != 2 || Read<int>(player + 0x318) >= 0
+        || Read<int>(player + 0x254) >= 0) return InvalidScene;
+    if (Read<uint8_t>(owner + 0x16394) || Read<uint8_t>(0x04e52c5a)) return NativeHunting;
     if (Read<uint8_t>(player + 0x1012) == 1) { ReadRoute(player, cmd); return MovementBusy; }
+    if (cmd->operation == NativeAttack && cmd->route_player
+        && !OwnNativePursuit(owner, player, cmd)) return NativePursuitChanged;
+    if (cmd->operation == NativeAttack && distance > limit) {
+        float goal[3];
+        if (!WorldPoint(target, goal)) return RangeUnavailable;
+        cmd->map_id = Read<int16_t>(ti + 0xca);
+        cmd->x = Read<int16_t>(ti + 0xcc);
+        cmd->y = Read<int16_t>(ti + 0xce);
+        return QueueNativePursuit(owner, player, queue, goal, cmd, cancellation, false);
+    }
     alignas(4) unsigned char payload[16] = {}, message[64] = {};
     reinterpret_cast<Payload>(0x43bc26)(payload, reinterpret_cast<void*>(target + 0x204), 1, 0);
     reinterpret_cast<Message>(0x40c4e9)(message, 0xae2, 16, payload, 1);
@@ -234,7 +345,7 @@ extern "C" LRESULT CALLBACK AtlanticaHookProc(int code, WPARAM removed, LPARAM d
                 if (mapping) {
                     auto cmd = static_cast<SharedCommand*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedCommand)));
                     if (cmd) {
-                        if (cmd->magic == kMagic && cmd->version == 4 && cmd->pid == pid
+                        if (cmd->magic == kMagic && cmd->version == 5 && cmd->pid == pid
                             && cmd->nonce_lo == msg->wParam && cmd->nonce_hi == static_cast<DWORD>(msg->lParam)
                             && InterlockedCompareExchange(&cmd->state, 2, 1) == 1) {
                             cmd->thread_id = GetCurrentThreadId();

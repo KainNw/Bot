@@ -1,4 +1,7 @@
-# Acercamiento opcional 0.6.4
+# Acercamiento por rutas de 0.6.4
+
+El panel de 0.7 sustituye este modo por [ataque nativo por radio](native-attack.md).
+Esta página conserva el análisis y comportamiento de la versión anterior.
 
 El usuario confirmó dos encuentros con 0.5: entró en combate sin Auto Battle,
 reconoció la batalla por `local_context` y volvió a buscar. El límite restante era
@@ -212,7 +215,7 @@ descriptor válido, no se inventa la propiedad de una ruta: se informa resultado
 desconocido y se exige comprobar el juego/reconectar. Parar no deshace un ataque
 ya encolado ni cancela un combate iniciado.
 
-El protocolo es versión 4, con mensajes de 300 bytes y operaciones distintas para
+En 0.6 el protocolo era versión 4, con mensajes de 300 bytes y operaciones distintas para
 consulta, ataque, acercamiento y parada. La respuesta debe coincidir en PID, hilo,
 operación y objetivo. Las pruebas cubren el ciclo de estados, límites, cancelación
 durante la aceptación, limpieza antes de liberar el PID, falta de progreso,

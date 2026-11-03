@@ -8,10 +8,16 @@ import pytest
 from atlantica_bot.clients import ClientWindow
 from atlantica_bot.errors import DiagnosticError
 from atlantica_bot.hunting import HuntingResult
-from atlantica_bot.native_action import stop_movement, try_approach, try_attack
+from atlantica_bot.native_action import (
+    stop_movement,
+    stop_native_pursuit,
+    try_approach,
+    try_attack,
+    try_native_attack,
+)
 from atlantica_bot.navigation import ApproachSettings
 from atlantica_bot.session import LiveState
-from atlantica_bot.world import Candidate, GridPosition, NavigationState
+from atlantica_bot.world import Candidate, GridPosition, NativePursuit, NavigationState
 
 
 @pytest.fixture
@@ -72,6 +78,111 @@ def test_one_request_targets_only_selected_pid_window_creation_and_identity(brid
     assert args[args.index("--serial") + 1] == "77"
     assert "--attack" in args
     assert result["battle_confirmed"] is False
+
+
+def test_native_attack_passes_search_area_and_same_instance_without_grid_route(bridge, monkeypatch):
+    session, window, candidate = bridge
+    pursuit = NativePursuit(0x30010000, 1234, 52, 202, 267, (12.125, -33.5, 0.0), 1)
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        assert "--native-attack" in args and "--approach" not in args
+        assert args[args.index("--pid") + 1] == "200"
+        assert args[args.index("--created") + 1] == "123456"
+        assert args[args.index("--radius") + 1] == "60"
+        assert args[args.index("--origin-x") + 1] == "193"
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "pid": 200,
+                    "slot": 6,
+                    "thread_id": 1234,
+                    "operation": 4,
+                    "status": 22,
+                    "pursuit": pursuit.summary(),
+                }
+            ),
+        )
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    result = try_native_attack(
+        session,
+        window,
+        candidate,
+        GridPosition(52, 193, 300),
+        ApproachSettings(False, 60),
+    )
+    assert len(calls) == 1 and result["status"] == 22 and not result["battle_confirmed"]
+    assert result["action"] == "native_attack"
+
+
+def test_native_stop_supplies_exact_owned_float_goal_and_never_selects_another_actor(
+    bridge, monkeypatch
+):
+    session, window, _ = bridge
+    pursuit = NativePursuit(0x30010000, 1234, 52, 202, 267, (12.125, -33.5, 0.0), 1)
+
+    def run(args, **kwargs):
+        assert "--stop-native" in args and "--slot" not in args
+        assert args[args.index("--goal-y") + 1] == "-33.5"
+        assert args[args.index("--route-player") + 1] == str(pursuit.player_address)
+        assert args[args.index("--map") + 1] == "52"
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "pid": 200,
+                    "slot": 0,
+                    "thread_id": 1234,
+                    "operation": 5,
+                    "status": 23,
+                    "pursuit": pursuit.summary(),
+                }
+            ),
+        )
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    assert stop_native_pursuit(session, window, pursuit)["status"] == 23
+
+
+def test_native_target_outside_search_area_never_launches_bridge(bridge, monkeypatch):
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run", lambda *a, **kw: pytest.fail("outside radius")
+    )
+    session, window, target = bridge
+    with pytest.raises(DiagnosticError, match="radio de búsqueda"):
+        try_native_attack(
+            session, window, target, GridPosition(52, 193, 300), ApproachSettings(False, 5)
+        )
+
+
+def test_native_response_cannot_be_from_legacy_operation(bridge, monkeypatch):
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {"pid": 200, "slot": 6, "thread_id": 1234, "operation": 2, "status": 22}
+            ),
+        ),
+    )
+    with pytest.raises(DiagnosticError, match="respuesta no válida"):
+        try_native_attack(*bridge, GridPosition(52, 193, 300), ApproachSettings(False, 60))
+
+
+def test_busy_movement_is_a_valid_attack_rejection_not_a_corrupt_response(bridge, monkeypatch):
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {"pid": 200, "slot": 6, "thread_id": 1234, "operation": 1, "status": 20}
+            ),
+        ),
+    )
+    assert try_attack(*bridge)["status"] == 20
 
 
 def test_mismatched_window_is_rejected_before_launching_helper(bridge, monkeypatch):

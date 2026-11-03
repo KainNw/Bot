@@ -1,18 +1,18 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión 0.6 añade **Acercamiento automático (experimental)**
-y radio de búsqueda. Conserva **Calibrar combate**, observaciones y tres perfiles para
+con Auto Battle apagado. La versión **0.7.0** añade **Ataque nativo por radio (experimental)**.
+Conserva **Calibrar combate**, observaciones y tres perfiles para
 guardar la selección y prioridad de mercenarios. Al conectar con la compilación
 compatible vincula el detector local ya comprobado a ese PID y fecha de creación.
 **Calibrar combate** permite comparar manualmente las señales si hace falta.
 Los turnos de los mercenarios siguen siendo manuales.
 
-La revisión **0.6.4** deja terminar la ruta del cliente y exige dos segundos de
-posición 3D estable antes de atacar. Conserva la identidad del mob aunque cambie
-de puesto en la tabla y excluye los objetivos de combates confirmados mientras
-sigan activos. El ataque utiliza la misma solicitud que Auto Battle, sin activarlo.
-El historial de selección, recorrido, parada y combate permite revisar los fallos.
+El modo nuevo usa las órdenes nativas observadas en Auto Battle: persecución del mob
+si está lejos y ataque cuando entra en el mismo alcance que establece el cliente.
+El radio de búsqueda selecciona objetivos; no amplía el alcance del golpe ni escribe
+el umbral nativo. El panel conserva la identidad del mob aunque cambie de puesto.
+Detalles y prueba pendiente en [ataque nativo por radio](docs/native-attack.md).
 
 **Comprobado por el usuario:** la prueba individual 0.3 inició el ataque con Auto Battle
 desactivado. También confirmó un combate iniciado por 0.4 que el detector no reconoció.
@@ -32,18 +32,20 @@ cierre que permita identificar su causa.
 
 La lógica tiene pruebas automatizadas. El workflow de Windows prueba las APIs y
 sincronización sobre procesos/objetos propios, compila el puente x86 y comprueba el
-arranque del ejecutable empaquetado. La captura 0.6.3 registró tres combates y una
-cuarta solicitud sin combate después de interrumpir el acercamiento al entrar en
-alcance. La nueva espera al final del recorrido necesita contrastarse en el juego;
-no se presenta como aceptación del servidor ya comprobada. Usa el cliente sin adjuntar x32dbg.
+arranque del ejecutable empaquetado. La captura 0.6.4 confirmó dos combates después
+de recorridos completos y registró otro ataque sin combate observado durante veinte
+segundos. El clic manual sobre ese mob sí inició combate, según confirmó el usuario.
+El sistema de persecución de 0.7 necesita su propia prueba en el juego; todavía no
+se presenta como solución comprobada a todos los rechazos. Usa el cliente sin adjuntar x32dbg.
 
 Solo se admite la compilación cuyo SHA-256 es
 `BC87A0CC5826AA7FB5E4FF10B6B7C1A349962BD8B146AD28EC3FFA9453FE04E6`.
 
 ## Mejoras solicitadas y límites actuales
 
-El ciclo usa el envío individual ya confirmado y selecciona candidatos dentro
-del alcance 3D del cliente. Envía una solicitud y espera dos observaciones de combate
+El ciclo selecciona candidatos en el radio configurado. Si están fuera del alcance
+3D del cliente, solicita su persecución nativa; al entrar en alcance envía el ataque.
+Espera dos observaciones de combate
 según el detector calibrado antes de permitir otra. Al volver al mismo mapa, exige
 una posición estable durante dos segundos. Si no observa el combate en treinta
 segundos, se detiene sin repetir el envío. El ciclo cercano ya se observó en dos
@@ -61,12 +63,14 @@ Se conserva en `%LOCALAPPDATA%/AtlanticaPanel/profiles`, fuera de la carpeta del
 El perfil activo queda fijado al iniciar el ciclo. Detalles de uso y diagnóstico:
 [calibración y perfiles](docs/combat-calibration.md).
 
-**Acercamiento automático (experimental)** permite solicitar una ruta hacia un mob
-fuera de alcance, dentro de un radio de 5–120 casillas alrededor del inicio de esa
-ejecución. Espera que termine el recorrido y que la posición real se estabilice,
-y vuelve a comprobar el ataque. **Parar bot** solicita interrumpir su ruta. El movimiento
-está desactivado por defecto para conservar el modo cercano de 0.5 hasta que lo marques.
-Detalles y límites: [acercamiento nativo](docs/native-approach.md).
+**Ataque nativo por radio (experimental)** viene marcado para la prueba solicitada.
+El radio va de 5 a 120 casillas alrededor del inicio de esa ejecución, con valor
+inicial 60. Si lo desmarcas, conserva el ciclo cercano. El panel no utiliza las
+rutas por rejilla del modo anterior. **Parar bot** cancela nuevas órdenes y solicita
+parar una persecución que todavía pueda identificar como propia. Espera a que el
+personaje se detenga antes de moverlo. Una orden de ataque ya aceptada puede terminar
+en combate. Detalles: [ataque nativo](docs/native-attack.md). El análisis del
+[acercamiento anterior](docs/native-approach.md) queda como referencia de 0.6.
 
 No hay automatización de turnos. El control
 nativo anterior sigue en **Más controles** y utiliza `HuntingMode.txt` y Auto Battle.
@@ -101,18 +105,19 @@ py -3 panel_caza.py
 3. El detector queda listo al conectar. Si necesitas contrastarlo, **Calibrar combate**
    permite capturar mapa → combate → regreso. Tras una prueba individual, reconecta
    al mismo PID antes de iniciar el ciclo.
-4. Si quieres probar el movimiento, marca **Acercamiento automático (experimental)**
-   y elige el radio (60 casillas inicialmente). El punto actual será el centro del área.
-5. Pulsa **Iniciar bot**. Busca, se acerca si hace
-   falta y está habilitado, espera a terminar el recorrido y solicita el ataque.
+4. Deja marcado **Ataque nativo por radio (experimental)** y elige el radio
+   (60 casillas inicialmente). El punto actual será el centro del área de selección.
+5. Pulsa **Iniciar bot**. Busca un mob y solicita persecución o ataque según el
+   alcance nativo. El cliente ejecuta el desplazamiento.
    Juega los turnos manualmente.
 6. Al regresar al mapa, el bot vuelve a buscar. Para moverte o cambiar de cliente,
    pulsa **Parar bot** y espera el estado detenido.
 
 **Copiar estado del bot** copia el PID, fase, contadores, detector, perfil, alcance,
 primera observación, últimas 24 observaciones y resultado de las solicitudes.
-Los estados de navegación incluyen `active_raw` y `moving_raw`. El apartado `approach` incluye
-ruta, acercamientos, llegadas, causa de parada y resultado de cancelación. Una cola confirmada no
+El apartado `native_attack` incluye el destino, identidad, solicitudes nativas,
+fallos y respuesta de parada. Los estados de navegación anteriores siguen disponibles
+en el diagnóstico. Una cola confirmada no
 demuestra por sí sola que empezó un combate. Si la calibración no encuentra una
 señal, usa **Copiar calibración** para revisar los tres grupos antes de cambiar el detector.
 

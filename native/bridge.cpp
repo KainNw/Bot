@@ -3,6 +3,8 @@
 #include <array>
 #include <cerrno>
 #include <cmath>
+#include <iomanip>
+#include <limits>
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
@@ -79,7 +81,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 4; command.pid = pid;
+        command.magic = kMagic; command.version = 5; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -91,6 +93,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
         if (code == 0) {
             if (response) *response = *shared;
             if (!quiet) {
+            std::cout << std::setprecision(std::numeric_limits<float>::max_digits10);
             std::cout << "{\"pid\":" << pid << ",\"status\":" << shared->result
                 << ",\"exception\":" << shared->exception << ",\"thread_id\":" << shared->thread_id
                 << ",\"operation\":" << shared->operation
@@ -111,6 +114,14 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
                     << ",\"moving\":" << (shared->route_moving == 0 ? "false" : shared->route_moving == 1 ? "true" : "null")
                     << ",\"active_raw\":" << shared->route_active
                     << ",\"moving_raw\":" << shared->route_moving << "}";
+            } else std::cout << "null";
+            std::cout << ",\"pursuit\":";
+            if (shared->result == NativePursuitRequested || shared->result == NativePursuitStopRequested) {
+                std::cout << "{\"player_address\":" << shared->route_player
+                    << ",\"issued_tick\":" << shared->route_tick << ",\"map_id\":" << shared->map_id
+                    << ",\"x\":" << shared->x << ",\"y\":" << shared->y
+                    << ",\"world_goal\":[" << shared->world_goal[0] << "," << shared->world_goal[1]
+                    << "," << shared->world_goal[2] << "],\"pending_raw\":" << shared->route_active << "}";
             } else std::cout << "null";
             std::cout << "}" << std::endl;
             }
@@ -160,6 +171,11 @@ static int SelfTest() {
     const int move_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &move_response, true) : 32;
     cancelled.operation = StopMovement;
     const int stop_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &stop_response, true) : 32;
+    SharedCommand native_response = {}, native_stop_response = {};
+    cancelled.operation = NativeAttack;
+    const int native_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &native_response, true) : 32;
+    cancelled.operation = StopNativePursuit;
+    const int native_stop_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &native_stop_response, true) : 32;
     if (cancellation) CloseHandle(cancellation);
     const int missing_code = Run(test.window, GetCurrentProcessId(), cancelled, &missing_response, true);
     SharedCommand empty_channel = {}, empty_response = {};
@@ -173,6 +189,8 @@ static int SelfTest() {
         && !cancelled_code && cancelled_response.result == Cancelled
         && !move_code && move_response.result == Cancelled
         && !stop_code && stop_response.result == Cancelled
+        && !native_code && native_response.result == Cancelled
+        && !native_stop_code && native_stop_response.result == Cancelled
         && !missing_code && missing_response.result == CancellationUnavailable
         && !empty_code && empty_response.result == CancellationUnavailable ? 0 : 31);
     if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result
@@ -185,16 +203,26 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wcscmp(argv[1], L"--self-test") == 0) return SelfTest();
     try {
         DWORD pid = 0, expected_thread = 0; uint64_t created = 0, hwnd = 0; SharedCommand command = {};
-        bool operation = false;
+        bool operation = false; unsigned goal_fields = 0;
         for (int i = 1; i < argc; ++i) {
             std::wstring key(argv[i]);
-            if (key == L"--attack" || key == L"--probe" || key == L"--approach" || key == L"--stop-move") {
+            if (key == L"--attack" || key == L"--probe" || key == L"--approach" || key == L"--stop-move"
+                || key == L"--native-attack" || key == L"--stop-native") {
                 if (operation) return 2;
                 command.operation = key == L"--attack" ? Attack : key == L"--probe" ? Probe
-                    : key == L"--approach" ? Approach : StopMovement;
+                    : key == L"--approach" ? Approach : key == L"--stop-move" ? StopMovement
+                    : key == L"--native-attack" ? NativeAttack : StopNativePursuit;
                 operation = true; continue;
             }
             if (i + 1 >= argc) return 2;
+            if (key == L"--goal-x" || key == L"--goal-y" || key == L"--goal-z") {
+                std::wstring value(argv[++i]); size_t used = 0;
+                const float coordinate = std::stof(value, &used);
+                if (used != value.size() || !std::isfinite(coordinate) || std::abs(coordinate) > 1.e7f) return 2;
+                command.world_goal[key == L"--goal-x" ? 0 : key == L"--goal-y" ? 1 : 2] = coordinate;
+                goal_fields |= key == L"--goal-x" ? 1 : key == L"--goal-y" ? 2 : 4;
+                continue;
+            }
             if (key == L"--cancel-event") {
                 const auto name = argv[++i];
                 constexpr wchar_t prefix[] = L"Local\\AtlanticaPanel.Cancel.";
@@ -229,8 +257,13 @@ int wmain(int argc, wchar_t** argv) {
         if (!pid || !hwnd || !created || !expected_thread || !operation) return 2;
         if (command.operation == StopMovement) {
             if (!command.route_player || !command.x || !command.y) return 2;
+        } else if (command.operation == StopNativePursuit) {
+            if (!command.route_player) return 2;
         } else if (command.slot < 2 || command.slot >= 450) return 2;
         if (command.operation == Approach && (!command.radius || !command.x || !command.y || !command.route_player)) return 2;
+        if (command.operation == NativeAttack && !command.radius) return 2;
+        if ((command.operation == StopNativePursuit
+            || command.operation == NativeAttack && command.route_player) && goal_fields != 7) return 2;
         auto process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
         if (!process) return 3;
         FILETIME start, exit_time, kernel, user;

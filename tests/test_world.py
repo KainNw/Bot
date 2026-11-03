@@ -13,6 +13,7 @@ from atlantica_bot.world import (
     OWNER_ADDRESS,
     SLOT_COUNT,
     TABLE_OFFSET,
+    NativePursuit,
     observe_scene,
     observe_transport,
     scan_world,
@@ -180,6 +181,44 @@ def test_navigation_observation_reads_route_destination_and_flags(session):
     assert result.navigation.key == (actor, 1234, 8, 14, 25)
     assert result.navigation.active and result.navigation.moving
     assert result.world_position == (10.0, 0.0, 20.0)
+
+
+def test_native_goal_observation_keeps_raw_flag_and_float_precision(session):
+    memory = session.system
+    goal = (-108.985847, 20.9082642, 3.80359888)
+    encoded = struct.pack("<fffIB", *goal, 123, 255)
+    memory.write(memory.owner + 0x1674, encoded)
+    result = observe_scene(session, include_navigation=True, include_native_goal=True)
+    assert result.native_goal == struct.unpack_from("<fff", encoded)
+    assert result.native_goal_pending_raw == 255
+    pursuit = NativePursuit.from_report(
+        {
+            "player_address": 0x30010000,
+            "issued_tick": 1234,
+            "map_id": 8,
+            "x": 12,
+            "y": 25,
+            "world_goal": goal,
+            "pending_raw": 255,
+        }
+    )
+    assert pursuit.world_goal == result.native_goal
+
+
+@pytest.mark.parametrize("goal", [(float("nan"), 0, 0), (0, float("inf"), 0), (True, 0, 0), (0, 0)])
+def test_invalid_native_goal_report_is_rejected(goal):
+    with pytest.raises(DiagnosticError, match="persecución nativa"):
+        NativePursuit.from_report(
+            {
+                "player_address": 0x30010000,
+                "issued_tick": 1234,
+                "map_id": 8,
+                "x": 12,
+                "y": 25,
+                "world_goal": goal,
+                "pending_raw": 1,
+            }
+        )
 
 
 def test_active_identity_snapshot_includes_filtered_actors(session):

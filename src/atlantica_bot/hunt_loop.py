@@ -11,13 +11,20 @@ from .clients import ClientWindow
 from .combat import CombatDetector
 from .errors import DiagnosticError, SceneChanged
 from .ipc import BotLease, Cancellation
-from .native_action import stop_movement, try_approach, try_attack
+from .native_action import (
+    stop_movement,
+    stop_native_pursuit,
+    try_approach,
+    try_attack,
+    try_native_attack,
+)
 from .navigation import ApproachSettings
 from .profiles import BotProfile
 from .session import GameSession
 from .world import (
     Candidate,
     GridPosition,
+    NativePursuit,
     NavigationState,
     Observation,
     WorldView,
@@ -45,6 +52,7 @@ class HuntEngine:
     detector: CombatDetector
     profile: BotProfile = field(default_factory=lambda: BotProfile.default(1))
     approach: ApproachSettings = field(default_factory=ApproachSettings)
+    native_attack: bool = False
     running: bool = True
     phase: str = "waiting_map"
     message: str = "Esperando mapa."
@@ -97,6 +105,19 @@ class HuntEngine:
     transport: deque = field(default_factory=lambda: deque(maxlen=12))
     transport_first: dict = field(default_factory=dict)
     last_failed_approach: dict = field(default_factory=dict)
+    pursuit: NativePursuit | None = None
+    pending_pursuit: NativePursuit | None = None
+    pursuit_target: Candidate | None = None
+    pursuit_started: float = 0
+    pursuit_progress: float = 0
+    pursuit_position: GridPosition | None = None
+    pursuit_world_position: tuple[float, float, float] | None = None
+    pursuit_update_at: float = 0
+    pursuit_reason: str = ""
+    native_requests: int = 0
+    native_failures: int = 0
+    last_native_request: dict = field(default_factory=dict)
+    last_native_stop: dict = field(default_factory=dict)
 
     def _event(self, kind: str, now: float | None = None, **data) -> None:
         if now is not None:
@@ -115,6 +136,12 @@ class HuntEngine:
         if not self.detector.matches(self.pid, self.creation_time):
             raise DiagnosticError("Calibra el detector para esta instancia antes de iniciar.")
         self.profile.validate()
+        if type(self.native_attack) is not bool or self.native_attack and self.approach.enabled:
+            raise DiagnosticError("Elige ataque nativo o ruta del bot, no ambos.")
+
+    @property
+    def uses_radius(self) -> bool:
+        return self.approach.enabled or self.native_attack
 
     def stop(self, reason: str, *, reconnect: bool = False) -> None:
         previous_phase = self.phase
@@ -153,6 +180,9 @@ class HuntEngine:
         if observation.native_active:
             self.stop("Se activó Auto Battle o caza nativa; bot detenido.")
             return False
+        if self.pursuit is not None and classification != "battle":
+            self.battle_samples = 0
+            return self._observe_native_pursuit(observation, classification, now)
         if self.route is not None:
             return self._observe_movement(observation, classification, now)
         if classification == "battle":
@@ -161,6 +191,11 @@ class HuntEngine:
                 self.phase, self.message = "confirming_battle", "Comprobando la entrada en combate."
                 self.anchor = None
                 return False
+            self.pending_pursuit = None
+            if self.pursuit is not None:
+                self._event("battle_during_native_pursuit", now, target=asdict(self.pursuit_target))
+                self.cooldowns[target_key(self.pursuit_target)] = now + 30
+                self.pursuit = self.pursuit_target = None
             if not self.battle_active:
                 self.battles += 1
                 self.battle_active = True
@@ -212,11 +247,11 @@ class HuntEngine:
             self.anchor = None
             return False
         position = observation.player
-        if self.approach.enabled and observation.world_position is None:
+        if self.uses_radius and observation.world_position is None:
             self.stop("No se pudo comprobar la posición 3D del personaje.", reconnect=True)
             return False
         if (
-            self.approach.enabled
+            self.uses_radius
             and observation.navigation is not None
             and observation.navigation.active
         ):
@@ -229,7 +264,7 @@ class HuntEngine:
             self.stop("Cambió el mapa; bot detenido.")
             return False
         if (
-            self.approach.enabled
+            self.uses_radius
             and self.origin is not None
             and not self.approach.contains(self.origin, position)
         ):
@@ -237,7 +272,7 @@ class HuntEngine:
             return False
         if self.phase in ("battle", "confirming_battle", "waiting_map", "resuming"):
             if self.anchor != position or (
-                self.approach.enabled
+                self.uses_radius
                 and not same_world_position(self.anchor_world_position, observation.world_position)
             ):
                 self.anchor = position
@@ -252,7 +287,7 @@ class HuntEngine:
             self.phase = "searching"
             self.battle_active = False
         elif self.anchor != position or (
-            self.approach.enabled
+            self.uses_radius
             and not same_world_position(self.anchor_world_position, observation.world_position)
         ):
             self.stop("El personaje se movió; pulsa Iniciar bot cuando esté quieto.")
@@ -264,6 +299,9 @@ class HuntEngine:
         return True
 
     def select(self, view: WorldView, now: float) -> Candidate | None:
+        if self.running and self.pursuit is not None and self.phase == "native_pursuit":
+            self.scans += 1
+            return self._inspect_native_pursuit(view, now)
         if self.running and self.route is not None and self.phase == "approaching":
             self.scans += 1
             self._inspect_approach(view, now)
@@ -273,7 +311,7 @@ class HuntEngine:
         self.scans += 1
         if view.scene_code != 2 or view.player != self.anchor:
             raise SceneChanged("La escena o posición cambió antes de seleccionar el objetivo.")
-        if self.approach.enabled and (
+        if self.uses_radius and (
             view.player_world_position is None
             or not same_world_position(self.anchor_world_position, view.player_world_position)
         ):
@@ -309,7 +347,16 @@ class HuntEngine:
             if (
                 distance is not None
                 and math.isfinite(distance)
-                and 0 <= distance <= limit
+                and distance >= 0
+                and (
+                    self.native_attack
+                    and self.origin is not None
+                    and self.approach.contains(
+                        self.origin, GridPosition(candidate.map_id, candidate.x, candidate.y)
+                    )
+                    or not self.native_attack
+                    and distance <= limit
+                )
                 and len(candidate.identity) == 3
                 and target_key(candidate) not in self.cooldowns
             ):
@@ -326,9 +373,12 @@ class HuntEngine:
             "limit_squared": limit,
             "nearest_slot": nearest.slot if nearest else None,
             "nearest_distance_squared": nearest.distance_squared if nearest else None,
-            "available_in_range": len(available),
+            "available_in_range": sum(c.distance_squared <= limit for c in available),
+            "available_in_search_radius": len(available) if self.native_attack else None,
             "excluded_previously_engaged": len(view.candidates) - len(eligible),
             "automatic_approach": self.approach.enabled,
+            "native_attack": self.native_attack,
+            "search_radius": self.approach.radius if self.uses_radius else None,
         }
         if self.arrival_target is not None:
             pinned = self.arrival_target
@@ -398,23 +448,178 @@ class HuntEngine:
                 "Los mobs ya combatidos siguen visibles; buscando otros objetivos."
                 if view.candidates and not eligible
                 else "Sin objetivos disponibles dentro del radio de búsqueda."
-                if self.approach.enabled
+                if self.uses_radius
                 else "Los mobs están fuera de alcance. Para el bot y acércate antes de iniciar."
                 if nearest and nearest.distance_squared > limit
                 else "Sin mobs cercanos disponibles; esperando."
             )
             return None
-        candidate = min(available, key=lambda candidate: candidate.distance_squared)
-        self.selection_source = "nearby"
-        self.phase, self.message = "requesting", f"Solicitando ataque al objetivo {candidate.slot}."
+        candidate = min(
+            available,
+            key=lambda candidate: (
+                (candidate.grid_distance, candidate.distance_squared, candidate.slot)
+                if self.native_attack
+                else (candidate.distance_squared,)
+            ),
+        )
+        self.selection_source = "native_radius" if self.native_attack else "nearby"
+        self.phase, self.message = (
+            "requesting_native_attack" if self.native_attack else "requesting",
+            f"Solicitando ataque al objetivo {candidate.slot}.",
+        )
         self._event(
             "target_selected",
             now,
-            source="nearby",
+            source=self.selection_source,
             target=asdict(candidate),
             player=asdict(view.player),
         )
         return candidate
+
+    def _observe_native_pursuit(
+        self,
+        observation: Observation,
+        classification: str,
+        now: float,
+    ) -> bool:
+        position, navigation = observation.player, observation.navigation
+        if classification != "map" or position is None or observation.world_position is None:
+            self.stop("Cambió el estado durante la persecución nativa.", reconnect=True)
+            return False
+        if (
+            navigation is None
+            or navigation.player_address != self.pursuit.player_address
+            or observation.native_goal != self.pursuit.world_goal
+            or navigation.active
+        ):
+            self._event("native_pursuit_ownership_lost", now, pursuit=self.pursuit.summary())
+            self.pursuit = self.pursuit_target = None
+            self.stop("El destino cambió fuera del bot; detenido sin modificarlo.")
+            return False
+        if self.origin is None or not self.approach.contains(self.origin, position):
+            self.pursuit_reason = "outside_area"
+        elif now - self.pursuit_started >= self.approach.timeout:
+            self.pursuit_reason = "timeout"
+        else:
+            if position != self.pursuit_position or not same_world_position(
+                self.pursuit_world_position,
+                observation.world_position,
+            ):
+                self.pursuit_position, self.pursuit_progress = position, now
+                self.pursuit_world_position = observation.world_position
+            if now - self.pursuit_progress >= self.approach.stall_timeout:
+                self.pursuit_reason = "stalled"
+        if self.pursuit_reason:
+            self.phase, self.message = (
+                "stopping_native_pursuit",
+                "Deteniendo la persecución nativa.",
+            )
+            return False
+        self.phase, self.message = (
+            "native_pursuit",
+            f"El cliente se acerca al objetivo {self.pursuit_target.slot}.",
+        )
+        if now < self.next_scan:
+            return False
+        self.next_scan = now + 0.5
+        return True
+
+    def _inspect_native_pursuit(self, view: WorldView, now: float) -> Candidate | None:
+        if view.scene_code != 2 or view.player is None or view.player.map_id != self.map_id:
+            raise SceneChanged("Cambió el mapa durante la persecución nativa.")
+        target = next(
+            (c for c in view.candidates if target_key(c) == target_key(self.pursuit_target)),
+            None,
+        )
+        if target is None:
+            self.pursuit_reason = "target_changed"
+        elif not self.approach.contains(
+            self.origin,
+            GridPosition(target.map_id, target.x, target.y),
+        ):
+            self.pursuit_reason = "target_left_area"
+        else:
+            limit = view.range_limit_squared
+            if limit is None or not math.isfinite(limit) or not 0 < limit <= 1e8:
+                self.stop("No se pudo validar el alcance nativo.", reconnect=True)
+                return None
+            self.pursuit_target = target
+            self.range_diagnostic = {
+                "limit_squared": limit,
+                "native_attack": True,
+                "target_slot": target.slot,
+                "target_distance_squared": target.distance_squared,
+                "search_radius": self.approach.radius,
+            }
+            moved = abs(target.x - self.pursuit.x) + abs(target.y - self.pursuit.y) > 2
+            if (
+                target.distance_squared is not None
+                and now >= self.pursuit_update_at
+                and (target.distance_squared <= limit or moved)
+            ):
+                self.selection_source = "native_pursuit"
+                self.phase = "requesting_native_attack"
+                return target
+        if self.pursuit_reason:
+            self.phase, self.message = (
+                "stopping_native_pursuit",
+                "El objetivo cambió; deteniendo la persecución.",
+            )
+        return None
+
+    def record_native(self, candidate: Candidate, report: dict, now: float) -> None:
+        if report.get("pid") != self.pid or report.get("slot") != candidate.slot:
+            self.stop("Respuesta nativa de otra instancia u objetivo.", reconnect=True)
+            return
+        self.last_native_request = dict(report)
+        self._event("native_attack_result", now, target=asdict(candidate), report=dict(report))
+        code = report.get("status")
+        if code == 22:
+            pursuit = NativePursuit.from_report(report["pursuit"])
+            if pursuit.map_id != self.map_id:
+                self.stop("La persecución pertenece a otro mapa.", reconnect=True)
+                return
+            if self.pursuit is None:
+                self.pursuit_started = self.pursuit_progress = now
+                self.pursuit_position = self.anchor
+                self.pursuit_world_position = self.anchor_world_position
+            self.pursuit, self.pursuit_target = pursuit, candidate
+            self.pursuit_update_at = now + 2
+            self.pursuit_reason = ""
+            self.native_requests += 1
+            self.phase, self.message = "native_pursuit", report["message"]
+            return
+        if code == 1:
+            self.pending_pursuit = self.pursuit
+        if code in (1, 20, 24):
+            self.pursuit = self.pursuit_target = None
+        self.record(candidate, report, now)
+        if self.pursuit is not None and self.running:
+            self.pursuit_reason = "target_rejected"
+            self.phase = "stopping_native_pursuit"
+
+    def record_native_stop(self, report: dict, now: float, *, cleanup: bool = False) -> None:
+        self.last_native_stop = dict(report)
+        self._event("native_pursuit_stop", now, reason=self.pursuit_reason, report=dict(report))
+        if report.get("pid") != self.pid or report.get("status") not in (23, 25):
+            self.stop(
+                f"Parada nativa sin confirmar. {report.get('message', '')}",
+                reconnect=report.get("status") != 24,
+            )
+            return
+        if self.pursuit_target is not None:
+            self.cooldowns[target_key(self.pursuit_target)] = now + 30
+        self.pursuit = self.pursuit_target = None
+        self.pending_pursuit = None
+        self.anchor = None
+        if cleanup and report.get("status") == 23:
+            self.message += " Parada nativa enviada; espera a que el personaje se detenga."
+        if not cleanup:
+            self.native_failures += int(report.get("status") != 25)
+            if self.pursuit_reason == "outside_area" or self.native_failures >= 3:
+                self.stop("Persecución detenida por el área o tres intentos no completados.")
+            else:
+                self.phase, self.message = "waiting_map", "Esperando que el personaje se detenga."
 
     def _observe_movement(self, observation: Observation, classification: str, now: float) -> bool:
         position, navigation = observation.player, observation.navigation
@@ -658,6 +863,18 @@ class HuntEngine:
             else None,
             "transport": {"first": dict(self.transport_first), "recent": list(self.transport)},
             "range": dict(self.range_diagnostic),
+            "native_attack": {
+                "enabled": self.native_attack,
+                "search_radius": self.approach.radius,
+                "requests": self.native_requests,
+                "failed": self.native_failures,
+                "stop_reason": self.pursuit_reason or None,
+                "pursuit": self.pursuit.summary() if self.pursuit else None,
+                "pending_pursuit": self.pending_pursuit.summary() if self.pending_pursuit else None,
+                "target": asdict(self.pursuit_target) if self.pursuit_target else None,
+                "last_request": dict(self.last_native_request),
+                "last_stop": dict(self.last_native_stop),
+            },
             "target_history": [
                 {"slot": slot, "identity": identity}
                 for identity, slot in sorted(self.engaged_targets.items())
@@ -690,6 +907,8 @@ class HuntWorker:
         detector: CombatDetector,
         profile: BotProfile | None = None,
         approach: ApproachSettings | None = None,
+        *,
+        native_attack: bool = False,
     ):
         if session.creation_time is None or window.pid != session.process.pid:
             raise DiagnosticError("Conecta con una instancia de Windows válida antes de iniciar.")
@@ -700,11 +919,13 @@ class HuntWorker:
             detector,
             profile or BotProfile.default(1),
             approach or ApproachSettings(),
+            native_attack=native_attack,
         )
         self.events: queue.Queue[dict] = queue.Queue(maxsize=20)
         self.stop_event = threading.Event()
         self.cancellation: Cancellation | None = None
         self.stop_attempted = False
+        self.native_stop_attempted = False
         self.next_transport_sample = 0
         self.thread = threading.Thread(
             target=self._run, name=f"AtlanticaBot-{window.pid}", daemon=True
@@ -767,6 +988,7 @@ class HuntWorker:
                         signal.cancel()
                     finally:
                         self._stop_route(cleanup=True)
+                        self._stop_pursuit(cleanup=True)
         except (DiagnosticError, OSError) as exc:
             self.engine.stop(str(exc), reconnect=True)
         except Exception as exc:
@@ -777,13 +999,20 @@ class HuntWorker:
             self._publish()
 
     def _iteration(self) -> None:
-        moving = self.engine.route is not None
+        pursuing = self.engine.pursuit is not None
+        moving = self.engine.route is not None or pursuing
+        waiting_native_attack = self.engine.native_attack and self.engine.deadline is not None
         settling = self.engine.phase in ("waiting_map", "resuming", "battle", "confirming_battle")
         observation = (
             observe_scene(
-                self.session, include_navigation=True, allow_player_movement=moving or settling
+                self.session,
+                include_navigation=True,
+                allow_player_movement=moving or settling or waiting_native_attack,
+                **(
+                    {"include_native_goal": True} if pursuing or self.engine.pending_pursuit else {}
+                ),
             )
-            if self.engine.approach.enabled
+            if self.engine.uses_radius
             else observe_scene(self.session)
         )
         if self.engine.observe(observation, time.monotonic()):
@@ -795,7 +1024,20 @@ class HuntWorker:
             candidate = self.engine.select(view, time.monotonic())
             if candidate is not None and not self.stop_event.is_set():
                 self._publish()
-                if self.engine.phase == "requesting_approach":
+                if self.engine.phase == "requesting_native_attack":
+                    report = try_native_attack(
+                        self.session,
+                        self.window,
+                        candidate,
+                        self.engine.origin,
+                        self.engine.approach,
+                        pursuit=self.engine.pursuit,
+                        cancellation=self.cancellation,
+                    )
+                    self.engine.record_native(candidate, report, time.monotonic())
+                    if self.engine.pursuit is not None:
+                        self.native_stop_attempted = False
+                elif self.engine.phase == "requesting_approach":
                     report = try_approach(
                         self.session,
                         self.window,
@@ -815,6 +1057,8 @@ class HuntWorker:
                     self.engine.record(candidate, report, time.monotonic())
         if self.engine.route is not None and self.engine.phase == "stopping_move":
             self._stop_route()
+        if self.engine.pursuit is not None and self.engine.phase == "stopping_native_pursuit":
+            self._stop_pursuit()
         now = time.monotonic()
         if self.engine.deadline is not None and now >= self.next_transport_sample:
             self.engine.record_transport(observe_transport(self.session), time.monotonic())
@@ -830,3 +1074,15 @@ class HuntWorker:
         except (DiagnosticError, OSError) as exc:
             self.engine.last_stop = {"pid": self.window.pid, "message": str(exc)}
             self.engine.stop(f"Parada del desplazamiento sin confirmar: {exc}", reconnect=True)
+
+    def _stop_pursuit(self, *, cleanup: bool = False) -> None:
+        pursuit = self.engine.pursuit or self.engine.pending_pursuit
+        if pursuit is None or self.native_stop_attempted:
+            return
+        self.native_stop_attempted = True
+        try:
+            report = stop_native_pursuit(self.session, self.window, pursuit)
+            self.engine.record_native_stop(report, time.monotonic(), cleanup=cleanup)
+        except (DiagnosticError, OSError) as exc:
+            self.engine.last_native_stop = {"pid": self.window.pid, "message": str(exc)}
+            self.engine.stop(f"Parada nativa sin confirmar: {exc}", reconnect=True)

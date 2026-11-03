@@ -1,4 +1,4 @@
-# Ciclo de ataque y acercamiento 0.6
+# Ciclo de ataque independiente
 
 El usuario confirmó que la prueba 0.3 inició el ataque con Auto Battle desactivado.
 Su resultado: PID 16244, hilo 18440, objetivo 8, status=1, excepción=0,
@@ -21,7 +21,7 @@ siguiente. La parada registrada corresponde a la orden de parar/cerrar el panel.
 
 Iniciar bot crea un trabajador ligado a la sesión, HWND e hilo elegidos. Requiere
 Auto Battle, caza nativa y marcador apagados y un detector para esa
-instancia; en 0.6 la conexión compatible prepara la señal local ya comprobada y
+instancia; la conexión compatible prepara la señal local ya comprobada y
 mantiene la calibración como diagnóstico opcional. No cambia esos controles. Consulta la
 lista activa, identidad, filtros conocidos y distancia 3D. El cliente vuelve a validar
 el objetivo y el alcance cuando ejecuta la solicitud. No se emiten clics ni teclas.
@@ -31,8 +31,8 @@ el objetivo y el alcance cuando ejecuta la solicitud. No se emiten clics ni tecl
 | Esperando mapa | Observa; no solicita ataques fuera de escena 2. |
 | Estabilizando | Exige el mismo mapa y posición estable durante dos segundos. |
 | Buscando | Consulta candidatos y elige uno dentro del umbral nativo. |
-| Acercándose (opcional) | Solicita una ruta normal dentro del radio y observa el progreso. |
-| Verificando llegada | Espera la ruta inactiva y posición 3D estable antes de atacar. Ante atasco, cancelación o límites interrumpe su ruta. |
+| Persecución nativa (0.7) | Usa la orden de desplazamiento de Auto Battle dentro del radio y observa el progreso. |
+| Objetivo en alcance | Usa el mismo umbral del cliente y solicita el ataque; no crea una ruta por rejilla. |
 | Solicitud enviada | Espera dos observaciones de combate según la calibración; no duplica la solicitud. |
 | Combate | Pausa solicitudes; los turnos son manuales. |
 | Regreso al mapa | Vuelve a estabilizar y buscar en el mismo mapa. |
@@ -55,9 +55,9 @@ Cambiar de mapa, mover manualmente al personaje mientras busca, activar Auto Bat
 o caza nativa, perder la instancia o fallar la validación detiene el ciclo. Los datos
 interrumpidos por un cambio de escena se descartan; tras tres lecturas consecutivas
 sin estabilizar, se detiene. Una posición distinta al volver del combate se admite
-tras la estabilización. Con acercamiento habilitado puede solicitar una ruta hacia
-objetivos fuera de alcance. Las condiciones de radio, atasco, parada y límites se
-explican en [acercamiento nativo](native-approach.md).
+tras la estabilización. Con ataque nativo por radio puede solicitar la persecución
+del cliente hacia objetivos fuera de alcance. Las condiciones de radio, atasco, parada y límites se
+explican en [ataque nativo por radio](native-attack.md).
 
 ## Parada, cancelación y cierre
 
@@ -76,7 +76,7 @@ también cuando el auxiliar agota su tiempo de respuesta.
 Cada ejecución crea un evento nuevo; no se restablece un evento cancelado para otra
 ejecución. Así, un mensaje antiguo no se habilita al volver a iniciar el bot. La prueba
 individual también cancela su canal al terminar o fallar. El protocolo helper/DLL
-es versión 4 y comprueba su tamaño (300 bytes), identificador, operación y PID.
+es versión 5 y comprueba su tamaño (312 bytes), identificador, operación y PID.
 Al parar con una ruta conocida, cancela primero nuevas solicitudes y utiliza un
 canal nuevo para detener esa ruta antes de liberar la reserva del PID. No repite
 una parada cuyo resultado sea incierto.
