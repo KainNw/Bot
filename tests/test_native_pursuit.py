@@ -9,6 +9,7 @@ from atlantica_bot.combat import CombatDetector
 from atlantica_bot.errors import DiagnosticError
 from atlantica_bot.hunt_loop import HuntEngine, HuntWorker
 from atlantica_bot.navigation import ApproachSettings
+from atlantica_bot.profiles import BotProfile
 from atlantica_bot.world import (
     Candidate,
     GridPosition,
@@ -79,6 +80,20 @@ def pursuing_engine():
     assert engine.range_diagnostic["available_in_search_radius"] == 1
     engine.record_native(TARGET, result(), 2.1)
     return engine
+
+
+def test_encounter_delay_is_paid_once_and_not_between_pursuit_and_attack():
+    engine = ready_engine()
+    engine.profile = replace(BotProfile.default(1), attack_delay_seconds=3)
+    assert engine.select(view(TARGET), 2) is None
+    assert engine.observe(observation(), 5)
+    assert engine.select(view(TARGET), 5) == TARGET
+    engine.record_native(TARGET, result(), 5.1)
+    close = GridPosition(52, 198, 340)
+    near = replace(TARGET, distance_squared=16)
+    assert engine.observe(observation(close, pursuit=PURSUIT), 7.25)
+    assert engine.select(view(near, position=close), 7.25) == near
+    assert engine.phase == "requesting_native_attack" and engine.attack_ready_at is None
 
 
 def test_native_pursuit_then_attack_uses_native_range_without_creating_grid_routes():

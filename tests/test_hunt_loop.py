@@ -10,6 +10,7 @@ from atlantica_bot.combat import CombatDetector
 from atlantica_bot.errors import DiagnosticError
 from atlantica_bot.hunt_loop import HuntEngine, HuntWorker
 from atlantica_bot.navigation import ApproachSettings
+from atlantica_bot.profiles import BotProfile
 from atlantica_bot.world import Candidate, GridPosition, LocalState, Observation, WorldView
 
 POSITION = GridPosition(52, 193, 340)
@@ -58,6 +59,58 @@ def ready_engine():
     assert not engine.observe(observation(), 0)
     assert engine.observe(observation(), 2)
     return engine
+
+
+@pytest.mark.parametrize("delay", [0, 0.25, 1, 3, 60])
+def test_attack_delay_uses_deadline_and_revalidates_mob_without_changing_strike_range(delay):
+    engine = ready_engine()
+    engine.profile = replace(BotProfile.default(1), attack_delay_seconds=delay)
+    if delay == 0:
+        assert engine.select(view(NEAR), 2) == NEAR
+        return
+    assert engine.select(view(NEAR), 2) is None and engine.phase == "attack_delay"
+    assert engine.observe(observation(), 2.1)
+    assert engine.select(view(NEAR), 2.1) is None
+    # The same actor moved table slots. Use the fresh slot, never the stale entry.
+    moved = replace(NEAR, slot=12)
+    assert engine.observe(observation(), 2 + delay)
+    assert engine.select(view(moved), 2 + delay) == moved
+    assert engine.phase == "requesting" and engine.attempts == 0
+    assert engine.range_diagnostic["limit_squared"] == 20
+
+
+def test_attack_delay_pins_identity_and_restarts_for_replacement_mob():
+    engine = ready_engine()
+    engine.profile = replace(BotProfile.default(1), attack_delay_seconds=3)
+    assert engine.select(view(NEAR), 2) is None
+    closer = replace(NEAR, slot=12, identity=(12053, 999, 0), distance_squared=0.5)
+    assert engine.observe(observation(), 3)
+    assert engine.select(view(NEAR, closer), 3) is None
+    assert engine.delayed_target == NEAR
+    assert engine.observe(observation(), 4)
+    assert engine.select(view(closer), 4) is None
+    assert engine.delayed_target is None
+    assert engine.observe(observation(), 5)
+    assert engine.select(view(closer), 5) is None
+    assert engine.attack_ready_at == 8
+
+
+@pytest.mark.parametrize("cause", ["manual_walk", "battle", "stop"])
+def test_attack_delay_can_be_interrupted_without_sending_a_world_request(cause):
+    engine = ready_engine()
+    engine.profile = replace(BotProfile.default(1), attack_delay_seconds=60)
+    assert engine.select(view(NEAR), 2) is None
+    if cause == "manual_walk":
+        engine.observe(observation(player=GridPosition(52, 194, 340)), 3)
+        assert engine.phase == "manual_movement"
+    elif cause == "battle":
+        engine.observe(observation(active=True), 3)
+        engine.observe(observation(active=True), 3.1)
+        assert engine.phase == "battle" and engine.battle_entry["source"] == "external"
+    else:
+        engine.stop("Parada solicitada")
+    assert engine.delayed_target is None and engine.attack_ready_at is None
+    assert engine.attempts == engine.queued == 0
 
 
 def test_selects_only_verified_nearby_targets_after_stable_map():

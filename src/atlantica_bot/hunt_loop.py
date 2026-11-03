@@ -128,6 +128,9 @@ class HuntEngine:
     last_manual_reason: str = ""
     battle_entry: dict = field(default_factory=dict)
     last_read_error: dict = field(default_factory=dict)
+    delayed_target: Candidate | None = None
+    attack_ready_at: float | None = None
+    delayed_phase: str = ""
 
     def _event(self, kind: str, now: float | None = None, **data) -> None:
         if now is not None:
@@ -161,6 +164,7 @@ class HuntEngine:
         self.phase = "stopped"
         self.message = reason
         self.needs_reconnect |= reconnect or self.deadline is not None
+        self._clear_attack_delay()
         self._event("stopped", reason=reason, previous_phase=previous_phase)
 
     def observe(self, observation: Observation, now: float) -> bool:
@@ -193,6 +197,7 @@ class HuntEngine:
             self.stop("Se activó Auto Battle o caza nativa; bot detenido.")
             return False
         if classification == "battle":
+            self._clear_attack_delay()
             self.battle_samples += 1
             if self.battle_samples < 2:
                 self.phase, self.message = "confirming_battle", "Comprobando la entrada en combate."
@@ -246,6 +251,7 @@ class HuntEngine:
             return False
         self.battle_samples = 0
         if classification == "unknown":
+            self._clear_attack_delay()
             self.phase, self.message = (
                 "waiting_map",
                 "Esperando datos de escena después del cambio.",
@@ -296,7 +302,7 @@ class HuntEngine:
         walking = navigation is not None and (
             navigation.active is True or navigation.moving is True
         )
-        moved = self.phase == "searching" and (
+        moved = self.phase in ("searching", "attack_delay") and (
             self.anchor != position
             or self.uses_radius
             and not same_world_position(self.anchor_world_position, observation.world_position)
@@ -333,9 +339,33 @@ class HuntEngine:
             return self._observe_manual_movement(observation, now)
         if now < self.next_scan:
             return False
-        self.next_scan = now + 1
-        self.phase, self.message = "searching", "Buscando mobs cercanos."
+        self.next_scan = now + (0.1 if self.delayed_target else 1)
+        if self.delayed_target is None:
+            self.phase, self.message = "searching", "Buscando mobs cercanos."
         return True
+
+    def _clear_attack_delay(self) -> None:
+        self.delayed_target = None
+        self.attack_ready_at = None
+        self.delayed_phase = ""
+
+    def _prepare_attack(self, candidate: Candidate, phase: str, now: float) -> Candidate | None:
+        if self.profile.attack_delay_seconds == 0:
+            self.phase = phase
+            return candidate
+        self.delayed_target = candidate
+        self.delayed_phase = phase
+        self.attack_ready_at = now + self.profile.attack_delay_seconds
+        self.next_scan = now + 0.1
+        self.phase = "attack_delay"
+        self.message = f"Esperando {self.profile.attack_delay_seconds:g} s antes de atacar al mob."
+        self._event(
+            "attack_delay_started",
+            now,
+            target=asdict(candidate),
+            seconds=self.profile.attack_delay_seconds,
+        )
+        return None
 
     def _observe_manual_movement(
         self,
@@ -346,6 +376,7 @@ class HuntEngine:
         reason: str = "manual_movement",
     ) -> bool:
         position = observation.player
+        self._clear_attack_delay()
         if position is None or self.map_id is not None and position.map_id != self.map_id:
             self.stop("Cambió el mapa durante el movimiento manual; bot detenido.")
             return False
@@ -398,7 +429,11 @@ class HuntEngine:
             self.scans += 1
             self._inspect_approach(view, now)
             return None
-        if not self.running or self.deadline is not None or self.phase != "searching":
+        if (
+            not self.running
+            or self.deadline is not None
+            or self.phase not in ("searching", "attack_delay")
+        ):
             return None
         self.scans += 1
         if view.scene_code != 2 or view.player != self.anchor:
@@ -472,6 +507,35 @@ class HuntEngine:
             "native_attack": self.native_attack,
             "search_radius": self.approach.radius if self.uses_radius else None,
         }
+        if self.delayed_target is not None:
+            pinned = self.delayed_target
+            pool = available
+            if self.delayed_phase == "requesting_approach":
+                pool = [
+                    c
+                    for c in measured
+                    if c.distance_squared > limit
+                    and len(c.identity) == 3
+                    and target_key(c) not in self.cooldowns
+                    and self.approach.contains(self.origin, GridPosition(c.map_id, c.x, c.y))
+                ]
+            candidate = next((c for c in pool if target_key(c) == target_key(pinned)), None)
+            if candidate is None:
+                self._clear_attack_delay()
+                self.phase, self.message = (
+                    "searching",
+                    "El mob cambió durante la espera; buscando otro.",
+                )
+                return None
+            if now < self.attack_ready_at:
+                self.message = f"Ataque al mob en {self.attack_ready_at - now:.1f} s."
+                return None
+            phase = self.delayed_phase
+            self._clear_attack_delay()
+            self.phase = phase
+            self.message = f"Solicitando ataque al objetivo {candidate.slot}."
+            self._event("attack_delay_completed", now, target=asdict(candidate))
+            return candidate
         if self.arrival_target is not None:
             pinned = self.arrival_target
             candidate = next((c for c in available if target_key(c) == target_key(pinned)), None)
@@ -535,7 +599,7 @@ class HuntEngine:
                         target=asdict(candidate),
                         player=asdict(view.player),
                     )
-                    return candidate
+                    return self._prepare_attack(candidate, "requesting_approach", now)
             self.message = (
                 "Los mobs ya combatidos siguen visibles; buscando otros objetivos."
                 if view.candidates and not eligible
@@ -566,7 +630,7 @@ class HuntEngine:
             target=asdict(candidate),
             player=asdict(view.player),
         )
-        return candidate
+        return self._prepare_attack(candidate, self.phase, now)
 
     def _observe_native_pursuit(
         self,
@@ -961,6 +1025,13 @@ class HuntEngine:
             else None,
             "transport": {"first": dict(self.transport_first), "recent": list(self.transport)},
             "range": dict(self.range_diagnostic),
+            "attack_delay": {
+                "seconds": self.profile.attack_delay_seconds,
+                "target": asdict(self.delayed_target) if self.delayed_target else None,
+                "remaining_seconds": round(max(0, self.attack_ready_at - self.trace_time), 2)
+                if self.attack_ready_at is not None
+                else None,
+            },
             "native_attack": {
                 "enabled": self.native_attack,
                 "search_radius": self.approach.radius,
@@ -1028,15 +1099,19 @@ class HuntWorker:
             session.creation_time,
             detector,
             profile or BotProfile.default(1),
-            approach or ApproachSettings(),
+            approach or ApproachSettings(radius=(profile or BotProfile.default(1)).search_radius),
             native_attack=native_attack,
             execute_turns=execute_turns,
         )
         self.turns = (
             TurnEngine(
-                session.process.pid, session.creation_time, self.engine.profile, battle_ledger
+                session.process.pid,
+                session.creation_time,
+                self.engine.profile,
+                battle_ledger,
+                execute_orders=execute_turns,
             )
-            if execute_turns
+            if execute_turns or self.engine.profile.collect_remaining_loot
             else None
         )
         if self.turns is not None:
@@ -1079,6 +1154,8 @@ class HuntWorker:
         self.events.put_nowait(report)
 
     def _poll_delay(self) -> float:
+        if self.engine.phase == "attack_delay":
+            return 0.1
         if (
             self.turns is not None
             and self.engine.phase in ("confirming_battle", "battle")

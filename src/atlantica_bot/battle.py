@@ -83,6 +83,14 @@ class BattleFrame:
     def magic_targets(self) -> tuple[BattleUnit, ...]:
         return (*self.sources, *self.enemies)
 
+    @property
+    def corpses(self) -> tuple[BattleUnit, ...]:
+        return tuple(
+            u
+            for u in self.units
+            if u.group != self.local_group and 3500 <= u.identity[0] < 22000 and u.life <= 0
+        )
+
     def summary(self) -> dict:
         return {
             **asdict(self),
@@ -115,7 +123,9 @@ class BattleTrial:
             return 7
         if self.action in tuple("QWERT"):
             return 8
-        raise DiagnosticError("La prueba solo admite básico, selección o magia Q/W/E/R/T.")
+        if self.action == "loot":
+            return 9
+        raise DiagnosticError("Elige básico, selección, magia Q/W/E/R/T o recogida.")
 
     def validate(self) -> None:
         if (
@@ -129,11 +139,23 @@ class BattleTrial:
             if self.target is not None:
                 raise DiagnosticError("La selección no admite un objetivo de ataque.")
             return
-        targets = self.frame.magic_targets if operation == 8 else self.frame.enemies
+        targets = (
+            self.frame.corpses
+            if operation == 9
+            else self.frame.magic_targets
+            if operation == 8
+            else self.frame.enemies
+        )
         if self.target not in targets:
             raise DiagnosticError("Actualiza el combate y elige un mercenario y enemigo vivos.")
         if not self.frame.own_turn:
             raise DiagnosticError("Todavía no es el turno del grupo del personaje.")
+        if operation == 9 and (
+            self.frame.enemies or self.frame.selected_unit != self.source.address
+        ):
+            raise DiagnosticError(
+                "La recogida requiere todos los mobs derrotados y el mercenario seleccionado."
+            )
         if self.source.action_state != 1 or operation == 6 and not self.source.flags & 0x8000:
             raise DiagnosticError(
                 "El mercenario no está en el estado nativo para probar un ataque."

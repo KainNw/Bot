@@ -81,7 +81,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 7; command.pid = pid;
+        command.magic = kMagic; command.version = 8; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -124,7 +124,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
                     << "," << shared->world_goal[2] << "],\"pending_raw\":" << shared->route_active << "}";
             } else std::cout << "null";
             std::cout << ",\"battle\":";
-            if (shared->operation >= BattleBasic && shared->operation <= BattleMagic) {
+            if (shared->operation >= BattleBasic && shared->operation <= BattleLoot) {
             std::cout << "{\"manager\":" << shared->battle_manager
                 << ",\"context\":" << shared->battle_context << ",\"client\":" << shared->battle_client
                 << ",\"turn_number\":" << shared->turn_number << ",\"turn_tick\":" << shared->turn_tick
@@ -201,6 +201,9 @@ static int SelfTest() {
     const int select_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &select_response, true) : 32;
     cancelled.operation = BattleMagic;
     const int magic_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &magic_response, true) : 32;
+    SharedCommand loot_response = {};
+    cancelled.operation = BattleLoot;
+    const int loot_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &loot_response, true) : 32;
     if (cancellation) CloseHandle(cancellation);
     const int missing_code = Run(test.window, GetCurrentProcessId(), cancelled, &missing_response, true);
     SharedCommand empty_channel = {}, empty_response = {};
@@ -219,6 +222,7 @@ static int SelfTest() {
         && !battle_code && battle_response.result == Cancelled
         && !select_code && select_response.result == Cancelled
         && !magic_code && magic_response.result == Cancelled
+        && !loot_code && loot_response.result == Cancelled
         && !missing_code && missing_response.result == CancellationUnavailable
         && !empty_code && empty_response.result == CancellationUnavailable ? 0 : 31);
     if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result
@@ -236,12 +240,13 @@ int wmain(int argc, wchar_t** argv) {
             std::wstring key(argv[i]);
             if (key == L"--attack" || key == L"--probe" || key == L"--approach" || key == L"--stop-move"
                 || key == L"--native-attack" || key == L"--stop-native" || key == L"--battle-basic"
-                || key == L"--battle-select" || key == L"--battle-magic") {
+                || key == L"--battle-select" || key == L"--battle-magic" || key == L"--battle-loot") {
                 if (operation) return 2;
                 command.operation = key == L"--attack" ? Attack : key == L"--probe" ? Probe
                     : key == L"--approach" ? Approach : key == L"--stop-move" ? StopMovement
                     : key == L"--native-attack" ? NativeAttack : key == L"--stop-native" ? StopNativePursuit
-                    : key == L"--battle-basic" ? BattleBasic : key == L"--battle-select" ? BattleSelect : BattleMagic;
+                    : key == L"--battle-basic" ? BattleBasic : key == L"--battle-select" ? BattleSelect
+                    : key == L"--battle-magic" ? BattleMagic : BattleLoot;
                 operation = true; continue;
             }
             if (i + 1 >= argc) return 2;
@@ -280,7 +285,7 @@ int wmain(int argc, wchar_t** argv) {
                 else if (key == L"--origin-map" && small <= 0x157b) command.origin_map = static_cast<int32_t>(small);
                 else if (key == L"--origin-x" && small <= 32767) command.origin_x = static_cast<int32_t>(small);
                 else if (key == L"--origin-y" && small <= 32767) command.origin_y = static_cast<int32_t>(small);
-                else if (key == L"--radius" && small >= 5 && small <= 120) command.radius = small;
+                else if (key == L"--radius" && small >= 5 && small <= kMaxSearchRadius) command.radius = small;
                 else if (key == L"--magic-key" && !(magic_fields & 1) && small >= 1 && small <= 5) {
                     command.magic_key = small; magic_fields |= 1;
                 } else if (key == L"--magic-action" && !(magic_fields & 2) && small >= 1 && small <= 0x7cf) {
@@ -311,7 +316,7 @@ int wmain(int argc, wchar_t** argv) {
         } else if (command.operation == BattleSelect) {
             if (command.slot) return 2;
         } else if (command.slot < (command.operation == BattleMagic ? 1u : 2u) || command.slot >= 450) return 2;
-        if (command.operation >= BattleBasic && command.operation <= BattleMagic) {
+        if (command.operation >= BattleBasic && command.operation <= BattleLoot) {
             const auto expected_fields = command.operation == BattleSelect ? 0xebfu : 0xfffu;
             if (battle_fields != expected_fields || !command.battle_manager || !command.battle_context
                 || !command.battle_client || !command.source_unit || command.mercenary < 1 || command.mercenary > 9)

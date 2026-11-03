@@ -3,7 +3,7 @@
 El usuario pidió omitir el acercamiento por rutas de 0.6 y probar el mismo sistema
 de persecución/ataque de Auto Battle, conservando su alcance y dejándolo apagado.
 El panel ofrece **Ataque nativo por radio (experimental)** marcado inicialmente,
-con radio de selección 60 y límites de 5–120 casillas. Desmarcarlo conserva el ciclo
+con radio de selección 60 y límites de 5–500 casillas desde 0.13.0. Desmarcarlo conserva el ciclo
 de mobs cercanos. Los turnos de mercenarios siguen siendo manuales.
 
 ## Qué mostraron las últimas pruebas

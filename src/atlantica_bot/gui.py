@@ -16,8 +16,9 @@ from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
 from .errors import DiagnosticError
 from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
+from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
 from .native_action import try_attack, try_battle_action
-from .navigation import ApproachSettings
+from .navigation import ApproachSettings, calibrated_radius
 from .overview import OverviewWindow
 from .profiles import (
     ACTION_LABELS,
@@ -73,6 +74,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.turns_enabled = tk.BooleanVar(value=False)
             self.team_status = tk.StringVar(value="Conecta para consultar el equipo.")
             self.search_radius = tk.StringVar(value="60")
+            self.attack_delay = tk.StringVar(value="0")
+            self.collect_loot = tk.BooleanVar(value=False)
             self.bot_status = tk.StringVar(value="Bot detenido.")
             self.pid = tk.StringVar()
             self.folder = tk.StringVar(value="Conecta con el juego o selecciona su carpeta.")
@@ -86,6 +89,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.tabs.add(frame, text="Control")
             self.team_tab = ttk.Frame(self.tabs, padding=18)
             self.tabs.add(self.team_tab, text="Mercenarios")
+            self.hunt_tab = ttk.Frame(self.tabs, padding=18)
+            self.tabs.add(self.hunt_tab, text="Caza y botín")
             self.build_team_tab()
             ttk.Label(frame, text="Control de caza", font=("Segoe UI", 18)).pack(anchor="w")
             ttk.Label(
@@ -156,7 +161,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 variable=self.turns_enabled,
             )
             self.turns_check.pack(anchor="w", pady=4)
-            row = ttk.Frame(frame)
+            row = ttk.Frame(self.hunt_tab)
             row.pack(fill="x", pady=6)
             self.native_attack_check = ttk.Checkbutton(
                 row,
@@ -166,12 +171,57 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.native_attack_check.pack(side="left")
             ttk.Label(row, text="Radio de búsqueda (casillas):").pack(side="left", padx=(12, 4))
             self.radius_entry = ttk.Spinbox(
-                row, from_=5, to=120, textvariable=self.search_radius, width=5
+                row,
+                from_=MIN_SEARCH_RADIUS,
+                to=MAX_SEARCH_RADIUS,
+                textvariable=self.search_radius,
+                width=5,
             )
             self.radius_entry.pack(side="left")
+            self.radius_calibrate_button = ttk.Button(
+                row, text="Calibrar radio", command=self.calibrate_radius
+            )
+            self.radius_calibrate_button.pack(side="left", padx=8)
             ttk.Label(
-                frame,
-                text="El radio selecciona mobs; el alcance de ataque lo establece el cliente.",
+                self.hunt_tab,
+                text="Radio de 5 a 500 casillas desde el punto de inicio. "
+                "El cliente persigue al mob y establece el alcance del golpe. "
+                "Solo se detectan mobs cargados por el juego.",
+                wraplength=760,
+            ).pack(anchor="w")
+            row = ttk.Frame(self.hunt_tab)
+            row.pack(fill="x", pady=(18, 6))
+            ttk.Label(row, text="Espera antes de atacar al mob (segundos):").pack(side="left")
+            self.delay_entry = ttk.Combobox(
+                row, textvariable=self.attack_delay, values=("0", "1", "3"), width=7
+            )
+            self.delay_entry.pack(side="left", padx=8)
+            ttk.Label(
+                self.hunt_tab,
+                text="Elige 0, 1, 3 o escribe un valor de 0 a 60. "
+                "La espera se aplica antes de la persecución; "
+                "la magia del primer turno conserva su rapidez.",
+                wraplength=760,
+            ).pack(anchor="w")
+            self.loot_check = ttk.Checkbutton(
+                self.hunt_tab,
+                text="Recoger bonus / botín restante al derrotar a todos los mobs (experimental)",
+                variable=self.collect_loot,
+            )
+            self.loot_check.pack(anchor="w", pady=(18, 6))
+            ttk.Label(
+                self.hunt_tab,
+                text="Deja 1 s al NeoACA y luego busca botín en enemigos derrotados. "
+                "Comprueba que el bonus aparezca en tu inventario al probar esta opción.",
+                wraplength=760,
+            ).pack(anchor="w")
+            self.save_hunt_button = ttk.Button(
+                self.hunt_tab, text="Guardar opciones del perfil", command=self.save_hunt_options
+            )
+            self.save_hunt_button.pack(anchor="w", pady=18)
+            ttk.Label(
+                self.hunt_tab,
+                text="Estas opciones se guardan por perfil. Iniciar bot también las guarda.",
                 wraplength=760,
             ).pack(anchor="w")
             read_row = ttk.Frame(frame)
@@ -377,6 +427,11 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     on_configure=self.edit_profile,
                     on_refresh=self.refresh_team,
                     on_copy=self.copy_bot,
+                    attack_delay=self.attack_delay,
+                    search_radius=self.search_radius,
+                    collect_loot=self.collect_loot,
+                    on_save=self.save_hunt_options,
+                    on_calibrate=self.calibrate_radius,
                 )
             self.refresh_team()
             self.sync_overview_controls()
@@ -512,6 +567,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.native_attack_check,
                 self.turns_check,
                 self.radius_entry,
+                self.radius_calibrate_button,
+                self.delay_entry,
+                self.loot_check,
+                self.save_hunt_button,
             ):
                 button.configure(state="disabled" if active else "normal")
             self.bot_stop_button.configure(
@@ -567,16 +626,19 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     raise DiagnosticError("Usa Calibrar combate antes de iniciar el ciclo.")
                 if self.profile is None:
                     raise DiagnosticError("Revisa la configuración del perfil antes de iniciar.")
+                profile = self.configured_profile(self.profile)
                 worker = HuntWorker(
                     session,
                     self.selected_window(session),
                     self.detector,
-                    self.profile,
-                    ApproachSettings(False, int(self.search_radius.get())),
+                    profile,
+                    ApproachSettings(False, profile.search_radius),
                     native_attack=self.native_attack_enabled.get(),
                     execute_turns=self.turns_enabled.get(),
                     battle_ledger=self.battle_trials,
                 )
+                self.profile_store.save(profile)
+                self.profile = profile
                 self.bot_report = worker.engine.summary()
                 self.bot_worker = worker
                 self.bot_status.set(f"PID {session.process.pid}: iniciando bot...")
@@ -639,6 +701,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             try:
                 self.require_idle_bot()
                 self.profile = self.profile_store.load(int(self.profile_number.get()))
+                self.attack_delay.set(f"{self.profile.attack_delay_seconds:g}")
+                self.search_radius.set(str(self.profile.search_radius))
+                self.collect_loot.set(self.profile.collect_remaining_loot)
                 count = sum(merc.enabled for merc in self.profile.mercenaries)
                 magic_count = sum(
                     merc.enabled and merc.action != "basic" for merc in self.profile.mercenaries
@@ -659,6 +724,35 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 "Perfil cargado; actualiza el equipo para consultar la batalla.",
             )
             self.sync_overview_controls()
+
+        def configured_profile(self, profile: BotProfile) -> BotProfile:
+            updated = replace(
+                profile,
+                attack_delay_seconds=float(self.attack_delay.get().strip().replace(",", ".")),
+                search_radius=int(self.search_radius.get()),
+                collect_remaining_loot=self.collect_loot.get(),
+            )
+            updated.validate()
+            return updated
+
+        def save_hunt_options(self) -> None:
+            try:
+                self.require_idle_bot()
+                if self.profile is None:
+                    raise DiagnosticError("Carga un perfil válido antes de guardar.")
+                updated = self.configured_profile(self.profile)
+                self.profile_store.save(updated)
+                self.load_profile()
+                self.detail.set(f"Opciones de caza y botín del perfil {updated.number} guardadas.")
+            except (DiagnosticError, OSError, ValueError) as exc:
+                self.error(exc)
+
+        def calibrate_radius(self) -> None:
+            try:
+                self.require_idle_bot()
+                self.show_targets(calibrate=True)
+            except (DiagnosticError, OSError, ValueError) as exc:
+                self.error(exc)
 
         def edit_profile(self) -> None:
             try:
@@ -806,7 +900,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         ),
                         first_turn.get(),
                     )
-                    self.profile_store.save(updated)
+                    self.profile_store.save(self.configured_profile(updated))
                     self.load_profile()
                     status.set(
                         f"Perfil {number} guardado. Revisa el equipo en la pestaña Mercenarios "
@@ -1594,13 +1688,17 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     json.dumps(self.last_trial, ensure_ascii=False, indent=2)
                 )
 
-        def show_targets(self) -> None:
+        def show_targets(self, *, calibrate: bool = False) -> None:
             if self.session is None:
                 self.error(DiagnosticError("Conecta con el juego para leer los objetivos."))
                 return
             selected_session = self.session
+            candidates = {}
             window = tk.Toplevel(self.root)
-            window.title(f"PID {selected_session.process.pid} — candidatos de mapa")
+            window.title(
+                f"PID {selected_session.process.pid} — "
+                + ("calibrar radio" if calibrate else "candidatos de mapa")
+            )
             window.minsize(680, 330)
             frame = ttk.Frame(window, padding=12)
             frame.pack(fill="both", expand=True)
@@ -1634,6 +1732,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                             "La escena cambió; vuelve a actualizar los objetivos."
                         )
                     last.clear()
+                    candidates.clear()
                     last.update(view.summary())
                     last["pid"] = selected_session.process.pid
                     last["observation"] = observation.summary()
@@ -1653,9 +1752,11 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         f"{view.inactive_entries} entradas inactivas omitidas."
                     )
                     for candidate in view.candidates:
+                        candidates[str(candidate.slot)] = candidate
                         table.insert(
                             "",
                             "end",
+                            iid=str(candidate.slot),
                             values=(
                                 candidate.slot,
                                 candidate.kind_id,
@@ -1674,6 +1775,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         )
                 except (DiagnosticError, OSError) as exc:
                     last.clear()
+                    candidates.clear()
                     table.delete(*table.get_children())
                     summary.set(str(exc))
 
@@ -1688,6 +1790,36 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Button(buttons, text="Copiar resultados", command=copy_results).pack(
                 side="left", padx=8
             )
+            if calibrate:
+
+                def use_target() -> None:
+                    try:
+                        self.require_idle_bot()
+                        if self.session is not selected_session:
+                            raise DiagnosticError(
+                                "La conexión cambió; vuelve a abrir la calibración."
+                            )
+                        choice = table.selection()
+                        if not choice or choice[0] not in candidates:
+                            raise DiagnosticError(
+                                "Selecciona un mob de la lista para incluirlo en el radio."
+                            )
+                        old = candidates[choice[0]]
+                        fresh = scan_world(selected_session)
+                        radius = calibrated_radius(fresh, old.identity)
+                        if fresh.player.map_id != old.map_id:
+                            raise DiagnosticError("Cambió el mapa; vuelve a calibrar.")
+                        self.search_radius.set(str(radius))
+                        summary.set(
+                            f"Radio ajustado a {radius} casillas desde tu posición actual. "
+                            "Guarda las opciones o inicia el bot para conservarlo en el perfil."
+                        )
+                    except (DiagnosticError, OSError, ValueError) as exc:
+                        summary.set(str(exc))
+
+                ttk.Button(buttons, text="Incluir mob seleccionado", command=use_target).pack(
+                    side="left"
+                )
             ttk.Label(
                 frame,
                 text="El alcance se compara con la distancia 3D del cliente, no con la rejilla. "
@@ -1702,6 +1834,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         assert tuple(panel.tabs.tab(tab, "text") for tab in panel.tabs.tabs()) == (
             "Control",
             "Mercenarios",
+            "Caza y botín",
         )
         panel.tabs.select(panel.team_tab)
         assert len(panel.team_tree.get_children()) == 9
@@ -1711,6 +1844,22 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.show_overview()
         overview = panel.overview
         assert overview is not None and overview.alive and len(overview.cells) == 9
+        assert tuple(overview.tabs.tab(tab, "text") for tab in overview.tabs.tabs()) == (
+            "Resumen",
+            "Órdenes de combate",
+            "Caza y botín",
+        )
+        panel.attack_delay.set("1,5")
+        panel.search_radius.set("350")
+        panel.collect_loot.set(True)
+        configured = panel.configured_profile(BotProfile.default(1))
+        assert configured.attack_delay_seconds == 1.5 and configured.search_radius == 350
+        assert configured.collect_remaining_loot
+        assert overview.hunt_controls[0].get() == "1,5"
+        overview.set_controls(start=False, stop=True, editable=False)
+        assert all(str(widget.cget("state")) == "disabled" for widget in overview.hunt_controls)
+        overview.set_controls(start=False, stop=False, editable=True)
+        panel.load_profile()
         assert overview.cells[1]["member"].cget("text") == "Main (1)"
         assert overview.cells[9]["member"].cget("text") == "Mercenario 9"
         assert str(overview.start_button.cget("state")) == "disabled"

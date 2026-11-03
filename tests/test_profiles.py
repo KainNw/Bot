@@ -34,7 +34,7 @@ def test_magic_actions_and_fallback_are_saved_per_mercenary_in_priority_order(tm
     store.save(updated)
     assert store.load(1) == updated
     payload = json.loads((tmp_path / "profile-1.json").read_text())
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert [m["action"] for m in payload["mercenaries"]] == list(reversed(actions))
     assert payload["turn_execution_available"] is True
 
@@ -58,7 +58,7 @@ def test_legacy_profile_migrates_in_memory_without_rewriting_or_losing_settings(
     assert all(m.action == "basic" and m.fallback_basic for m in loaded.mercenaries)
     assert path.read_bytes() == saved
     store.save(loaded)
-    assert json.loads(path.read_bytes())["schema_version"] == 3
+    assert json.loads(path.read_bytes())["schema_version"] == 4
     assert store.load(1) == loaded
 
 
@@ -114,6 +114,74 @@ def test_magic_target_and_repeat_mode_survive_roundtrip(tmp_path):
     store = ProfileStore(tmp_path)
     store.save(profile)
     assert store.load(1) == profile
+
+
+def test_hunt_options_are_saved_per_profile_with_mercenary_order(tmp_path):
+    original = BotProfile.default(2)
+    updated = replace(
+        original,
+        attack_delay_seconds=1.25,
+        search_radius=400,
+        collect_remaining_loot=True,
+        mercenaries=tuple(reversed(original.mercenaries)),
+    )
+    store = ProfileStore(tmp_path)
+    store.save(updated)
+    assert store.load(2) == updated
+    assert store.load(1) == BotProfile.default(1)
+
+
+def test_schema_three_keeps_team_settings_and_uses_safe_hunt_defaults_without_rewriting(tmp_path):
+    payload = replace(BotProfile.default(1), magic_first_turn_only=False).summary()
+    payload["schema_version"] = 3
+    for key in ("attack_delay_seconds", "search_radius", "collect_remaining_loot"):
+        del payload[key]
+    payload["mercenaries"][0].update(action="Q", target="self", fallback_basic=False)
+    saved = json.dumps(payload).encode()
+    path = tmp_path / "profile-1.json"
+    path.write_bytes(saved)
+    loaded = ProfileStore(tmp_path).load(1)
+    assert loaded.mercenaries[0].action == "Q" and loaded.mercenaries[0].target == "self"
+    assert not loaded.magic_first_turn_only and not loaded.mercenaries[0].fallback_basic
+    assert loaded.attack_delay_seconds == 0 and loaded.search_radius == 60
+    assert not loaded.collect_remaining_loot and path.read_bytes() == saved
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("attack_delay_seconds", -1),
+        ("attack_delay_seconds", 60.1),
+        ("attack_delay_seconds", True),
+        ("attack_delay_seconds", float("nan")),
+        ("attack_delay_seconds", float("inf")),
+        ("search_radius", 4),
+        ("search_radius", 501),
+        ("search_radius", True),
+        ("collect_remaining_loot", 1),
+    ],
+)
+def test_invalid_hunt_options_preserve_saved_profile(tmp_path, field, value):
+    original = BotProfile.default(1)
+    store = ProfileStore(tmp_path)
+    store.save(original)
+    with pytest.raises(DiagnosticError):
+        store.save(replace(original, **{field: value}))
+    assert store.load(1) == original
+
+
+@pytest.mark.parametrize(
+    "field", ["attack_delay_seconds", "search_radius", "collect_remaining_loot"]
+)
+def test_incomplete_hunt_options_in_new_schema_do_not_reset_saved_settings(tmp_path, field):
+    payload = BotProfile.default(1).summary()
+    del payload[field]
+    saved = json.dumps(payload).encode()
+    path = tmp_path / "profile-1.json"
+    path.write_bytes(saved)
+    with pytest.raises(DiagnosticError):
+        ProfileStore(tmp_path).load(1)
+    assert path.read_bytes() == saved
 
 
 @pytest.mark.parametrize("target", ["slot_0", "slot_10", "everyone", 1, []])

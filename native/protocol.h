@@ -4,11 +4,12 @@
 #include <cstdio>
 
 constexpr uint32_t kMagic = 0x414F5031;
-constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.7";
+constexpr uint32_t kMaxSearchRadius = 500;
+constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.8";
 enum Operation : uint32_t {
     Probe = 0, Attack = 1, Approach = 2, StopMovement = 3,
     NativeAttack = 4, StopNativePursuit = 5, BattleBasic = 6,
-    BattleSelect = 7, BattleMagic = 8
+    BattleSelect = 7, BattleMagic = 8, BattleLoot = 9
 };
 enum Result : uint32_t {
     Verified = 0, Queued = 1, Blocked = 2, OutOfRange = 3, InvalidScene = 4,
@@ -22,7 +23,8 @@ enum Result : uint32_t {
     BattleBasicQueued = 26, BattleNotReady = 27, BattleTurnChanged = 28,
     BattleTargetChanged = 29, BattleNotEligible = 30, MercenarySelected = 31,
     BattleMagicQueued = 32, BattleSelectionChanged = 33,
-    BattleMagicNotEligible = 34, BattleMagicUnsupported = 35
+    BattleMagicNotEligible = 34, BattleMagicUnsupported = 35,
+    BattleLootQueued = 36, BattleLootNotEligible = 37
 };
 struct SharedCommand {
     uint32_t magic, version, pid, nonce_lo, nonce_hi, operation, slot;

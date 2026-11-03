@@ -11,6 +11,11 @@ def unit_key(unit: BattleUnit) -> tuple:
     return unit.identity, unit.member_slot
 
 
+def loot_key(frame: BattleFrame, target: BattleUnit) -> tuple:
+    ctx = frame.context
+    return ctx.pid, ctx.creation_time, ctx.context, "loot", *unit_key(target)
+
+
 def roster_rows(
     profile: BotProfile, frame: BattleFrame | None, orders: dict | None = None
 ) -> list[dict]:
@@ -58,11 +63,21 @@ class TurnEngine:
     """Plan one bounded native request at a time; never infer server acceptance from a queue."""
 
     def __init__(
-        self, pid: int, creation_time: int, profile: BotProfile, ledger: set | None = None
+        self,
+        pid: int,
+        creation_time: int,
+        profile: BotProfile,
+        ledger: set | None = None,
+        *,
+        execute_orders: bool = True,
     ):
         profile.validate()
         self.pid, self.creation_time, self.profile = pid, creation_time, profile
         self.ledger = ledger if ledger is not None else set()
+        self.execute_orders = execute_orders
+        self.loot_empty_since: float | None = None
+        self.loot_rejected = set()
+        self.loot_queued = 0
         self.active = False
         self.fresh_battle = False
         self.turn = None
@@ -106,6 +121,8 @@ class TurnEngine:
             self.timeline.clear()
             self.observed_at = None
             self.orders.clear()
+            self.loot_empty_since = None
+            self.loot_rejected.clear()
             self.pending = self.inflight = None
 
     def leave(self) -> None:
@@ -164,7 +181,12 @@ class TurnEngine:
             or target.life != trial.target.life
             or self._value(frame, trial.source.member_slot) != pending.source_value
         )
-        if not frame.own_turn or not frame.enemies:
+        if trial.action == "loot" and target is not None:
+            pending.changed |= (
+                target.flags != trial.target.flags
+                or target.action_state != trial.target.action_state
+            )
+        if not frame.own_turn or not frame.enemies and trial.action != "loot":
             self.observed += 1
             self.pending = None
             return True
@@ -193,6 +215,52 @@ class TurnEngine:
                 f"{member_label(trial.source.member_slot)}: esperando el resultado de la orden."
             )
         return False
+
+    def _next_loot(self, frame: BattleFrame, now: float) -> BattleTrial | None:
+        if self.pending is not None and self.pending.trial.action == "loot":
+            if not self._observe_pending(frame, now):
+                return None
+        if not self.profile.collect_remaining_loot or not frame.corpses:
+            return None
+        if self.loot_empty_since is None:
+            self.loot_empty_since = now
+        # Give NeoACA the first opportunity. This does not delay the opening magic.
+        if now - self.loot_empty_since < 1 or not frame.own_turn:
+            self.message = "Esperando la recogida del NeoACA antes de buscar botín restante."
+            return None
+        if self.pending is not None and not self._observe_pending(frame, now):
+            return None
+        sources = {u.member_slot: u for u in frame.sources}
+        for plan in self.profile.mercenaries:
+            source = sources.get(plan.slot)
+            if (
+                not plan.enabled
+                or source is None
+                or source.action_state != 1
+                or plan.slot in self.skipped
+            ):
+                continue
+            if now < self.deferred_until.get(plan.slot, 0):
+                continue
+            targets = [
+                u
+                for u in frame.corpses
+                if loot_key(frame, u) not in self.ledger
+                and (plan.slot, unit_key(u)) not in self.loot_rejected
+            ]
+            if not targets:
+                continue
+            trial = (
+                BattleTrial(frame, source, action="select")
+                if frame.selected_unit != source.address
+                else BattleTrial(frame, source, targets[0], "loot")
+            )
+            trial.validate()
+            self.inflight = trial
+            self._order(plan.slot, trial.action, "Preparando recogida de botín restante", now)
+            return trial
+        self.message = "Sin recogidas pendientes disponibles; esperando el final del combate."
+        return None
 
     def _targets(
         self, frame: BattleFrame, plan: Mercenary, source: BattleUnit, action: str
@@ -224,7 +292,10 @@ class TurnEngine:
             frame.turn_tick,
         )
         if len(self.ledger) > 2048:
-            self.ledger.intersection_update({key for key in self.ledger if key[:5] == prefix})
+            keep = {loot_key(frame, u) for u in frame.corpses}
+            self.ledger.intersection_update(
+                {key for key in self.ledger if key[:5] == prefix or key in keep}
+            )
         if self.inflight is not None:
             self.stop("Hay una orden sin respuesta; no se permite otra.", uncertain=True)
             return None
@@ -249,19 +320,23 @@ class TurnEngine:
         if frame.own_turn:
             self._mark("first_own_turn", now)
         if frame.enemies:
+            self.loot_empty_since = None
             self.seen_enemy = True
             self._mark("first_enemies", now)
         if not frame.enemies:
-            if self.pending is not None:
+            if self.pending is not None and self.pending.trial.action != "loot":
                 self.observed += 1
-            self.pending = None
+                self.pending = None
             if self.seen_enemy:
                 self._mark("first_no_enemies_after_seen", now)
                 self.message = "Sin enemigos vivos; esperando el final de la batalla."
             else:
                 self.message = "Esperando que el cliente publique los enemigos del combate."
-            return None
+            return self._next_loot(frame, now)
         if self.pending is not None and not self._observe_pending(frame, now):
+            return None
+        if not self.execute_orders:
+            self.message = "Turnos manuales; la recogida esperará a que no queden enemigos vivos."
             return None
         if not frame.own_turn:
             self.message = "Esperando el turno de tu grupo."
@@ -342,6 +417,8 @@ class TurnEngine:
             and trial.operation != 6
             or code == 32
             and trial.operation != 8
+            or code == 36
+            and trial.operation != 9
         ):
             self.stop("La respuesta no corresponde al tipo de orden.", uncertain=True)
             return
@@ -352,7 +429,15 @@ class TurnEngine:
             return
         self.attempts += 1
         slot = trial.source.member_slot
-        if code in (26, 32):
+        if code == 36:
+            self.loot_queued += 1
+            self.ledger.add(loot_key(trial.frame, trial.target))
+            self.pending = PendingTurn(trial, now, self._value(trial.frame, slot))
+            self._order(slot, "loot", "Recogida encolada; esperando cambios en el cliente", now)
+        elif code == 37:
+            self.loot_rejected.add((slot, unit_key(trial.target)))
+            self._order(slot, "loot", "Recogida rechazada sin envío", now)
+        elif code in (26, 32):
             self._mark("first_order_queued", now)
             self.queued += 1
             self.consumed.add(slot)
@@ -389,6 +474,14 @@ class TurnEngine:
     def summary(self) -> dict:
         return {
             "enabled": True,
+            "execute_orders": self.execute_orders,
+            "loot": {
+                "enabled": self.profile.collect_remaining_loot,
+                "queued": self.loot_queued,
+                "neo_grace_seconds": 1,
+                "bonus_detection_verified": False,
+                "collection_confirmed": False,
+            },
             "active": self.active,
             "running": self.running,
             "message": self.message,

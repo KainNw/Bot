@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
 from .profiles import member_label
 
 BACKGROUND = "#25272d"
@@ -29,6 +30,11 @@ class OverviewWindow:
         on_configure: Callable,
         on_refresh: Callable,
         on_copy: Callable,
+        attack_delay,
+        search_radius,
+        collect_loot,
+        on_save: Callable,
+        on_calibrate: Callable,
     ):
         import tkinter as tk
         from tkinter import ttk
@@ -58,8 +64,65 @@ class OverviewWindow:
         self.tabs.pack(fill="both", expand=True)
         summary = tk.Frame(self.tabs, background=SURFACE, padx=10, pady=10)
         orders = tk.Frame(self.tabs, background=SURFACE, padx=10, pady=10)
+        hunting = tk.Frame(self.tabs, background=SURFACE, padx=16, pady=16)
         self.tabs.add(summary, text="Resumen")
         self.tabs.add(orders, text="Órdenes de combate")
+        self.tabs.add(hunting, text="Caza y botín")
+        self.hunt_controls = []
+
+        def option_label(text):
+            tk.Label(
+                hunting,
+                text=text,
+                background=SURFACE,
+                foreground=TEXT,
+                anchor="w",
+                justify="left",
+                wraplength=710,
+            ).pack(anchor="w", pady=(6, 4))
+
+        option_label("Espera antes de atacar al mob (0–60 segundos; admite decimales):")
+        delay = ttk.Combobox(hunting, textvariable=attack_delay, values=("0", "1", "3"), width=8)
+        delay.pack(anchor="w")
+        self.hunt_controls.append(delay)
+        option_label("Radio de búsqueda (5–500 casillas):")
+        radius = ttk.Spinbox(
+            hunting,
+            from_=MIN_SEARCH_RADIUS,
+            to=MAX_SEARCH_RADIUS,
+            textvariable=search_radius,
+            width=8,
+        )
+        radius.pack(anchor="w")
+        self.hunt_controls.append(radius)
+        option_label(
+            "El cliente persigue al mob hasta su alcance normal. La espera no retrasa la magia Q."
+        )
+        loot = tk.Checkbutton(
+            hunting,
+            text="Recoger bonus / botín restante al terminar con los mobs (experimental)",
+            variable=collect_loot,
+            background=SURFACE,
+            foreground=TEXT,
+            activebackground=SURFACE,
+            activeforeground=TEXT,
+            selectcolor=BACKGROUND,
+        )
+        loot.pack(anchor="w", pady=8)
+        self.hunt_controls.append(loot)
+        option_label(
+            "Da 1 s al NeoACA. Después usa la búsqueda nativa en enemigos derrotados. "
+            "La recogida del bonus necesita confirmación en el juego."
+        )
+        controls = tk.Frame(hunting, background=SURFACE)
+        controls.pack(anchor="w", pady=8)
+        for title, callback in (
+            ("Calibrar radio", on_calibrate),
+            ("Guardar opciones del perfil", on_save),
+        ):
+            button = ttk.Button(controls, text=title, command=callback)
+            button.pack(side="left", padx=(0, 8))
+            self.hunt_controls.append(button)
 
         def table(frame, columns):
             for index, (_key, title, weight) in enumerate(columns):
@@ -231,6 +294,8 @@ class OverviewWindow:
                 label.configure(text=value)
 
     def set_controls(self, *, start: bool, stop: bool, editable: bool) -> None:
+        for widget in self.hunt_controls:
+            widget.configure(state="normal" if editable else "disabled")
         self.start_button.configure(state="normal" if start else "disabled")
         self.stop_button.configure(state="normal" if stop else "disabled")
         self.configure_button.configure(state="normal" if editable else "disabled")

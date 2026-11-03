@@ -370,7 +370,7 @@ def battle_trial(bridge):
 
 def battle_reply(trial, status=None):
     if status is None:
-        status = {6: 26, 7: 31, 8: 32}[trial.operation]
+        status = {6: 26, 7: 31, 8: 32, 9: 36}[trial.operation]
     return {
         "pid": 200,
         "slot": trial.target.world_slot if trial.target else 0,
@@ -518,6 +518,61 @@ def magic_trial(battle_trial):
             battle_trial.frame, selected_unit=battle_trial.source.address, magic_actions=(101, 102)
         ),
     )
+
+
+@pytest.mark.parametrize("status", [36, 37, 27, 28, 29, 33])
+def test_native_loot_uses_dead_target_and_exact_selected_instance_once(
+    bridge, battle_trial, monkeypatch, status
+):
+    corpse = replace(battle_trial.target, life=0)
+    frame = replace(
+        battle_trial.frame,
+        units=(battle_trial.source, corpse),
+        selected_unit=battle_trial.source.address,
+    )
+    trial = replace(battle_trial, frame=frame, target=corpse, action="loot")
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        for key, value in {
+            "pid": 200,
+            "created": 123456,
+            "window": 0x12345,
+            "mercenary": 3,
+            "enemy-member": 5,
+            "slot": 6,
+            "target-unit": corpse.address,
+        }.items():
+            assert args[args.index(f"--{key}") + 1] == str(value)
+        assert "--battle-loot" in args and "--magic-key" not in args
+        return SimpleNamespace(returncode=0, stdout=json.dumps(battle_reply(trial, status)))
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    result = try_battle_action(bridge[0], bridge[1], trial)
+    assert len(calls) == 1 and result["requested_action"] == "loot"
+    assert result["loot_confirmed"] is False and result["attack_confirmed"] is False
+
+
+@pytest.mark.parametrize("status", [1, 26, 30, 32, 34, 35])
+def test_loot_rejects_other_action_results_without_retry(bridge, battle_trial, monkeypatch, status):
+    corpse = replace(battle_trial.target, life=0)
+    frame = replace(
+        battle_trial.frame,
+        units=(battle_trial.source, corpse),
+        selected_unit=battle_trial.source.address,
+    )
+    trial = replace(battle_trial, frame=frame, target=corpse, action="loot")
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(battle_reply(trial, status)))
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    with pytest.raises(DiagnosticError, match="respuesta no válida"):
+        try_battle_action(bridge[0], bridge[1], trial)
+    assert len(calls) == 1
 
 
 def test_selection_uses_only_own_member_and_never_sends_an_enemy_target(

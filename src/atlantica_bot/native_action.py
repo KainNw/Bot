@@ -10,6 +10,7 @@ from .clients import ClientWindow
 from .errors import DiagnosticError
 from .hunting import control_hunting
 from .ipc import BotLease, Cancellation
+from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
 from .navigation import ApproachSettings
 from .session import GameSession
 from .world import Candidate, GridPosition, NativePursuit, NavigationState
@@ -51,6 +52,8 @@ RESULTS = {
     33: "El mercenario seleccionado o su barra de magia cambiaron. Selecciona y actualiza.",
     34: "El cliente rechazó la magia por sus condiciones actuales. Comprueba habilidad y objetivo.",
     35: "Esta habilidad usa una ruta especial todavía sin habilitar; no se solicitó la magia.",
+    36: "El cliente encoló una búsqueda de botín. Comprueba la recogida en el juego.",
+    37: "El cliente rechazó la búsqueda de botín sin envío.",
 }
 
 
@@ -275,6 +278,7 @@ def _try_action(
             "--battle-basic",
             "--battle-select",
             "--battle-magic",
+            "--battle-loot",
         )[operation],
         "--pid",
         str(window.pid),
@@ -354,7 +358,11 @@ def _try_action(
             )
         )
     elif operation == 4:
-        if origin is None or candidate is None or not 5 <= radius <= 120:
+        if (
+            origin is None
+            or candidate is None
+            or not MIN_SEARCH_RADIUS <= radius <= MAX_SEARCH_RADIUS
+        ):
             raise DiagnosticError("Falta el área de búsqueda del ataque nativo.")
         args.extend(
             (
@@ -390,7 +398,7 @@ def _try_action(
             args.extend(("--map", str(pursuit.map_id)))
     elif operation == 5:
         raise DiagnosticError("Falta la persecución propia que se desea detener.")
-    if operation in (6, 7, 8):
+    if operation in (6, 7, 8, 9):
         if battle is None:
             raise DiagnosticError("Falta la lectura del turno de combate.")
         battle.validate()
@@ -432,8 +440,8 @@ def _try_action(
         code = report["status"]
         if type(code) is not int or code not in RESULTS or type(report["thread_id"]) is not int:
             raise ValueError("Respuesta no válida")
-        if operation in (6, 7, 8):
-            outcomes = {6: {26, 30}, 7: {31, 33}, 8: {32, 33, 34, 35}}[operation]
+        if operation in (6, 7, 8, 9):
+            outcomes = {6: {26, 30}, 7: {31, 33}, 8: {32, 33, 34, 35}, 9: {33, 36, 37}}[operation]
             if code not in {4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 27, 28, 29} | outcomes:
                 raise ValueError("Resultado de otra operación")
             expected = {
@@ -468,8 +476,8 @@ def _try_action(
                 ):
                     raise ValueError("Barra de magia no válida")
         if code >= 15 and code not in (
-            {26, 27, 28, 29, 30, 31, 32, 33, 34, 35}
-            if operation in (6, 7, 8)
+            {26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37}
+            if operation in (6, 7, 8, 9)
             else {15, 17, 18, 19, 20, 21}
             if operation == 2
             else {16, 17, 21}
@@ -518,9 +526,12 @@ def _try_action(
         "battle_basic",
         "battle_select",
         "battle_magic",
+        "battle_loot",
     )[operation]
-    if operation in (6, 7, 8):
+    if operation in (6, 7, 8, 9):
         report["attack_confirmed"] = False
+        if operation == 9:
+            report["loot_confirmed"] = False
         report["target_identity"] = list(battle.target.identity) if battle.target else None
         report["actor_identity"] = list(battle.frame.context.actor_identity)
         report["requested_action"] = battle.action

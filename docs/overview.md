@@ -1,5 +1,9 @@
 # Vista general 0.12.1
 
+Desde 0.13.0 también incluye **Caza y botín** para guardar la espera antes de atacar,
+el radio calibrable y la recogida restante. Comparte sus valores con el panel principal;
+consulta [las opciones y la validación pendiente del bonus](hunt-settings.md).
+
 **Vista general** abre una ventana flotante oscura desde **Control** o **Mercenarios**.
 Se inspira en la distribución de la imagen aportada por el usuario y muestra los
 nueve puestos, con **Main (1)** siempre en la primera fila y **Mercenarios 2–9**

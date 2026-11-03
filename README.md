@@ -1,7 +1,14 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.12.1** pausa la búsqueda al caminar manualmente
+con Auto Battle apagado. La versión **0.13.0** incorpora **Caza y botín**: espera
+configurable antes de atacar (0, 1, 3 o un valor de 0–60 segundos), radio de búsqueda
+de 5–500 casillas con calibración por objetivo y recogida nativa experimental de
+botín restante después de derrotar a todos los mobs. Se guarda por perfil.
+La espera no retrasa la magia del primer turno. La recogida del bonus todavía necesita
+confirmación visual en el juego. Consulta [caza y botín](docs/hunt-settings.md).
+
+Conserva la pausa de búsqueda al caminar manualmente
 y la reanuda tras dos segundos quieto, tomando el punto actual como centro del radio.
 Prioriza las batallas que interrumpen un desplazamiento y mejora la recuperación de
 lecturas durante lag y carga de enemigos. Consulta [movimiento y recuperación](docs/recovery.md).
@@ -21,7 +28,8 @@ participación real en batalla, selección en el perfil, prioridad y última ord
 Solo ordena actuar a los miembros presentes y habilitados. Puedes llevar dos
 miembros sin esperar a los otros siete. Configura básico o **Magia Q/W/E/R/T**
 por mercenario, en el orden del perfil; por defecto usa la magia en el primer
-turno propio y básicos después. Deja de enviar órdenes al no observar enemigos vivos.
+turno propio y básicos después. Deja de enviar ataques al no observar enemigos vivos;
+si habilitas la recogida restante, permite solicitudes de búsqueda sobre los derrotados.
 El usuario confirmó visualmente el básico de 0.9 y la magia Q de 0.10. En la primera
 prueba automática de 0.11, Q del puesto 1 derrotó a todos y el bot omitió las órdenes
 restantes. La secuencia entre varios miembros y los básicos posteriores siguen
@@ -106,7 +114,7 @@ están en [prueba de básico](docs/basic-battle-trial.md) y
 [selección y magia](docs/magic-battle-trial.md).
 
 **Ataque nativo por radio (experimental)** viene marcado para la prueba solicitada.
-El radio va de 5 a 120 casillas alrededor del inicio de esa ejecución, con valor
+El radio va de 5 a 500 casillas alrededor del inicio de esa ejecución, con valor
 inicial 60. Si lo desmarcas, conserva el ciclo cercano. El panel no utiliza las
 rutas por rejilla del modo anterior. **Parar bot** cancela nuevas órdenes y solicita
 parar una persecución que todavía pueda identificar como propia. Un clic de movimiento
@@ -148,8 +156,11 @@ py -3 panel_caza.py
 3. El detector queda listo al conectar. Si necesitas contrastarlo, **Calibrar combate**
    permite capturar mapa → combate → regreso. Tras una prueba individual, reconecta
    al mismo PID antes de iniciar el ciclo.
-4. Deja marcado **Ataque nativo por radio (experimental)** y elige el radio
-   (60 casillas inicialmente). El punto actual será el centro del área de selección.
+4. En **Caza y botín**, deja marcado **Ataque nativo por radio (experimental)** y elige
+   el radio (60 casillas inicialmente). **Calibrar radio** permite incluir un mob de la lista.
+   El punto al iniciar será el centro del área de selección. Configura también la espera
+   antes de atacar y, si quieres probarla, la recogida de bonus/botín restante.
+   **Guardar opciones del perfil** conserva los cambios; iniciar también los guarda.
 5. Para jugar los turnos con el bot, configura el perfil y activa **Ejecutar turnos
    según el perfil (experimental)**. Comprueba en **Mercenarios** los presentes
    cuando empiece la batalla. Pulsa **Iniciar bot**: busca un mob y solicita persecución o ataque según el

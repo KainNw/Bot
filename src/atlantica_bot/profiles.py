@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .errors import DiagnosticError
+from .limits import MAX_ATTACK_DELAY_SECONDS, MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
 
 ACTION_LABELS = {
     "basic": "Ataque básico",
@@ -44,12 +46,28 @@ class BotProfile:
     number: int
     mercenaries: tuple[Mercenary, ...]
     magic_first_turn_only: bool = True
+    attack_delay_seconds: float = 0.0
+    search_radius: int = 60
+    collect_remaining_loot: bool = False
 
     def validate(self) -> None:
         if type(self.number) is not int or self.number not in (1, 2, 3):
             raise DiagnosticError("Elige uno de los tres perfiles.")
         if type(self.magic_first_turn_only) is not bool:
             raise DiagnosticError("Revisa la configuración de magia del primer turno.")
+        if (
+            type(self.attack_delay_seconds) not in (int, float)
+            or not math.isfinite(self.attack_delay_seconds)
+            or not 0 <= self.attack_delay_seconds <= MAX_ATTACK_DELAY_SECONDS
+        ):
+            raise DiagnosticError("El tiempo antes de atacar debe estar entre 0 y 60 segundos.")
+        if (
+            type(self.search_radius) is not int
+            or not MIN_SEARCH_RADIUS <= self.search_radius <= MAX_SEARCH_RADIUS
+        ):
+            raise DiagnosticError("El radio de búsqueda debe estar entre 5 y 500 casillas.")
+        if type(self.collect_remaining_loot) is not bool:
+            raise DiagnosticError("Revisa la opción de recogida de botín restante.")
         if (
             len(self.mercenaries) != 9
             or any(type(merc.slot) is not int for merc in self.mercenaries)
@@ -75,10 +93,13 @@ class BotProfile:
 
     def summary(self) -> dict:
         return {
-            "schema_version": 3,
+            "schema_version": 4,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "magic_first_turn_only": self.magic_first_turn_only,
+            "attack_delay_seconds": self.attack_delay_seconds,
+            "search_radius": self.search_radius,
+            "collect_remaining_loot": self.collect_remaining_loot,
             "turn_execution_available": True,
         }
 
@@ -117,7 +138,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2, 3)
+                or payload["schema_version"] not in (1, 2, 3, 4)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -129,14 +150,17 @@ class ProfileStore:
                     if set(entry) - {"slot", "name", "enabled"}:
                         raise ValueError
                 elif set(entry) != {"slot", "name", "enabled", "action", "fallback_basic"} | (
-                    {"target"} if payload["schema_version"] == 3 else set()
+                    {"target"} if payload["schema_version"] >= 3 else set()
                 ):
                     raise ValueError
             mercenaries = tuple(Mercenary(**entry) for entry in payload["mercenaries"])
             profile = BotProfile(
                 number,
                 mercenaries,
-                payload["magic_first_turn_only"] if payload["schema_version"] == 3 else True,
+                payload["magic_first_turn_only"] if payload["schema_version"] >= 3 else True,
+                payload["attack_delay_seconds"] if payload["schema_version"] >= 4 else 0.0,
+                payload["search_radius"] if payload["schema_version"] >= 4 else 60,
+                payload["collect_remaining_loot"] if payload["schema_version"] >= 4 else False,
             )
             profile.validate()
             return profile

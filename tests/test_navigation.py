@@ -8,7 +8,7 @@ from atlantica_bot.clients import ClientWindow
 from atlantica_bot.combat import CombatDetector
 from atlantica_bot.errors import DiagnosticError
 from atlantica_bot.hunt_loop import HuntEngine, HuntWorker
-from atlantica_bot.navigation import ApproachSettings
+from atlantica_bot.navigation import ApproachSettings, calibrated_radius
 from atlantica_bot.world import (
     Candidate,
     GridPosition,
@@ -67,6 +67,45 @@ def ready_engine(*, enabled=True, radius=60):
     assert not engine.observe(observation(), 0)
     assert engine.observe(observation(), 2)
     return engine
+
+
+def test_calibration_uses_fresh_coordinates_and_expanded_radius_not_strike_range():
+    far = replace(TARGET, x=493, y=340, grid_distance=1, distance_squared=90000)
+    assert calibrated_radius(view(far), far.identity) == 302
+    engine = ready_engine(enabled=False, radius=302)
+    engine.native_attack = True
+    assert engine.select(view(far), 2) == far
+    assert engine.range_diagnostic["limit_squared"] == 20
+    assert not engine.range_diagnostic["available_in_range"]
+    assert engine.phase == "requesting_native_attack"
+    outside = replace(far, x=496)
+    another = ready_engine(enabled=False, radius=302)
+    another.native_attack = True
+    assert another.select(view(outside), 2) is None
+
+
+@pytest.mark.parametrize("distance,expected", [(1, 5), (499, 500), (500, 500)])
+def test_calibration_clamps_margin_within_supported_bounds(distance, expected):
+    target = replace(TARGET, x=ORIGIN.x + distance, y=ORIGIN.y)
+    assert calibrated_radius(view(target), target.identity) == expected
+
+
+@pytest.mark.parametrize("invalid", ["missing", "duplicate", "different_map", "too_far", "not_map"])
+def test_calibration_rejects_stale_ambiguous_or_unsupported_targets(invalid):
+    target = TARGET
+    current = view(target)
+    if invalid == "missing":
+        current = view()
+    elif invalid == "duplicate":
+        current = view(target, replace(target, slot=8))
+    elif invalid == "different_map":
+        current = view(replace(target, map_id=53))
+    elif invalid == "too_far":
+        current = view(replace(target, x=ORIGIN.x + 501, y=ORIGIN.y))
+    else:
+        current = replace(current, scene_code=3)
+    with pytest.raises(DiagnosticError):
+        calibrated_radius(current, target.identity)
 
 
 def moving_engine():
@@ -366,7 +405,7 @@ def test_inconsistent_raw_navigation_flags_are_rejected(field, value):
         NavigationState.from_report(payload)
 
 
-@pytest.mark.parametrize("radius", [0, 121, True, "60"])
+@pytest.mark.parametrize("radius", [0, 4, 501, True, "60"])
 def test_invalid_search_radius_is_rejected(radius):
     with pytest.raises(DiagnosticError):
         ApproachSettings(True, radius)
