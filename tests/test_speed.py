@@ -11,6 +11,7 @@ from atlantica_bot.speed import (
     CONTEXT_ACCESS_BYTES,
     CONTEXT_STRIDE,
     CONTEXT_TABLE_ADDRESS,
+    GETTER_HOP_LIMIT,
     RATE_GETTER_ADDRESS,
     RATE_WRAPPER_ADDRESS,
     RATE_WRAPPER_BYTES,
@@ -30,7 +31,7 @@ def speed_session(*, overrides=None):
         {
             CONTEXT_ACCESS_ADDRESS: CONTEXT_ACCESS_BYTES,
             RATE_WRAPPER_ADDRESS: RATE_WRAPPER_BYTES,
-            RATE_GETTER_ADDRESS: bytes.fromhex("d98120010000c3"),
+            RATE_GETTER_ADDRESS: bytes.fromhex("d98120010000c3") + b"\x90" * 9,
             CONTEXT_TABLE_ADDRESS: struct.pack("<I", 0x10000000),
             0x10000018: struct.pack("<I", 0x20000000),
             0x10000000 + CONTEXT_STRIDE + 0x18: struct.pack("<I", 0x20000100),
@@ -130,7 +131,7 @@ def test_rate_getter_decoder_accepts_only_a_bounded_single_load(code, expected):
     [
         (CONTEXT_ACCESS_ADDRESS, bytes(len(CONTEXT_ACCESS_BYTES))),
         (RATE_WRAPPER_ADDRESS, bytes(len(RATE_WRAPPER_BYTES))),
-        (RATE_GETTER_ADDRESS, b"\x90" * 7),
+        (RATE_GETTER_ADDRESS, b"\x90" * 16),
     ],
 )
 def test_changed_code_never_follows_graphics_pointers(address, replacement):
@@ -165,3 +166,107 @@ def test_invalid_graphics_root_is_not_dereferenced():
     result = read_speed_snapshot(session, None)
     assert result["graphics_rates"]["status"] == "unavailable"
     assert not any(address == 0x18 for address, _ in calls)
+
+
+def direct_jump(address, target, prefix=b""):
+    raw = prefix + b"\xe9" + struct.pack("<i", target - address - len(prefix) - 5)
+    return raw.ljust(16, b"\x90")
+
+
+def test_captured_getter_thunk_follows_its_receiver_and_reads_the_final_field():
+    target = 0x00A46DEA
+    session, calls = speed_session(
+        overrides={
+            RATE_GETTER_ADDRESS: bytes.fromhex("8b09e99373fdff") + b"\x90" * 9,
+            target: bytes.fromhex("d98120010000c3") + b"\x90" * 9,
+            0x30000000: struct.pack("<I", 0x40000000),
+            0x30001000: struct.pack("<I", 0x40001000),
+            0x40000120: struct.pack("<f", 1.0),
+            0x40001120: struct.pack("<f", 1.4),
+        }
+    )
+    rates = read_speed_snapshot(session, None)["graphics_rates"]
+    assert rates["status"] == "read" and not rates["shared_receiver"]
+    assert rates["getter"]["receiver_dereferences"] == [0]
+    assert [step["address"] for step in rates["getter"]["steps"]] == ["00A6FA50", "00A46DEA"]
+    assert rates["contexts"]["1"]["receiver"] == 0x40001000
+    assert rates["contexts"]["1"]["value"] == pytest.approx(1.4)
+    assert 0x30001120 not in {address for address, _ in calls}
+
+
+@pytest.mark.parametrize("target", [RATE_GETTER_ADDRESS, 0x00400000, 0x03F85000])
+def test_getter_cycles_and_targets_outside_code_never_follow_object_pointers(target):
+    session, calls = speed_session(
+        overrides={RATE_GETTER_ADDRESS: direct_jump(RATE_GETTER_ADDRESS, target)}
+    )
+    rates = read_speed_snapshot(session, None)["graphics_rates"]
+    assert rates["status"] == "unavailable"
+    assert rates["reason"] in ("getter_cycle", "getter_target_outside_code")
+    assert CONTEXT_TABLE_ADDRESS not in {address for address, _ in calls}
+
+
+def test_getter_hop_limit_stops_before_reading_an_unbounded_chain():
+    addresses = [RATE_GETTER_ADDRESS + step * 0x100 for step in range(GETTER_HOP_LIMIT + 2)]
+    overrides = {
+        address: direct_jump(address, target)
+        for address, target in zip(addresses, addresses[1:], strict=False)
+    }
+    session, calls = speed_session(overrides=overrides)
+    rates = read_speed_snapshot(session, None)["graphics_rates"]
+    assert rates["reason"] == "getter_hop_limit"
+    assert addresses[-1] not in {address for address, _ in calls}
+    assert CONTEXT_TABLE_ADDRESS not in {address for address, _ in calls}
+
+
+@pytest.mark.parametrize("prefix", [b"\x8b\x49\xfc", b"\x8b\x89\x04\x04\x00\x00"])
+def test_unbounded_receiver_offsets_are_not_followed(prefix):
+    session, calls = speed_session(
+        overrides={RATE_GETTER_ADDRESS: direct_jump(RATE_GETTER_ADDRESS, 0x00A46DEA, prefix)}
+    )
+    rates = read_speed_snapshot(session, None)["graphics_rates"]
+    assert rates["reason"] == "getter_shape_not_resolved"
+    assert CONTEXT_TABLE_ADDRESS not in {address for address, _ in calls}
+
+
+def test_replaced_receiver_pointer_discards_the_value():
+    target = 0x00A46DEA
+    session, _ = speed_session(
+        overrides={
+            RATE_GETTER_ADDRESS: direct_jump(RATE_GETTER_ADDRESS, target, b"\x8b\x09"),
+            target: bytes.fromhex("d98120010000c3") + b"\x90" * 9,
+            0x30000000: struct.pack("<I", 0x40000000),
+            0x40000120: struct.pack("<f", 1.0),
+            0x30001000: struct.pack("<I", 0x40000000),
+        }
+    )
+    original = session.system.read_memory
+    reads = 0
+
+    def changing(pid, address, size):
+        nonlocal reads
+        if address == 0x30000000:
+            reads += 1
+            if reads == 2:
+                return struct.pack("<I", 0x44440000)
+        return original(pid, address, size)
+
+    session.system.read_memory = changing
+    rates = read_speed_snapshot(session, None)["graphics_rates"]
+    assert rates["contexts"]["0"]["reason"] == "graphics_binding_changed"
+    assert rates["contexts"]["1"]["status"] == "read"
+
+
+def test_different_wrappers_can_share_the_same_final_rate_receiver():
+    target = 0x00A46DEA
+    session, _ = speed_session(
+        overrides={
+            RATE_GETTER_ADDRESS: direct_jump(RATE_GETTER_ADDRESS, target, b"\x8b\x09"),
+            target: bytes.fromhex("d98120010000c3") + b"\x90" * 9,
+            0x30000000: struct.pack("<I", 0x40000000),
+            0x30001000: struct.pack("<I", 0x40000000),
+            0x40000120: struct.pack("<f", 1.0),
+        }
+    )
+    rates = read_speed_snapshot(session, None)["graphics_rates"]
+    assert rates["contexts"]["0"]["backend"] != rates["contexts"]["1"]["backend"]
+    assert rates["shared_receiver"]

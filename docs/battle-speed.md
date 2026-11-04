@@ -121,3 +121,42 @@ Esta versión no modifica escalas ni desactiva comprobaciones. El techo local de
 1,5 deja un margen nominal pequeño respecto a 1,4; no constituye una garantía de
 sincronización ni de recogida de botín. Antes de preparar una prueba hay que
 resolver la función final y el comportamiento al salir del combate.
+
+## Comparación 234222–234316 y lector 0.15.3
+
+Se verificaron los SHA-256 y el CRC de las capturas de 0.15.2:
+
+| Captura | Bloques | Bytes | Estado local | Índice gráfico |
+| --- | --- | --- | --- | --- |
+| `combate-20261103-234222` | 39 | 958 720 | 33, contexto 0 | 1 |
+| `contexto-20261103-234316` | 19 | 147 456 | 1, contexto −1 | 0 |
+
+Pertenecen al mismo PID 21076 y fecha de creación `134381859857067996`.
+Los 19 bloques que comparten son idénticos. El gestor en combate sigue en 1,4;
+las entradas, divisor y constantes conservan los valores de la captura anterior.
+Esto confirma el cambio de selector al salir de la batalla. Todavía no confirma
+que los dos contextos usen objetos finales distintos ni que sus escalas difieran.
+
+El lector anterior registró correctamente `getter_shape_not_resolved`: no presentó
+un valor gráfico como leído. `00A6FA50` no es una carga directa; contiene
+`mov ecx,[ecx]` seguido de un salto a `00A46DEA`. El setter `00A6FA3E` sigue el
+mismo primer puntero y llama a `00A46DDA`. Esas implementaciones no estaban en los
+bloques anteriores. Además, `00554C1B → 005FA247` vacía una colección en `objeto+34`;
+esa ruta no demuestra una restauración de escala o reloj.
+
+0.15.3 añade `00A46000/2000` a ambos exportadores, con lo que las regiones
+adicionales fijas suman 52 KiB. El lector resuelve desde `00A6FA50` hasta cuatro
+saltos directos, opcionalmente precedidos de una carga del receptor desde sí mismo.
+Exige destinos dentro de la región de código y desplazamientos no negativos,
+alineados y acotados. Detecta ciclos y detiene la lectura ante otras instrucciones;
+conserva los bytes y direcciones de cada paso, hasta 16 bytes por función.
+Solo sigue los punteros de objetos si la cadena termina en el getter simple
+admitido. Después relee todos los enlaces, descarta cambios y compara el receptor
+final de los contextos 0 y 1. No deduce aislamiento solo porque los envoltorios
+tengan direcciones distintas.
+
+Para completar la comparación pendiente, usa **0.15.3**, con bot detenido y Auto
+Battle apagado: guarda **Exportar combate** dentro de la batalla y **Exportar
+diagnóstico** al regresar al mapa. Esas lecturas permitirán resolver el campo
+gráfico y comprobar su separación y estado fuera del combate. La versión sigue
+sin aplicar cambios de velocidad.
