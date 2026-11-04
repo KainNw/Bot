@@ -255,9 +255,13 @@ def export_code_context(
         raise DiagnosticError("El código cargado no coincide con el contexto analizado.")
     blocks = []
     speed_errors = []
-    speed_before = None
-    if include_combat:
-        speed_before = read_speed_snapshot(session, normal)
+    speed_before = read_speed_snapshot(session, normal)
+    speed_scene_before = None
+    if not include_combat:
+        try:
+            speed_scene_before = observe_scene(session).summary()
+        except (DiagnosticError, OSError):
+            pass
     selected = CODE_BLOCKS + (COMBAT_CODE_BLOCKS + COMBAT_READONLY_BLOCKS if include_combat else ())
     for name, address, size in selected:
         data = read(pid, address, size)
@@ -266,16 +270,15 @@ def export_code_context(
         if not any(data):
             raise DiagnosticError(f"El bloque {name} está vacío; no se puede analizar.")
         blocks.append((name, address, data))
-    if include_combat:
-        # Optional research pages must not prevent exporting the existing battle data.
-        for name, address, size in SPEED_CODE_BLOCKS + SPEED_READONLY_BLOCKS:
-            try:
-                data = read(pid, address, size)
-                if len(data) != size or not any(data):
-                    raise DiagnosticError("Bloque incompleto")
-                blocks.append((name, address, data))
-            except (DiagnosticError, OSError):
-                speed_errors.append(name)
+    # Optional research pages must not prevent exporting the existing diagnostic.
+    for name, address, size in SPEED_CODE_BLOCKS + SPEED_READONLY_BLOCKS:
+        try:
+            data = read(pid, address, size)
+            if len(data) != size or not any(data):
+                raise DiagnosticError("Bloque incompleto")
+            blocks.append((name, address, data))
+        except (DiagnosticError, OSError):
+            speed_errors.append(name)
     dispatch, dispatch_block = _dispatcher_context(session)
     if dispatch_block is not None:
         blocks.append(dispatch_block)
@@ -284,7 +287,13 @@ def export_code_context(
         combat["normal_client_method_resolution"] = _normal_methods(
             session, normal, blocks, role="client"
         )
-    speed_after = read_speed_snapshot(session, normal) if include_combat else None
+    speed_after = read_speed_snapshot(session, normal)
+    speed_scene_after = None
+    if not include_combat:
+        try:
+            speed_scene_after = observe_scene(session).summary()
+        except (DiagnosticError, OSError):
+            pass
     session.snapshot()  # Do not label an export valid if the process exited during capture.
     if detector is not None:
         after = observe_scene(session)
@@ -355,6 +364,17 @@ def export_code_context(
     }
     if combat is not None:
         manifest["combat"] = combat
+    else:
+        manifest["speed_diagnostic"] = {
+            "before": speed_before,
+            "after": speed_after,
+            "scene_before": speed_scene_before,
+            "scene_after": speed_scene_after,
+            "unavailable_blocks": speed_errors,
+            "scope": "observed_graphics_rate_accessors_and_inputs",
+            "speed_control_available": False,
+            "writes_or_client_commands": False,
+        }
     payload = io.BytesIO()
     with ZipFile(payload, "w", compression=ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))

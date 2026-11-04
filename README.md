@@ -1,7 +1,14 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.15.1** conserva la conexión durante cambios
+con Auto Battle apagado. La versión **0.15.2** amplía la investigación de velocidad:
+**Exportar combate** y **Exportar diagnóstico** recogen los accesos gráficos y sus
+valores para comparar el combate con el regreso al mapa. No activa velocidad
+adicional. La captura anterior confirmó una escala de 1,4 y una rama del cliente
+que restablece 1,4 cuando supera el umbral local de 1,5. Ese umbral no demuestra
+un ajuste seguro para el servidor. Consulta [el análisis](docs/battle-speed.md).
+
+Conserva 0.15.1, que mantiene la conexión durante cambios
 transitorios de estado y permite caminar en **Atacar desde mi posición** sin la
 parada inmediata que exigía reconectar. Al buscar, pausa hasta quedar quieto y
 toma el punto nuevo como centro. Si ya envió un ataque, espera el combate pendiente

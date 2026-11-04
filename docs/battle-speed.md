@@ -53,3 +53,71 @@ Primero hay que resolver los auxiliares y límites; después podrá determinarse
 si existe una prueba acotada que restaure el estado al salir del combate o parar.
 Esta versión solo recoge evidencia; no activa velocidad adicional ni cambia
 relojes, turnos, solicitudes de ataque o controles de comprobación del cliente.
+
+## Captura 232004: valores y accesos confirmados
+
+Se verificaron los 37 bloques, sus SHA-256 y el CRC del ZIP
+`Atlantica-PID21076-combate-20261103-232004.zip`, generado por 0.15.1. Son
+946 432 bytes de la misma compilación e instancia. Antes y después sigue en
+combate normal, con Auto Battle apagado y sin bloques adicionales inaccesibles.
+
+| Dato observado antes y después | Valor |
+| --- | --- |
+| Entrada entera `0822F524` | 130 |
+| Divisor entero `08230E14` | 100 |
+| Sesgo `042C11E8` | 10,0 |
+| Escala de `gestor+265C` | 1,399999976158142, representación float de 1,4 |
+| Umbral `042C11D4` | 1,5 |
+| Restablecimiento `042F320C` | 1,399999976158142 |
+| Numerador de intervalo `042F31E8` | 33,0 |
+| Divisor de movimiento `042F3688` | 160,0 |
+| Índice gráfico seleccionado | 1 |
+
+El cálculo `(130 + 10) / 100` coincide con el campo observado. El salto de la
+comprobación se activa si ese campo supera 1,5 o si el getter gráfico supera
+1,5. La rama restablece 1,4 y construye un mensaje que contiene la cadena
+`SpeedHackUser`, ahora disponible en `042F31F0`. Esto confirma la comprobación
+local; no demuestra por sí solo que ese mensaje se transmita o qué haga el
+servidor. La escala no equivale necesariamente a un multiplicador del tiempo
+total de la batalla.
+
+Los nuevos bloques resolvieron estas funciones:
+
+- `00A0481E` devuelve `base[1539CE10] + índice[1539CE18] * 274`.
+- `00A14AFD` toma el objeto recibido, sigue su campo `+0C` y delega en `00A6FA3E`.
+- `00A14B10` sigue el mismo campo y delega la consulta en `00A6FA50`.
+- `00554C1B` suma `34` al objeto y deriva en `005FA247`. Es un auxiliar compartido;
+  todavía no se le atribuye la restauración de un reloj.
+
+La inicialización normal selecciona el contexto gráfico 1, toma su objeto en
+`+18` y pasa a él la escala. Falta la implementación final en `00A6FA3E/00A6FA50`
+y el auxiliar `005FA247`. La captura anterior incluyó sus envoltorios, no estos
+destinos. Tampoco contiene el valor gráfico final ni una observación al volver al mapa.
+
+## Comparación preparada en 0.15.2
+
+Los dos exportadores añaden `00A6F000/2000` y `005FA000/1000`. Las regiones
+adicionales de velocidad suman ahora 44 KiB. **Exportar diagnóstico** también
+registra los estados antes/después y permite obtener la muestra fuera de combate;
+sus datos están en `speed_diagnostic`. **Exportar combate** conserva el informe
+en `combat.speed_diagnostic`.
+
+El lector verifica los bytes de los accesos capturados y admite la implementación
+del getter final solo si es una carga de float/double desde un desplazamiento
+alineado menor de 4 KiB seguida de retorno. Lee los campos correspondientes de
+los contextos gráficos 0 y 1 por la ruta comprobada `tabla → contexto+18 → objeto+0C`.
+Registra punteros, bytes y valores, y descarta una lectura si los punteros cambian.
+Un getter distinto, una dirección inválida o un campo inaccesible queda como no
+resuelto; no se ejecuta la función para obtener su valor. No cambia el índice gráfico.
+
+Para completar esta fase, con **0.15.2** y el bot detenido:
+
+1. Deja Auto Battle apagado, entra manualmente en combate y guarda **Exportar combate**.
+2. Al terminar y volver al mapa, guarda **Exportar diagnóstico**.
+3. Adjunta ambos ZIP para contrastar las rutinas finales, posibles objetos compartidos
+   y el estado fuera del combate.
+
+Esta versión no modifica escalas ni desactiva comprobaciones. El techo local de
+1,5 deja un margen nominal pequeño respecto a 1,4; no constituye una garantía de
+sincronización ni de recogida de botín. Antes de preparar una prueba hay que
+resolver la función final y el comportamiento al salir del combate.

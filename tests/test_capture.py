@@ -19,7 +19,13 @@ from atlantica_bot.errors import DiagnosticError
 from atlantica_bot.hunting import MARKER_NAME, HuntingResult
 from atlantica_bot.report import Process
 from atlantica_bot.session import GameSession, LiveState
-from atlantica_bot.speed import SPEED_CODE_BLOCKS, SPEED_GLOBAL_FIELDS, SPEED_READONLY_BLOCKS
+from atlantica_bot.speed import (
+    CONTEXT_ACCESS_ADDRESS,
+    CONTEXT_ACCESS_BYTES,
+    SPEED_CODE_BLOCKS,
+    SPEED_GLOBAL_FIELDS,
+    SPEED_READONLY_BLOCKS,
+)
 from atlantica_bot.world import GridPosition, LocalState, Observation
 
 SPEED_CAPTURE_SIZE = sum(size for _, _, size in SPEED_CODE_BLOCKS + SPEED_READONLY_BLOCKS)
@@ -74,6 +80,8 @@ class CaptureSystem:
                 return struct.pack(fmt, 100 if fmt in ("<i", "<I") else 1.0)
         if (address, size) == (0x0060265C, 4):
             return struct.pack("<f", 1.0)
+        if (address, size) == (CONTEXT_ACCESS_ADDRESS, len(CONTEXT_ACCESS_BYTES)):
+            return bytes(size)  # An unresolved accessor must not follow pointers.
         speed_blocks = SPEED_CODE_BLOCKS + SPEED_READONLY_BLOCKS
         if self.missing_speed and (address, size) in [(a, s) for _, a, s in speed_blocks]:
             raise DiagnosticError("Página de investigación no disponible")
@@ -107,6 +115,9 @@ def session(executable, monkeypatch):
         raise DiagnosticError("Contexto normal no disponible en esta muestra simulada.")
 
     monkeypatch.setattr("atlantica_bot.capture.read_normal_battle", unavailable)
+    monkeypatch.setattr(
+        "atlantica_bot.capture.observe_scene", lambda _: battle_observation(active=False)
+    )
     return session
 
 
@@ -115,11 +126,19 @@ def test_exports_only_bounded_code_and_manifest_with_auto_battle_off(session, tm
     export_code_context(session, output)
     with ZipFile(output) as archive:
         assert archive.testzip() is None
-        assert len(archive.namelist()) == len(CODE_BLOCKS) + 2
+        assert len(archive.namelist()) == (
+            len(CODE_BLOCKS) + len(SPEED_CODE_BLOCKS) + len(SPEED_READONLY_BLOCKS) + 2
+        )
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["state_at_start"]["auto_battle"] is False
         assert str(session.directory) not in json.dumps(manifest)
-        assert sum(block["size"] for block in manifest["blocks"]) == 100 * 1024
+        assert sum(block["size"] for block in manifest["blocks"]) == (
+            100 * 1024 + SPEED_CAPTURE_SIZE
+        )
+        speed = manifest["speed_diagnostic"]
+        assert speed["scene_before"]["local"]["context_a"] == -1
+        assert speed["scene_after"]["local"]["context_a"] == -1
+        assert not speed["speed_control_available"] and not speed["writes_or_client_commands"]
         assert manifest["dispatch_resolution"] == {
             "owner_context_code": 2,
             "status": "captured",
@@ -458,7 +477,9 @@ def test_unsupported_dynamic_table_is_reported_without_exporting_arbitrary_memor
     with ZipFile(output) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["dispatch_resolution"]["status"] == "unavailable"
-        assert len(archive.namelist()) == len(CODE_BLOCKS) + 1
+        assert len(archive.namelist()) == (
+            len(CODE_BLOCKS) + len(SPEED_CODE_BLOCKS) + len(SPEED_READONLY_BLOCKS) + 1
+        )
 
 
 def test_existing_output_is_not_overwritten(session, tmp_path):
