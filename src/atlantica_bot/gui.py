@@ -10,10 +10,11 @@ from pathlib import Path
 from . import __version__
 from .battle import BattleTrial, read_battle_frame
 from .battle_context import read_normal_battle
+from .bonus import BONUS_LABELS, BonusComparison, capture_bonus_snapshot, read_bonus_code
 from .capture import export_code_context
 from .clients import control_native_marker, marker_scope
 from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
-from .errors import DiagnosticError
+from .errors import DiagnosticError, WindowUnavailable
 from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
 from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
@@ -61,6 +62,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.closing = False
             self.calibrating = False
             self.calibration_window = None
+            self.bonus_window = None
             self.profile_editor = None
             self.overview: OverviewWindow | None = None
             self.detector: CombatDetector | None = None
@@ -281,6 +283,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 state="disabled",
             )
             self.calibration_button.pack(side="left", padx=10)
+            ttk.Button(
+                self.hunt_tab, text="Capturar bonus (memoria)", command=self.capture_bonus
+            ).pack(anchor="w", pady=(4, 8))
             member_row = ttk.Frame(frame)
             member_row.pack(fill="x", pady=4)
             self.members_button = ttk.Button(
@@ -451,6 +456,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     on_save=self.save_hunt_options,
                     on_calibrate=self.calibrate_radius,
                     world_attack_mode=self.world_attack_mode,
+                    on_capture_bonus=self.capture_bonus,
                 )
             self.refresh_team()
             self.sync_overview_controls()
@@ -459,7 +465,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.update_execution_mode()
             if self.overview is None or not self.overview.alive:
                 return
-            editable = self.bot_worker is None and not self.closing and not self.calibrating
+            editable = (
+                self.bot_worker is None
+                and not self.closing
+                and not self.calibrating
+                and not self.bonus_open()
+            )
             self.overview.set_controls(
                 start=editable and str(self.bot_start_button.cget("state")) == "normal",
                 stop=self.bot_worker is not None and not self.closing,
@@ -591,7 +602,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.advanced.pack(fill="x", pady=6, after=self.more_button)
 
         def lock_target_controls(self) -> None:
-            active = self.bot_worker is not None or self.closing or self.calibrating
+            active = (
+                self.bot_worker is not None or self.closing or self.calibrating or self.bonus_open()
+            )
             self.window_list.configure(state="disabled" if active else "readonly")
             self.profile_list.configure(state="disabled" if active else "readonly")
             self.attack_mode_list.configure(state="disabled" if active else "readonly")
@@ -621,14 +634,21 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.calibration_button.configure(state="disabled")
             self.sync_overview_controls()
 
-        def require_idle_bot(self) -> None:
+        def bonus_open(self) -> bool:
+            return self.bonus_window is not None and bool(self.bonus_window.winfo_exists())
+
+        def require_idle_bot(self, *, allow_bonus: bool = False) -> None:
+            if self.bonus_open() and not allow_bonus:
+                raise DiagnosticError(
+                    "Cierra la captura de bonus antes de cambiar el cliente o iniciar el bot."
+                )
             if self.bot_worker is not None or self.closing or self.calibrating:
                 raise DiagnosticError(
                     "Espera a que Parar bot termine antes de cambiar el cliente o modo."
                 )
 
         def target_is_editable(self) -> bool:
-            if self.bot_worker is not None or self.closing or self.calibrating:
+            if self.bot_worker is not None or self.closing or self.calibrating or self.bonus_open():
                 self.detail.set(
                     "Pulsa Parar bot y espera a que termine antes de cambiar el cliente."
                 )
@@ -1413,6 +1433,155 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             except (DiagnosticError, OSError) as exc:
                 self.error(exc)
 
+        def capture_bonus(self) -> None:
+            if self.bonus_open():
+                self.bonus_window.lift()
+                return
+            try:
+                self.require_idle_bot()
+                session = self.session
+                if session is None or session.creation_time is None:
+                    raise DiagnosticError(
+                        "Conecta con la ventana elegida y para el bot antes de capturar."
+                    )
+                comparison = BonusComparison(session.process.pid, session.creation_time)
+            except DiagnosticError as exc:
+                self.error(exc)
+                return
+            window = self.bonus_window = tk.Toplevel(self.root)
+            window.title(f"PID {session.process.pid} — comparar bonus en memoria")
+            frame = ttk.Frame(window, padding=16)
+            frame.pack(fill="both", expand=True)
+            ttk.Label(
+                frame,
+                text="Con el bot detenido y Auto Battle apagado:\n"
+                "1. Cuando veas el bonus dentro del combate, elige su tipo y captura.\n"
+                "2. Vuelve al juego, pulsa X una vez y observa qué ocurrió.\n"
+                "3. Captura después de X y guarda el ZIP, aunque hayas vuelto al mapa.\n"
+                "La captura solo lee memoria; no pulsa teclas ni recoge objetos.",
+                wraplength=670,
+            ).pack(anchor="w", pady=(0, 10))
+            row = ttk.Frame(frame)
+            row.pack(fill="x")
+            ttk.Label(row, text="Tipo que ves:").pack(side="left")
+            category = tk.StringVar(value=BONUS_LABELS["equipment"])
+            category_list = ttk.Combobox(
+                row,
+                textvariable=category,
+                values=tuple(BONUS_LABELS.values()),
+                state="readonly",
+                width=25,
+            )
+            category_list.pack(side="left", padx=8)
+            result = tk.StringVar(value="Sin confirmar")
+            ttk.Label(row, text="¿X lo recogió?").pack(side="left")
+            ttk.Combobox(
+                row,
+                textvariable=result,
+                values=("Sin confirmar", "Sí", "No"),
+                state="readonly",
+                width=15,
+            ).pack(side="left", padx=8)
+            status = tk.StringVar(value="Esperando una captura del bonus visible.")
+            ttk.Label(frame, textvariable=status, wraplength=670).pack(anchor="w", pady=12)
+
+            def scope() -> None:
+                self.require_idle_bot(allow_bonus=True)
+                if self.session is not session:
+                    raise DiagnosticError(
+                        "La conexión cambió; abre una captura del cliente actual."
+                    )
+
+            def take_before() -> None:
+                try:
+                    scope()
+                    snapshot = capture_bonus_snapshot(session)
+                    key = next(k for k, label in BONUS_LABELS.items() if label == category.get())
+                    blocks, errors = read_bonus_code(session)
+                    comparison.set_before(key, snapshot, blocks, errors)
+                    category_list.configure(state="disabled")
+                    before_button.configure(state="disabled")
+                    after_button.configure(state="normal")
+                    save_button.configure(state="normal")
+                    status.set(
+                        "Bonus capturado. Vuelve al juego, pulsa X una vez y captura después. "
+                        "También puedes guardar ahora si desaparece "
+                        "antes de completar la comparación."
+                    )
+                except (DiagnosticError, OSError, StopIteration) as exc:
+                    status.set(str(exc))
+
+            def take_after() -> None:
+                try:
+                    scope()
+                    snapshot = capture_bonus_snapshot(session)
+                    comparison.set_after(
+                        snapshot, user_result={"Sí": True, "No": False}.get(result.get())
+                    )
+                    status.set(
+                        "Comparación capturada. Guarda el ZIP y adjúntalo al chat "
+                        "para analizar la recogida."
+                    )
+                except (DiagnosticError, OSError) as exc:
+                    status.set(str(exc))
+
+            def save() -> None:
+                try:
+                    filename = filedialog.asksaveasfilename(
+                        parent=window,
+                        title="Guardar comparación de bonus",
+                        defaultextension=".zip",
+                        filetypes=[("Archivo ZIP", "*.zip")],
+                        initialfile=(
+                            f"Atlantica-PID{session.process.pid}-bonus-"
+                            f"{comparison.category or 'captura'}-{datetime.now():%Y%m%d-%H%M%S}.zip"
+                        ),
+                    )
+                    if filename:
+                        if comparison.after is not None:
+                            comparison.user_result = {"Sí": True, "No": False}.get(result.get())
+                        comparison.export(Path(filename))
+                        status.set(f"Captura guardada en {filename}. Adjunta ese ZIP al chat.")
+                except (DiagnosticError, OSError) as exc:
+                    status.set(str(exc))
+
+            def reset() -> None:
+                nonlocal comparison
+                comparison = BonusComparison(session.process.pid, session.creation_time)
+                category_list.configure(state="readonly")
+                before_button.configure(state="normal")
+                after_button.configure(state="disabled")
+                save_button.configure(state="disabled")
+                result.set("Sin confirmar")
+                status.set("Esperando una captura del bonus visible.")
+
+            def close() -> None:
+                window.destroy()
+                self.bonus_window = None
+                self.lock_target_controls()
+                if not self.closing:
+                    try:
+                        self.refresh()
+                    except (DiagnosticError, OSError) as exc:
+                        self.detail.set(str(exc))
+
+            buttons = ttk.Frame(frame)
+            buttons.pack(fill="x")
+            before_button = ttk.Button(
+                buttons, text="1. Capturar bonus visible", command=take_before
+            )
+            before_button.pack(side="left")
+            after_button = ttk.Button(
+                buttons, text="2. Capturar después de X", command=take_after, state="disabled"
+            )
+            after_button.pack(side="left", padx=8)
+            save_button = ttk.Button(buttons, text="Guardar ZIP", command=save, state="disabled")
+            save_button.pack(side="left")
+            ttk.Button(buttons, text="Nueva comparación", command=reset).pack(side="left", padx=8)
+            ttk.Button(frame, text="Cerrar", command=close).pack(anchor="e", pady=(12, 0))
+            window.protocol("WM_DELETE_WINDOW", close)
+            self.lock_target_controls()
+
         def show_members(self, *, load: bool = True) -> None:
             selected_session = self.session
             if selected_session is None:
@@ -1660,13 +1829,20 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         refresh_members()
                     trial_status.set(result["message"] + " Leer y elegir una acción no la ejecuta.")
                 except (DiagnosticError, OSError) as exc:
-                    self.trial_unknown = True
-                    result = {
-                        "pid": selected_session.process.pid,
-                        "status": "unknown",
-                        "message": str(exc),
-                        "attack_confirmed": False,
-                    }
+                    no_send = isinstance(exc, WindowUnavailable)
+                    self.trial_unknown |= not no_send
+                    if no_send and not select:
+                        self.battle_trials.discard(trial.key())
+                    result = (
+                        exc.summary()
+                        if no_send
+                        else {
+                            "pid": selected_session.process.pid,
+                            "status": "unknown",
+                            "message": str(exc),
+                            "attack_confirmed": False,
+                        }
+                    )
                     self.last_trial = result
                     last["combat_trial"] = result
                     trial_result.clear()
@@ -1722,12 +1898,17 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.copy_trial_button.configure(text=f"Copiar prueba PID {session.process.pid}")
                 self.detail.set(f"PID {session.process.pid}: {self.last_trial['message']}")
             except (DiagnosticError, OSError) as exc:
-                self.trial_unknown = True
-                self.last_trial = {
-                    "pid": session.process.pid,
-                    "result": "unconfirmed",
-                    "message": str(exc),
-                }
+                no_send = isinstance(exc, WindowUnavailable)
+                self.trial_unknown |= not no_send
+                self.last_trial = (
+                    exc.summary()
+                    if no_send
+                    else {
+                        "pid": session.process.pid,
+                        "result": "unconfirmed",
+                        "message": str(exc),
+                    }
+                )
                 self.copy_trial_button.configure(state="normal")
                 self.copy_trial_button.configure(text=f"Copiar prueba PID {session.process.pid}")
                 self.error(exc)
@@ -1978,6 +2159,15 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         assert overview.counts.get() == "Combates: 8 · Órdenes: 9"
         assert str(overview.copy_button.cget("state")) == "normal"
         panel.bot_report = {}
+        panel.capture_bonus()
+        assert panel.bonus_open()
+        assert str(panel.bot_start_button.cget("state")) == "disabled"
+        assert str(panel.profile_list.cget("state")) == "disabled"
+        assert all(str(widget.cget("state")) == "disabled" for widget in overview.hunt_controls)
+        panel.bonus_window.destroy()
+        panel.bonus_window = None
+        panel.lock_target_controls()
+        assert str(panel.profile_list.cget("state")) == "readonly"
         panel.show_members(load=False)
         panel.calibrate_combat()
         panel.calibration_window.destroy()

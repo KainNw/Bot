@@ -9,7 +9,7 @@ import pytest
 from atlantica_bot.battle import BattleFrame, BattleTrial, BattleUnit
 from atlantica_bot.battle_context import NormalBattleContext
 from atlantica_bot.clients import ClientWindow
-from atlantica_bot.errors import DiagnosticError
+from atlantica_bot.errors import DiagnosticError, WindowUnavailable
 from atlantica_bot.hunting import HuntingResult
 from atlantica_bot.native_action import (
     stop_movement,
@@ -352,6 +352,60 @@ def test_bridge_failure_has_no_automatic_retry(bridge, monkeypatch):
     with pytest.raises(DiagnosticError, match="no se reintenta"):
         try_attack(*bridge)
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("reason", list(WindowUnavailable.REASONS))
+def test_window_preflight_rejection_is_known_no_send_without_retry(bridge, monkeypatch, reason):
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(
+            returncode=20,
+            stdout=json.dumps(
+                {
+                    "pid": 200,
+                    "error": "window_unavailable",
+                    "reason": reason,
+                    "command_sent": False,
+                }
+            ),
+        )
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", fail)
+    with pytest.raises(WindowUnavailable, match="No se envió esta orden") as caught:
+        try_attack(*bridge)
+    assert len(calls) == 1
+    assert caught.value.reason == reason
+    assert caught.value.summary()["command_sent"] is False
+    assert "permisos" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "",
+        "not json",
+        "[]",
+        '{"pid": 300, "reason": "minimized"}',
+        json.dumps(
+            {
+                "pid": 200,
+                "error": "window_unavailable",
+                "reason": ["minimized"],
+                "command_sent": False,
+            }
+        ),
+    ],
+)
+def test_legacy_or_invalid_window_reason_uses_generic_no_send_message(bridge, monkeypatch, detail):
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run",
+        lambda *a, **kw: SimpleNamespace(returncode=20, stdout=detail),
+    )
+    with pytest.raises(WindowUnavailable) as caught:
+        try_attack(*bridge)
+    assert caught.value.reason == "unavailable"
 
 
 def test_response_from_different_thread_is_not_accepted(bridge, monkeypatch):

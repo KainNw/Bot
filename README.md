@@ -1,10 +1,26 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.14.0** añade **Atacar desde mi posición
+con Auto Battle apagado. La versión **0.15.0** explica la causa del **código 20
+del puente**: ventana minimizada, bloqueada, desaparecida o vinculada a otro proceso
+o hilo. Ese rechazo ocurre antes de enviar la orden; por sí solo ya no exige
+reconectar ni presenta el resultado como desconocido. Las solicitudes anteriores
+cuya parada no pueda confirmarse conservan sus comprobaciones. Restaura la ventana
+elegida y cierra sus diálogos; si cambió de proceso o hilo, vuelve a elegirla y conectar.
+Consulta [varias ventanas](docs/multiple-clients.md#código-20-del-puente).
+
+Añade **Capturar bonus (memoria)** para comparar el bonus visible con el estado
+después de una pulsación manual de X. Permite etiquetar EXP, armas/equipamiento o
+libros de EXP y guardar un ZIP de lectura, vinculado a la instancia elegida.
+Esta herramienta permite investigar la recogida: todavía no identifica automáticamente
+los tipos ni corrige la recogida de armas o libros. Consulta [captura de bonus](docs/bonus-memory.md).
+
+Conserva **Atacar desde mi posición
 (experimental)**: elige el mob más cercano dentro del radio y solicita iniciar
 combate desde la posición actual, sin enviar persecución ni rutas. La aceptación
-de objetivos lejanos por el servidor todavía necesita prueba en el juego. Se elige
+de objetivos lejanos se comprobó en la captura del usuario: cuatro solicitudes y
+cuatro combates, tres fuera del alcance nativo de cercanía y sin cambio de posición.
+Eso confirma esa sesión y compilación; no todos los mapas ni servidores. Se elige
 en **Caza y botín → Modo de ataque al mob** y se guarda por perfil.
 Consulta [ataque desde la posición](docs/stationary-attack.md).
 

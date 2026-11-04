@@ -5,13 +5,21 @@ from types import SimpleNamespace
 
 import pytest
 
+from atlantica_bot.battle import BattleTrial
 from atlantica_bot.clients import ClientWindow
 from atlantica_bot.combat import CombatDetector
-from atlantica_bot.errors import DiagnosticError
+from atlantica_bot.errors import DiagnosticError, WindowUnavailable
 from atlantica_bot.hunt_loop import HuntEngine, HuntWorker
 from atlantica_bot.navigation import ApproachSettings
 from atlantica_bot.profiles import BotProfile
-from atlantica_bot.world import Candidate, GridPosition, LocalState, Observation, WorldView
+from atlantica_bot.world import (
+    Candidate,
+    GridPosition,
+    LocalState,
+    NavigationState,
+    Observation,
+    WorldView,
+)
 
 POSITION = GridPosition(52, 193, 340)
 NEAR = Candidate(8, 12053, 52, 194, 340, 1, (12053, 77, 88), 1.45173)
@@ -358,6 +366,44 @@ def test_stop_cancels_inflight_worker_and_no_second_request_is_sent(monkeypatch)
     worker.thread.join(2)
     assert not worker.alive and not worker.engine.running
     assert len(calls) == 1 and signals[0].closed
+
+
+@pytest.mark.parametrize("previous_request", ["none", "deadline", "route_cleanup"])
+def test_window_preflight_stops_worker_without_losing_previous_uncertainty(
+    turn_frame, monkeypatch, previous_request
+):
+    session = SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100))
+    worker = HuntWorker(
+        session, ClientWindow(100, 0x1234, "Atlantica", 1234), DETECTOR, execute_turns=True
+    )
+    trial = BattleTrial(turn_frame, turn_frame.units[0], turn_frame.units[2], "basic")
+    worker.turns.inflight = trial
+    if previous_request == "deadline":
+        worker.engine.deadline = 1234
+    if previous_request == "route_cleanup":
+        worker.engine.route = NavigationState(0x500000, 123, 52, 193, 340, True, True)
+    calls = []
+
+    def rejected(*args):
+        calls.append(args)
+        raise WindowUnavailable(100, "minimized")
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.BotLease", lambda _: nullcontext())
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.Cancellation",
+        lambda _: nullcontext(SimpleNamespace(cancel=lambda: None)),
+    )
+    monkeypatch.setattr(worker, "_iteration", rejected)
+    monkeypatch.setattr(worker.stop_event, "wait", lambda _: False)
+    monkeypatch.setattr("atlantica_bot.hunt_loop.stop_movement", rejected)
+    worker._run()
+    assert not worker.engine.running and not worker.turns.running
+    assert worker.turns.inflight is None and not worker.turns.ledger
+    assert worker.engine.needs_reconnect is (previous_request != "none")
+    assert len(calls) == (2 if previous_request == "route_cleanup" else 1)
+    assert "minimizada" in worker.engine.message
+    if previous_request == "route_cleanup":
+        assert "Parada del desplazamiento sin confirmar" in worker.engine.message
 
 
 @pytest.mark.parametrize("execute_turns", [False, True])

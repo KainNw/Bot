@@ -48,6 +48,27 @@ El hook se limita al hilo de esa ventana. No se usan teclas, clics, la ventana a
 ni búsquedas posteriores del primer proceso para dirigir la acción. Un mutex
 individual por PID impide dos pruebas simultáneas del panel sobre el mismo cliente.
 
+## Código 20 del puente
+
+El auxiliar rechaza una ventana minimizada o bloqueada por un diálogo, un HWND
+que ya no existe, un proceso distinto o un hilo que cambió. Lo comprueba antes
+de instalar el hook y enviar cualquier orden. La versión 0.15 muestra la causa
+concreta; las versiones anteriores mostraban un aviso genérico sobre permisos
+y resultado desconocido. Un auxiliar anterior que no devuelve la causa sigue
+identificándose como rechazo previo al envío.
+
+Restaura la ventana seleccionada y cierra los diálogos del cliente. Puede quedar
+detrás de otras ventanas, pero debe permanecer sin minimizar. Si su proceso o hilo
+cambió, vuelve a elegirla y conectar. No se cambia el foco ni se restaura otra
+ventana automáticamente. Un fallo de permisos en la instalación del hook es otro
+error; el código 20 no lo demuestra.
+
+El bot se detiene sin reintentar. Este rechazo por sí solo no exige reconexión.
+Si existía una orden anterior pendiente o la parada de una persecución no puede
+confirmarse, sigue exigiendo comprobar el juego y reconectar. El **estado nativo
+20** de una respuesta válida es distinto: significa que el personaje ya tenía
+un desplazamiento activo, y no se sustituye ese movimiento.
+
 El usuario confirmó el inicio del ataque individual con Auto Battle apagado y una
 sola ventana. El ciclo 0.4 añade Iniciar bot/Parar bot usando la misma ruta y sin
 modificar marcadores. El usuario ya empezó las pruebas con varias ventanas y reportó

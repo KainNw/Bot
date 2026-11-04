@@ -12,6 +12,7 @@ from atlantica_bot.battle import (
     read_battle_frame,
 )
 from atlantica_bot.battle_context import NormalBattleContext
+from atlantica_bot.bonus import PROPERTY_KEYS, read_bonus_memory
 from atlantica_bot.errors import DiagnosticError, SceneChanged
 
 
@@ -117,6 +118,46 @@ def test_battle_frame_separates_own_members_enemies_allies_and_dead_units(battle
     assert trial.arguments()["mercenary"] == 1
     assert view.summary()["turn_execution_available"]
     assert not view.summary()["keyboard_slot_mapping_verified"]
+
+
+def test_bonus_probe_keeps_unclassified_objects_without_turning_them_into_targets(battle_memory):
+    session, memory = battle_memory
+    frame = read_battle_frame(session)
+    memory.word(0x6025C4, 42)
+    memory.word(0x6025C8, 0)
+    memory.word(0x9000CC, 4)
+    for key in PROPERTY_KEYS:
+        memory.put(key, struct.pack("<13I", 0xDEADBEEF, *([0] * 12)))
+    memory.put(0x9000D4 + 5, b"\x01")
+    memory.word(0x900138 + 5 * 4, 0xB00000)
+    memory.put(0xB00004, struct.pack("<ii", 0, -1))
+    memory.word(0xB00020, 0x1234)
+    memory.put(0xB00508, b"\x23")
+    memory.put(0xB006B0, struct.pack("<2I", 123, 456))
+    probe = read_bonus_memory(session, frame)
+    unknown = probe["published_units"][-1]
+    assert unknown["index"] == 5 and not unknown["in_normal_frame"]
+    assert unknown["world_slot"] == 0 and unknown["member_index"] == -1
+    assert unknown["search_effect_handles"] == [123, 456]
+    assert probe["selected_action"] == 42 and not probe["bonus_type_detected"]
+    assert (
+        len(frame.units) == 4 and len(frame.enemies) == 1
+    )  # Diagnostic rows do not enter the planner.
+    assert probe["property_key_words"][f"{PROPERTY_KEYS[0]:08X}"][0] == 0xDEADBEEF
+    assert not any("property" in name for name in probe["unavailable_fields"])
+
+
+def test_bonus_probe_refuses_foreign_frame_before_any_read(battle_memory):
+    session, _ = battle_memory
+    frame = read_battle_frame(session)
+    frame = replace(frame, context=replace(frame.context, creation_time=999))
+    original = session.system.read_memory
+    session.system.read_memory = lambda *a: pytest.fail("Foreign instance")
+    try:
+        with pytest.raises(DiagnosticError, match="otra instancia"):
+            read_bonus_memory(session, frame)
+    finally:
+        session.system.read_memory = original
 
 
 def test_reused_turn_during_snapshot_is_rejected_without_partial_targets(battle_memory):

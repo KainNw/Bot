@@ -36,6 +36,7 @@ class OverviewWindow:
         on_save: Callable,
         on_calibrate: Callable,
         world_attack_mode,
+        on_capture_bonus: Callable,
     ):
         import tkinter as tk
         from tkinter import ttk
@@ -143,6 +144,7 @@ class OverviewWindow:
         for title, callback in (
             ("Calibrar radio", on_calibrate),
             ("Guardar opciones del perfil", on_save),
+            ("Capturar bonus", on_capture_bonus),
         ):
             button = ttk.Button(controls, text=title, command=callback)
             button.pack(side="left", padx=(0, 8))

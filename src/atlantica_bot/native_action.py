@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .battle import BattleTrial
 from .clients import ClientWindow
-from .errors import DiagnosticError
+from .errors import DiagnosticError, WindowUnavailable
 from .hunting import control_hunting
 from .ipc import BotLease, Cancellation
 from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
@@ -472,6 +472,23 @@ def _try_action(
         raise DiagnosticError(
             f"No se pudo abrir el puente del PID {window.pid}. Comprueba los permisos."
         ) from exc
+    if result.returncode == 20:
+        reason = "unavailable"
+        try:
+            detail = json.loads(result.stdout)
+            if (
+                isinstance(detail, dict)
+                and type(detail.get("pid")) is int
+                and detail["pid"] == window.pid
+                and detail.get("error") == "window_unavailable"
+                and detail.get("command_sent") is False
+                and type(detail.get("reason")) is str
+                and detail["reason"] in WindowUnavailable.REASONS
+            ):
+                reason = detail["reason"]
+        except (ValueError, TypeError):
+            pass
+        raise WindowUnavailable(window.pid, reason)
     if result.returncode:
         raise DiagnosticError(
             f"Puente del PID {window.pid}: código {result.returncode}. "

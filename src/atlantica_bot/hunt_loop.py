@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from .battle import BattleFrame, read_battle_frame
 from .clients import ClientWindow
 from .combat import CombatDetector
-from .errors import DiagnosticError, SceneChanged
+from .errors import DiagnosticError, SceneChanged, WindowUnavailable
 from .ipc import BotLease, Cancellation
 from .native_action import (
     stop_movement,
@@ -1276,6 +1276,16 @@ class HuntWorker:
                                 )
                             consecutive_changes = 0
                             changes_since = None
+                        except WindowUnavailable as exc:
+                            # Exit 20 is a preflight rejection, before any client command.
+                            # Older pending requests and movement cleanup retain their guards.
+                            if self.turns is not None:
+                                self.turns.inflight = None
+                                self.turns.stop(str(exc), uncertain=self.turns.pending is not None)
+                            self.engine.stop(
+                                str(exc),
+                                reconnect=bool(self.turns and self.turns.needs_reconnect),
+                            )
                         except SceneChanged as exc:
                             self.engine.transient_reads += 1
                             consecutive_changes += 1

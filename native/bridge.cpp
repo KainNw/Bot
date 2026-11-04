@@ -51,11 +51,24 @@ static bool FileHash(const wchar_t* path) {
     if (provider) CryptReleaseContext(provider, 0);
     return good;
 }
-static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* response = nullptr, bool quiet = false, DWORD expected_thread = 0) {
+static const char* WindowUnavailableReason(HWND window, DWORD pid, DWORD expected_thread, DWORD& tid) {
     DWORD owner = 0;
-    const auto tid = GetWindowThreadProcessId(window, &owner);
-    if (!tid || owner != pid || (expected_thread && tid != expected_thread)
-        || !IsWindowEnabled(window) || IsIconic(window)) return 20;
+    tid = GetWindowThreadProcessId(window, &owner);
+    if (!tid) return "not_found";
+    if (owner != pid) return "wrong_process";
+    if (expected_thread && tid != expected_thread) return "thread_changed";
+    if (IsIconic(window)) return "minimized";
+    if (!IsWindowEnabled(window)) return "disabled";
+    return nullptr;
+}
+static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* response = nullptr, bool quiet = false, DWORD expected_thread = 0) {
+    DWORD tid = 0;
+    if (const auto reason = WindowUnavailableReason(window, pid, expected_thread, tid)) {
+        if (!quiet) std::cout << "{\"pid\":" << pid
+            << ",\"error\":\"window_unavailable\",\"reason\":\"" << reason
+            << "\",\"command_sent\":false}" << std::endl;
+        return 20;
+    }
     wchar_t mutex_name[80]; swprintf_s(mutex_name, L"Local\\AtlanticaPanel.Control.%lu", pid);
     auto mutex = CreateMutexW(nullptr, FALSE, mutex_name);
     if (!mutex) return 21;
@@ -179,6 +192,17 @@ static int SelfTest() {
     if (!thread || WaitForSingleObject(test.ready, 5000) != WAIT_OBJECT_0 || !test.window) return 30;
     SharedCommand command = {};
     SharedCommand response = {};
+    const auto pid = GetCurrentProcessId();
+    const bool invalid_window_ok = Run(nullptr, pid, command, nullptr, true) == 20
+        && Run(test.window, pid ^ 1, command, nullptr, true) == 20
+        && Run(test.window, pid, command, nullptr, true, tid ^ 1) == 20;
+    EnableWindow(test.window, FALSE);
+    const bool disabled_window_ok = Run(test.window, pid, command, nullptr, true) == 20;
+    EnableWindow(test.window, TRUE);
+    ShowWindow(test.window, SW_MINIMIZE);
+    const bool minimized_window_ok = Run(test.window, pid, command, nullptr, true) == 20;
+    ShowWindow(test.window, SW_RESTORE);
+    ShowWindow(test.window, SW_HIDE);
     const int code = Run(test.window, GetCurrentProcessId(), command, &response);
     wchar_t cancel_name[96];
     swprintf_s(cancel_name, L"Local\\AtlanticaPanel.Cancel.SelfTest.%lu", GetCurrentProcessId());
@@ -221,7 +245,8 @@ static int SelfTest() {
     WaitForSingleObject(thread, 5000); CloseHandle(thread); CloseHandle(test.ready);
     // The bridge executable's base/build must be rejected before any client address is read.
     const int result = code ? code : (
-        response.result == Unsupported && response.thread_id == tid
+        invalid_window_ok && disabled_window_ok && minimized_window_ok
+        && response.result == Unsupported && response.thread_id == tid
         && !cancelled_code && cancelled_response.result == Cancelled
         && !move_code && move_response.result == Cancelled
         && !stop_code && stop_response.result == Cancelled
