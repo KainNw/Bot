@@ -1,7 +1,17 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.15.3** sigue los accesos indirectos que
+con Auto Battle apagado. La versión **0.16.0** añade una **prueba manual de
+velocidad en combate**, de escala 1,40 a 1,45 durante unos 10 segundos. Se abre
+desde **Caza y botín → Prueba de velocidad (experimental)**. No cambia nada al
+abrir el panel: requiere bot detenido, Auto Battle apagado, lectura válida y
+pulsar **Probar**. Comprueba que el mapa tenga un campo separado y verifica su
+valor antes/después. Intenta restaurar los originales al vencer el tiempo,
+volver al mapa o cerrar la ventana; un fallo conserva la opción Restaurar.
+Todavía no se ha confirmado el efecto visual ni la estabilidad en el juego.
+Consulta [la prueba de velocidad](docs/speed-trial.md).
+
+Conserva 0.15.3, que sigue los accesos indirectos que
 mostraron las últimas capturas de velocidad. Conserva en el diagnóstico sus
 instrucciones y punteros, distingue objetos finales compartidos y limita la
 lectura a una cadena corta dentro de la imagen comprobada. No ejecuta esas

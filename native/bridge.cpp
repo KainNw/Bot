@@ -51,19 +51,19 @@ static bool FileHash(const wchar_t* path) {
     if (provider) CryptReleaseContext(provider, 0);
     return good;
 }
-static const char* WindowUnavailableReason(HWND window, DWORD pid, DWORD expected_thread, DWORD& tid) {
+static const char* WindowUnavailableReason(HWND window, DWORD pid, DWORD expected_thread, DWORD& tid, bool restoring = false) {
     DWORD owner = 0;
     tid = GetWindowThreadProcessId(window, &owner);
     if (!tid) return "not_found";
     if (owner != pid) return "wrong_process";
     if (expected_thread && tid != expected_thread) return "thread_changed";
-    if (IsIconic(window)) return "minimized";
-    if (!IsWindowEnabled(window)) return "disabled";
+    if (!restoring && IsIconic(window)) return "minimized";
+    if (!restoring && !IsWindowEnabled(window)) return "disabled";
     return nullptr;
 }
 static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* response = nullptr, bool quiet = false, DWORD expected_thread = 0) {
     DWORD tid = 0;
-    if (const auto reason = WindowUnavailableReason(window, pid, expected_thread, tid)) {
+    if (const auto reason = WindowUnavailableReason(window, pid, expected_thread, tid, command.operation == SpeedRestore)) {
         if (!quiet) std::cout << "{\"pid\":" << pid
             << ",\"error\":\"window_unavailable\",\"reason\":\"" << reason
             << "\",\"command_sent\":false}" << std::endl;
@@ -94,7 +94,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 9; command.pid = pid;
+        command.magic = kMagic; command.version = 10; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -157,6 +157,40 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
                 std::cout << shared->magic_actions[i];
             }
             std::cout << "]}";
+            } else std::cout << "null";
+            std::cout << ",\"speed\":";
+            if (shared->operation == SpeedApply || shared->operation == SpeedRestore) {
+                std::cout << "{\"table\":" << shared->speed_table << ",\"roots\":[";
+                for (unsigned context = 0; context < 2; ++context) {
+                    if (context) std::cout << ",";
+                    std::cout << "[";
+                    for (unsigned i = 0; i < 4; ++i) {
+                        if (i) std::cout << ",";
+                        std::cout << shared->speed_roots[context][i];
+                    }
+                    std::cout << "]";
+                }
+                std::cout << "],\"player\":" << shared->speed_player
+                    << ",\"manager\":" << shared->battle_manager << ",\"context\":" << shared->battle_context
+                    << ",\"turn_number\":" << shared->turn_number << ",\"turn_tick\":" << shared->turn_tick
+                    << ",\"actor_identity\":[" << shared->actor_identity[0] << "," << shared->actor_identity[1]
+                    << "," << shared->actor_identity[2] << "]"
+                    << ",\"original_bits\":" << shared->speed_original_bits
+                    << ",\"requested_bits\":" << shared->speed_requested_bits
+                    << ",\"after_manager\":";
+                if (std::isfinite(shared->speed_after_manager)) std::cout << shared->speed_after_manager;
+                else std::cout << "null";
+                std::cout << ",\"after_graphics\":";
+                if (std::isfinite(shared->speed_after_graphics)) std::cout << shared->speed_after_graphics;
+                else std::cout << "null";
+                std::cout << ",\"map_before\":";
+                if (std::isfinite(shared->speed_map_before)) std::cout << shared->speed_map_before;
+                else std::cout << "null";
+                std::cout << ",\"map_after\":";
+                if (std::isfinite(shared->speed_map_after)) std::cout << shared->speed_map_after;
+                else std::cout << "null";
+                std::cout << ",\"map_owned_restore\":" << shared->speed_map_owned_restore;
+                std::cout << "}";
             } else std::cout << "null";
             std::cout << "}" << std::endl;
             }
@@ -236,6 +270,16 @@ static int SelfTest() {
     SharedCommand stationary_response = {};
     cancelled.operation = StationaryAttack;
     const int stationary_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &stationary_response, true) : 32;
+    SharedCommand speed_response = {}, speed_restore_response = {};
+    cancelled.operation = SpeedApply;
+    const int speed_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &speed_response, true) : 32;
+    cancelled.operation = SpeedRestore;
+    ShowWindow(test.window, SW_MINIMIZE);
+    EnableWindow(test.window, FALSE);
+    const int speed_restore_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &speed_restore_response, true) : 32;
+    EnableWindow(test.window, TRUE);
+    ShowWindow(test.window, SW_RESTORE);
+    ShowWindow(test.window, SW_HIDE);
     if (cancellation) CloseHandle(cancellation);
     const int missing_code = Run(test.window, GetCurrentProcessId(), cancelled, &missing_response, true);
     SharedCommand empty_channel = {}, empty_response = {};
@@ -257,6 +301,8 @@ static int SelfTest() {
         && !magic_code && magic_response.result == Cancelled
         && !loot_code && loot_response.result == Cancelled
         && !stationary_code && stationary_response.result == Cancelled
+        && !speed_code && speed_response.result == Cancelled
+        && !speed_restore_code && speed_restore_response.result == Cancelled
         && !missing_code && missing_response.result == CancellationUnavailable
         && !empty_code && empty_response.result == CancellationUnavailable ? 0 : 31);
     if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result
@@ -269,19 +315,20 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wcscmp(argv[1], L"--self-test") == 0) return SelfTest();
     try {
         DWORD pid = 0, expected_thread = 0; uint64_t created = 0, hwnd = 0; SharedCommand command = {};
-        bool operation = false; unsigned goal_fields = 0, position_fields = 0, battle_fields = 0, magic_fields = 0;
+        bool operation = false; unsigned goal_fields = 0, position_fields = 0, battle_fields = 0, magic_fields = 0, speed_fields = 0;
         for (int i = 1; i < argc; ++i) {
             std::wstring key(argv[i]);
             if (key == L"--attack" || key == L"--probe" || key == L"--approach" || key == L"--stop-move"
                 || key == L"--native-attack" || key == L"--stop-native" || key == L"--battle-basic"
                 || key == L"--battle-select" || key == L"--battle-magic" || key == L"--battle-loot"
-                || key == L"--stationary-attack") {
+                || key == L"--stationary-attack" || key == L"--speed-apply" || key == L"--speed-restore") {
                 if (operation) return 2;
                 command.operation = key == L"--attack" ? Attack : key == L"--probe" ? Probe
                     : key == L"--approach" ? Approach : key == L"--stop-move" ? StopMovement
                     : key == L"--native-attack" ? NativeAttack : key == L"--stop-native" ? StopNativePursuit
                     : key == L"--battle-basic" ? BattleBasic : key == L"--battle-select" ? BattleSelect
-                    : key == L"--battle-magic" ? BattleMagic : key == L"--battle-loot" ? BattleLoot : StationaryAttack;
+                    : key == L"--battle-magic" ? BattleMagic : key == L"--battle-loot" ? BattleLoot
+                    : key == L"--speed-apply" ? SpeedApply : key == L"--speed-restore" ? SpeedRestore : StationaryAttack;
                 operation = true; continue;
             }
             if (i + 1 >= argc) return 2;
@@ -332,6 +379,19 @@ int wmain(int argc, wchar_t** argv) {
                     command.magic_action = small; magic_fields |= 2;
                 }
                 else {
+                    const wchar_t* speed_names[] = {L"--speed-table", L"--speed-root0-0", L"--speed-root0-1",
+                        L"--speed-root0-2", L"--speed-root0-3", L"--speed-root1-0", L"--speed-root1-1",
+                        L"--speed-root1-2", L"--speed-root1-3", L"--speed-player", L"--speed-original-bits", L"--speed-requested-bits"};
+                    uint32_t* speed_values[] = {&command.speed_table, &command.speed_roots[0][0], &command.speed_roots[0][1],
+                        &command.speed_roots[0][2], &command.speed_roots[0][3], &command.speed_roots[1][0],
+                        &command.speed_roots[1][1], &command.speed_roots[1][2], &command.speed_roots[1][3],
+                        &command.speed_player, &command.speed_original_bits, &command.speed_requested_bits};
+                    bool speed_matched = false;
+                    for (unsigned n = 0; n < 12; ++n) if (key == speed_names[n]) {
+                        if (speed_fields & (1u << n)) return 2;
+                        *speed_values[n] = small; speed_fields |= 1u << n; speed_matched = true;
+                    }
+                    if (speed_matched) continue;
                     const wchar_t* names[] = {L"--battle-manager", L"--battle-context", L"--battle-client",
                         L"--turn-number", L"--turn-tick", L"--mercenary", L"--enemy-member", L"--source-unit",
                         L"--target-unit", L"--actor-kind", L"--actor-serial", L"--actor-unique"};
@@ -349,11 +409,12 @@ int wmain(int argc, wchar_t** argv) {
             }
         }
         if (!pid || !hwnd || !created || !expected_thread || !operation) return 2;
+        const bool speed_operation = command.operation == SpeedApply || command.operation == SpeedRestore;
         if (command.operation == StopMovement) {
             if (!command.route_player || !command.x || !command.y) return 2;
         } else if (command.operation == StopNativePursuit) {
             if (!command.route_player) return 2;
-        } else if (command.operation == BattleSelect) {
+        } else if (command.operation == BattleSelect || speed_operation) {
             if (command.slot) return 2;
         } else if (command.slot < (command.operation == BattleMagic ? 1u : 2u) || command.slot >= 450) return 2;
         if (command.operation >= BattleBasic && command.operation <= BattleLoot) {
@@ -366,6 +427,11 @@ int wmain(int argc, wchar_t** argv) {
             if (command.operation == BattleMagic && magic_fields != 3) return 2;
             if (command.operation != BattleMagic && magic_fields) return 2;
         }
+        if (speed_operation) {
+            if (speed_fields != 0xfff || battle_fields != 0xe1b || magic_fields || goal_fields
+                || position_fields || !command.battle_manager || !command.battle_context || !command.speed_player)
+                return 2;
+        } else if (speed_fields) return 2;
         if (command.operation == Approach && (!command.radius || !command.x || !command.y || !command.route_player)) return 2;
         if (command.operation == NativeAttack && !command.radius) return 2;
         if (command.operation == StationaryAttack && (!command.radius || position_fields != 7

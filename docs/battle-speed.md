@@ -160,3 +160,23 @@ Battle apagado: guarda **Exportar combate** dentro de la batalla y **Exportar
 diagnóstico** al regresar al mapa. Esas lecturas permitirán resolver el campo
 gráfico y comprobar su separación y estado fuera del combate. La versión sigue
 sin aplicar cambios de velocidad.
+
+## Capturas 001441–001517 y función final resuelta
+
+Se verificaron los CRC, tamaños y SHA-256 de los ZIP de 0.15.3 del 4 de noviembre:
+40 bloques / 966 912 bytes en combate y 20 bloques / 155 648 bytes en mapa.
+La instancia sigue siendo PID 21076, creación `134381859857067996`, y el selector
+gráfico cambia de 1 a 0. El lector acotado guardó la función final completa sin
+seguir un patrón que todavía no reconocía; no fabricó valores gráficos.
+
+`00A46DEA` contiene `mov eax,[ecx+120]; fld dword[eax+50]; ret`.
+`00A46DDA` toma el mismo miembro y almacena el argumento float en `[eax+50]`.
+Esto completa la ruta de datos:
+`tabla → contexto+18 → envoltorio+0C → backend[0] → objeto+120 → campo+50`.
+El lector admite ahora esa expresión exacta y vuelve a comprobar cada enlace.
+
+0.16.0 prepara una prueba manual a 1,45 con validación en vivo de ambos receptores,
+lectura de los originales y restauración. Si el valor gráfico no es 1,40 o el
+receptor se comparte con el mapa, no aplica el cambio. Esto evita necesitar otro
+volcado para decidir si esa instancia cumple las condiciones. El efecto visible
+y la estabilidad siguen pendientes de prueba. Véase [la prueba manual](speed-trial.md).

@@ -5,11 +5,12 @@
 
 constexpr uint32_t kMagic = 0x414F5031;
 constexpr uint32_t kMaxSearchRadius = 500;
-constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.9";
+constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.10";
 enum Operation : uint32_t {
     Probe = 0, Attack = 1, Approach = 2, StopMovement = 3,
     NativeAttack = 4, StopNativePursuit = 5, BattleBasic = 6,
-    BattleSelect = 7, BattleMagic = 8, BattleLoot = 9, StationaryAttack = 10
+    BattleSelect = 7, BattleMagic = 8, BattleLoot = 9, StationaryAttack = 10,
+    SpeedApply = 11, SpeedRestore = 12
 };
 enum Result : uint32_t {
     Verified = 0, Queued = 1, Blocked = 2, OutOfRange = 3, InvalidScene = 4,
@@ -24,7 +25,9 @@ enum Result : uint32_t {
     BattleTargetChanged = 29, BattleNotEligible = 30, MercenarySelected = 31,
     BattleMagicQueued = 32, BattleSelectionChanged = 33,
     BattleMagicNotEligible = 34, BattleMagicUnsupported = 35,
-    BattleLootQueued = 36, BattleLootNotEligible = 37
+    BattleLootQueued = 36, BattleLootNotEligible = 37,
+    SpeedApplied = 38, SpeedRestored = 39, SpeedChanged = 40, SpeedRejected = 41,
+    SpeedRetired = 42
 };
 struct SharedCommand {
     uint32_t magic, version, pid, nonce_lo, nonce_hi, operation, slot;
@@ -44,8 +47,13 @@ struct SharedCommand {
     uint32_t mercenary, target_mercenary, source_unit, target_unit;
     uint32_t actor_identity[3], battle_error[4];
     uint32_t magic_key, magic_action, magic_count, magic_actions[5];
+    uint32_t speed_table, speed_roots[2][4], speed_player;
+    uint32_t speed_original_bits, speed_requested_bits;
+    float speed_after_manager, speed_after_graphics;
+    float speed_map_before, speed_map_after;
+    uint32_t speed_map_owned_restore;
 };
-static_assert(sizeof(SharedCommand) == 408, "IPC layout must match the x86 helper and hook");
+static_assert(sizeof(SharedCommand) == 476, "IPC layout must match the x86 helper and hook");
 inline void MappingName(wchar_t (&name)[128], DWORD pid, DWORD lo, DWORD hi) {
     swprintf_s(name, L"Local\\AtlanticaPanel.%lu.%08lX.%08lX", pid, lo, hi);
 }

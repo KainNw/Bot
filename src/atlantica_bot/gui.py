@@ -31,6 +31,7 @@ from .profiles import (
     member_label,
 )
 from .session import GameSession, LiveState
+from .speed_trial import SpeedExperiment, prepare_speed_plan
 from .turns import roster_rows
 from .world import observe_scene, scan_world
 
@@ -63,6 +64,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.calibrating = False
             self.calibration_window = None
             self.bonus_window = None
+            self.speed_window = None
+            self.speed_experiment = None
             self.profile_editor = None
             self.overview: OverviewWindow | None = None
             self.detector: CombatDetector | None = None
@@ -283,9 +286,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 state="disabled",
             )
             self.calibration_button.pack(side="left", padx=10)
+            diagnostic_row = ttk.Frame(self.hunt_tab)
+            diagnostic_row.pack(fill="x", pady=(4, 8))
             ttk.Button(
-                self.hunt_tab, text="Capturar bonus (memoria)", command=self.capture_bonus
-            ).pack(anchor="w", pady=(4, 8))
+                diagnostic_row, text="Capturar bonus (memoria)", command=self.capture_bonus
+            ).pack(side="left")
+            ttk.Button(
+                diagnostic_row,
+                text="Prueba de velocidad (experimental)",
+                command=self.open_speed_trial,
+            ).pack(side="left", padx=10)
             member_row = ttk.Frame(frame)
             member_row.pack(fill="x", pady=4)
             self.members_button = ttk.Button(
@@ -470,6 +480,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 and not self.closing
                 and not self.calibrating
                 and not self.bonus_open()
+                and not self.speed_open()
             )
             self.overview.set_controls(
                 start=editable and str(self.bot_start_button.cget("state")) == "normal",
@@ -570,6 +581,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.error(exc)
 
         def disconnect(self) -> None:
+            if self.speed_experiment is not None and self.speed_experiment.active:
+                try:
+                    self.speed_experiment.restore()
+                except (DiagnosticError, OSError) as exc:
+                    self.detail.set(f"Conservando la conexión para restaurar la escala: {exc}")
+                    return
             self.stop_bot()
             self.session = None
             self.directory = None
@@ -603,7 +620,11 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
         def lock_target_controls(self) -> None:
             active = (
-                self.bot_worker is not None or self.closing or self.calibrating or self.bonus_open()
+                self.bot_worker is not None
+                or self.closing
+                or self.calibrating
+                or self.bonus_open()
+                or self.speed_open()
             )
             self.window_list.configure(state="disabled" if active else "readonly")
             self.profile_list.configure(state="disabled" if active else "readonly")
@@ -627,6 +648,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 state="normal" if self.bot_worker is not None else "disabled"
             )
             if active:
+                for button in (
+                    self.capture_button,
+                    self.combat_capture_button,
+                    self.members_button,
+                    self.targets_button,
+                ):
+                    button.configure(state="disabled")
                 self.bot_start_button.configure(state="disabled")
                 self.start_button.configure(state="disabled")
                 self.stop_button.configure(state="disabled")
@@ -637,7 +665,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def bonus_open(self) -> bool:
             return self.bonus_window is not None and bool(self.bonus_window.winfo_exists())
 
-        def require_idle_bot(self, *, allow_bonus: bool = False) -> None:
+        def speed_open(self) -> bool:
+            return self.speed_window is not None and bool(self.speed_window.winfo_exists())
+
+        def require_idle_bot(self, *, allow_bonus: bool = False, allow_speed: bool = False) -> None:
+            if self.speed_open() and not allow_speed:
+                raise DiagnosticError(
+                    "Cierra la prueba de velocidad antes de iniciar o cambiar de cliente."
+                )
             if self.bonus_open() and not allow_bonus:
                 raise DiagnosticError(
                     "Cierra la captura de bonus antes de cambiar el cliente o iniciar el bot."
@@ -648,7 +683,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 )
 
         def target_is_editable(self) -> bool:
-            if self.bot_worker is not None or self.closing or self.calibrating or self.bonus_open():
+            if (
+                self.bot_worker is not None
+                or self.closing
+                or self.calibrating
+                or self.bonus_open()
+                or self.speed_open()
+            ):
                 self.detail.set(
                     "Pulsa Parar bot y espera a que termine antes de cambiar el cliente."
                 )
@@ -1196,6 +1237,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
         def error(self, exc: Exception) -> None:
             self.detail.set(str(exc))
+            if self.speed_experiment is not None and self.speed_experiment.active:
+                return  # Keep the timer running without a modal dialog during restoration.
             messagebox.showerror("Control de caza", str(exc))
 
         def browse(self) -> None:
@@ -1375,6 +1418,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def close(self) -> None:
             if self.closing:
                 return
+            if self.speed_experiment is not None and self.speed_experiment.active:
+                try:
+                    self.speed_experiment.restore()
+                except (DiagnosticError, OSError) as exc:
+                    self.error(DiagnosticError(f"Restaura la escala antes de cerrar: {exc}"))
+                    return
             self.stop_bot()
             try:
                 active = self.directory is not None and marker_state(self.directory).marker_present
@@ -1440,6 +1489,150 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 )
             except (DiagnosticError, OSError) as exc:
                 self.error(exc)
+
+        def open_speed_trial(self, *, load: bool = True) -> None:
+            if self.speed_open():
+                self.speed_window.lift()
+                return
+            try:
+                self.require_idle_bot()
+                session = self.session
+                if session is None:
+                    raise DiagnosticError("Conecta con el juego y detén el bot antes de probar.")
+                experiment = SpeedExperiment(session, self.selected_window(session))
+            except (DiagnosticError, OSError) as exc:
+                self.error(exc)
+                return
+            self.speed_experiment = experiment
+            window = self.speed_window = tk.Toplevel(self.root)
+            window.title(f"PID {session.process.pid} — prueba de velocidad en combate")
+            frame = ttk.Frame(window, padding=16)
+            frame.pack(fill="both", expand=True)
+            ttk.Label(
+                frame,
+                text="Prueba manual de 10 segundos, con el bot detenido y Auto Battle apagado.\n"
+                "1. Entra en combate y lee el estado.\n"
+                "2. Pulsa Probar y ejecuta una acción manual para observar su animación.\n"
+                "3. Se intentará restaurar la escala al terminar el tiempo o salir del combate.\n"
+                "También puedes pulsar Restaurar en cualquier momento.\n"
+                "La escala pasa de 1,40 a 1,45; "
+                "no equivale a un multiplicador del combate completo.\n"
+                "El efecto y la estabilidad en el juego todavía requieren esta prueba.",
+                wraplength=700,
+            ).pack(anchor="w")
+            status = tk.StringVar(value="Sin cambios. Lee el estado dentro de un combate.")
+            ttk.Label(frame, textvariable=status, wraplength=700).pack(anchor="w", pady=14)
+            timer_id = None
+
+            def scope() -> None:
+                self.require_idle_bot(allow_speed=True)
+                if self.session is not session:
+                    raise DiagnosticError(
+                        "La conexión cambió; conserva la restauración de esta prueba."
+                    )
+
+            def controls() -> None:
+                active = experiment.active
+                read_button.configure(state="disabled" if active else "normal")
+                apply_button.configure(state="disabled" if active else "normal")
+                restore_button.configure(state="normal" if active else "disabled")
+
+            def read_state() -> None:
+                try:
+                    scope()
+                    _, snapshot = prepare_speed_plan(session)
+                    experiment.report["preview"] = snapshot
+                    status.set(
+                        "Lectura válida: escala original 1,40 y campos separados del mapa. "
+                        "No se ha aplicado ningún cambio."
+                    )
+                    apply_button.configure(state="normal")
+                except (DiagnosticError, OSError) as exc:
+                    apply_button.configure(state="disabled")
+                    experiment.report["preview_error"] = str(exc)
+                    if hasattr(exc, "speed_snapshot"):
+                        experiment.report["preview"] = exc.speed_snapshot
+                    status.set(str(exc))
+
+            def apply() -> None:
+                try:
+                    scope()
+                    apply_button.configure(state="disabled")
+                    result = experiment.start()
+                    status.set(result["message"])
+                except (DiagnosticError, OSError) as exc:
+                    experiment.report["error"] = str(exc)
+                    status.set(str(exc))
+                controls()
+
+            def restore() -> bool:
+                try:
+                    experiment.auto_restore_attempted = True
+                    result = experiment.restore()
+                    status.set(result.get("message", "No hay cambios pendientes."))
+                    return not experiment.active
+                except (DiagnosticError, OSError) as exc:
+                    experiment.report["restore_error"] = str(exc)
+                    status.set(
+                        f"Restauración sin confirmar: {exc}. "
+                        "Mantén el juego abierto y pulsa Restaurar."
+                    )
+                    return False
+                finally:
+                    controls()
+
+            def tick() -> None:
+                nonlocal timer_id
+                timer_id = None
+                if not window.winfo_exists():
+                    return
+                if experiment.should_restore():
+                    restore()
+                timer_id = window.after(200, tick)
+
+            def copy() -> None:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(
+                    json.dumps(
+                        {**experiment.report, "active": experiment.active},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+
+            def close() -> None:
+                if experiment.active and not restore():
+                    return
+                if timer_id is not None:
+                    window.after_cancel(timer_id)
+                window.destroy()
+                self.speed_window = None
+                self.speed_experiment = None
+                self.lock_target_controls()
+                try:
+                    self.refresh()
+                except (DiagnosticError, OSError) as exc:
+                    self.detail.set(str(exc))
+
+            buttons = ttk.Frame(frame)
+            buttons.pack(fill="x")
+            read_button = ttk.Button(buttons, text="Leer estado", command=read_state)
+            read_button.pack(side="left")
+            apply_button = ttk.Button(
+                buttons, text="Probar escala 1,45 (10 s)", command=apply, state="disabled"
+            )
+            apply_button.pack(side="left", padx=8)
+            restore_button = ttk.Button(
+                buttons, text="Restaurar", command=restore, state="disabled"
+            )
+            restore_button.pack(side="left")
+            ttk.Button(buttons, text="Copiar resultado", command=copy).pack(side="left", padx=8)
+            ttk.Button(frame, text="Cerrar", command=close).pack(anchor="e", pady=(12, 0))
+            window.protocol("WM_DELETE_WINDOW", close)
+            self.lock_target_controls()
+            if load:
+                read_state()
+            timer_id = window.after(200, tick)
 
         def capture_bonus(self) -> None:
             if self.bonus_open():
@@ -2188,6 +2381,21 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.bonus_window = None
         panel.lock_target_controls()
         assert str(panel.profile_list.cget("state")) == "readonly"
+        from .clients import ClientWindow
+
+        fake_window = ClientWindow(1, 0x1234, "Prueba propia", 1)
+        panel.windows[fake_window.label] = fake_window
+        panel.window_choice.set(fake_window.label)
+        panel.open_speed_trial(load=False)
+        assert panel.speed_open() and not panel.speed_experiment.active
+        assert str(panel.bot_start_button.cget("state")) == "disabled"
+        assert str(panel.capture_button.cget("state")) == "disabled"
+        assert str(panel.profile_list.cget("state")) == "disabled"
+        assert all(str(widget.cget("state")) == "disabled" for widget in overview.hunt_controls)
+        panel.speed_window.tk.call(panel.speed_window.protocol("WM_DELETE_WINDOW"))
+        assert not panel.speed_open() and panel.speed_experiment is None
+        panel.window_choice.set("")
+        panel.lock_target_controls()
         panel.show_members(load=False)
         panel.calibrate_combat()
         panel.calibration_window.destroy()

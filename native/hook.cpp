@@ -412,9 +412,108 @@ static uint32_t InvokeBattle(uint32_t owner, uint32_t world, uint32_t player,
     } __finally { LeaveCriticalSection(lock); }
     return result;
 }
+static uint32_t FloatBits(float value) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof bits);
+    return bits;
+}
+static bool SpeedSupported() {
+    return HexAnchor(0xa0481e, "a118ce391569c074020000030510ce3915c3")
+        && HexAnchor(0xa14afd, "d9442404518b490cd91c24e831af0500c20400")
+        && HexAnchor(0xa14b10, "8b490ce938af0500")
+        && HexAnchor(0xa6fa3e, "d9442404518b09d91c24e88d73fdffc20400")
+        && HexAnchor(0xa6fa50, "8b09e99373fdff")
+        && HexAnchor(0xa46dda, "8b8120010000d9442404d95850c20400")
+        && HexAnchor(0xa46dea, "8b8120010000d94050c3")
+        && Read<float>(0x42c11d4) == 1.5f && Read<float>(0x42f320c) == 1.4f;
+}
+static bool SpeedPointer(uint32_t value, uint32_t needed) {
+    return value >= 0x10000 && value <= UINT32_MAX - needed;
+}
+static bool ReadSpeedRoot(uint32_t table, unsigned context, uint32_t (&root)[4]) {
+    if (!SpeedPointer(table, 0x4e8)) return false;
+    root[0] = Read<uint32_t>(table + context * 0x274 + 0x18);
+    if (!SpeedPointer(root[0], 0x10)) return false;
+    root[1] = Read<uint32_t>(root[0] + 0xc);
+    if (!SpeedPointer(root[1], 4)) return false;
+    root[2] = Read<uint32_t>(root[1]);
+    if (!SpeedPointer(root[2], 0x124)) return false;
+    root[3] = Read<uint32_t>(root[2] + 0x120);
+    return SpeedPointer(root[3], 0x54);
+}
+static uint32_t InvokeSpeed(SharedCommand* cmd, HANDLE cancellation) {
+    if (!SpeedSupported() || cmd->speed_original_bits != FloatBits(1.4f)
+        || cmd->speed_requested_bits != FloatBits(1.45f)) return SpeedRejected;
+    const auto owner = Read<uint32_t>(0x4a9290c);
+    if (!owner || !SpeedPointer(cmd->battle_manager, 0x2660)
+        || Read<uint32_t>(owner + 0x91c) != cmd->battle_manager
+        || Read<uint32_t>(cmd->battle_manager) != 0x42d8aa4) return SpeedChanged;
+    const auto world = Read<uint32_t>(owner + 0x828);
+    if (!world || Read<uint32_t>(world + 0x2c) != cmd->speed_player
+        || !SpeedPointer(cmd->speed_player, 0x320)
+        || std::memcmp(reinterpret_cast<const void*>(cmd->speed_player + 0x204), cmd->actor_identity, 12))
+        return SpeedChanged;
+    const auto table = Read<uint32_t>(0x1539ce10);
+    uint32_t root0[4] = {}, root1[4] = {};
+    if (!ReadSpeedRoot(table, 0, root0)) return SpeedChanged;
+    const bool have_root1 = ReadSpeedRoot(table, 1, root1);
+    uint32_t receiver = 0, node = 0;
+    if (cmd->operation == SpeedApply) {
+        if (!have_root1 || table != cmd->speed_table || root0[3] == root1[3]
+            || std::memcmp(root0, cmd->speed_roots[0], sizeof root0)
+            || std::memcmp(root1, cmd->speed_roots[1], sizeof root1)) return SpeedChanged;
+        receiver = root1[3]; node = root1[2];
+    } else {
+        if (Read<uint32_t>(0x1539ce18) > 1) return SpeedChanged;
+        if (root0[3] == cmd->speed_roots[1][3]) { receiver = root0[3]; node = root0[2]; }
+        else if (have_root1 && root1[3] == cmd->speed_roots[1][3]) { receiver = root1[3]; node = root1[2]; }
+    }
+    const auto field = receiver ? receiver + 0x50 : 0;
+    const auto manager_field = cmd->battle_manager + 0x265c;
+    if (field == manager_field || root0[3] + 0x50 == manager_field) return SpeedRejected;
+    const auto manager_bits = Read<uint32_t>(manager_field);
+    const auto graphics_bits = field ? Read<uint32_t>(field) : 0;
+    cmd->speed_map_before = Read<float>(root0[3] + 0x50);
+    if (!std::isfinite(cmd->speed_map_before)) return SpeedRejected;
+    if (cmd->operation == SpeedApply) {
+        const int index = Read<int>(cmd->speed_player + 0x318);
+        if (Read<int>(owner + 0xb98) != 2 || Read<uint8_t>(owner + 0x16394)
+            || Read<uint8_t>(0x4e52c5a) || index < 0 || index >= 128
+            || Read<int>(cmd->speed_player + 0x254) >= 0
+            || Read<uint32_t>(cmd->battle_manager + 8 + index * 4) != cmd->battle_context
+            || !SpeedPointer(cmd->battle_context, 0x6c78)
+            || Read<uint32_t>(cmd->battle_manager + 0x234c) != 3
+            || Read<uint32_t>(cmd->battle_context + 0x6c74) != cmd->turn_number
+            || Read<uint32_t>(cmd->battle_context + 0x6c60) != cmd->turn_tick
+            || manager_bits != cmd->speed_original_bits || graphics_bits != cmd->speed_original_bits)
+            return SpeedRejected;
+    }
+    if (IsCancelled(cancellation)) return Cancelled;
+    const float rate = cmd->operation == SpeedApply ? 1.45f : 1.4f;
+    using SetRate = void(__thiscall*)(void*, float);
+    if (cmd->operation == SpeedApply || manager_bits == cmd->speed_requested_bits)
+        *reinterpret_cast<float*>(manager_field) = rate;
+    if (cmd->operation == SpeedApply || (field && graphics_bits == cmd->speed_requested_bits)) {
+        cmd->speed_map_owned_restore = cmd->operation == SpeedRestore && receiver == root0[3] ? 1u : 0u;
+        reinterpret_cast<SetRate>(0xa46dda)(reinterpret_cast<void*>(node), rate);
+    }
+    cmd->speed_after_manager = Read<float>(manager_field);
+    cmd->speed_after_graphics = field ? Read<float>(field) : std::numeric_limits<float>::quiet_NaN();
+    cmd->speed_map_after = Read<float>(root0[3] + 0x50);
+    if (cmd->speed_map_owned_restore) {
+        if (FloatBits(cmd->speed_map_before) != cmd->speed_requested_bits
+            || FloatBits(cmd->speed_map_after) != cmd->speed_original_bits) return NotQueued;
+    } else if (FloatBits(cmd->speed_map_before) != FloatBits(cmd->speed_map_after)) return NotQueued;
+    if (cmd->operation == SpeedApply) return cmd->speed_after_manager == rate
+        && cmd->speed_after_graphics == rate ? SpeedApplied : NotQueued;
+    if (cmd->speed_after_manager == rate && field && cmd->speed_after_graphics == rate) return SpeedRestored;
+    return SpeedRetired;
+}
 static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
     if (IsCancelled(cancellation)) return Cancelled;
     if (!Supported()) return Unsupported;
+    if (cmd->operation == SpeedApply || cmd->operation == SpeedRestore)
+        return InvokeSpeed(cmd, cancellation);
     const auto owner = Read<uint32_t>(0x04a9290c);
     if (!owner || Read<int>(owner + 0xb98) != 2) return InvalidScene;
     if (Read<uint8_t>(owner + 0x16394) || Read<uint8_t>(0x04e52c5a)) return NativeHunting;
@@ -602,7 +701,7 @@ extern "C" LRESULT CALLBACK AtlanticaHookProc(int code, WPARAM removed, LPARAM d
                 if (mapping) {
                     auto cmd = static_cast<SharedCommand*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedCommand)));
                     if (cmd) {
-                        if (cmd->magic == kMagic && cmd->version == 9 && cmd->pid == pid
+                        if (cmd->magic == kMagic && cmd->version == 10 && cmd->pid == pid
                             && cmd->nonce_lo == msg->wParam && cmd->nonce_hi == static_cast<DWORD>(msg->lParam)
                             && InterlockedCompareExchange(&cmd->state, 2, 1) == 1) {
                             cmd->thread_id = GetCurrentThreadId();

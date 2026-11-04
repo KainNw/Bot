@@ -80,6 +80,11 @@ def resolve_rate_getter(reader: Reader) -> dict:
         step = {"address": f"{address:08X}", "code_hex": code.hex()}
         result["steps"].append(step)
         decoded = decode_rate_getter(code[:7])
+        if code[:10] == bytes.fromhex("8b8120010000d94050c3"):
+            result["receiver_dereferences"].append(0x120)
+            result.update(status="resolved", offset=0x50, format="<f")
+            step["code_hex"] = code[:10].hex()
+            return result
         if decoded is not None:
             offset, fmt = decoded
             result.update(status="resolved", offset=offset, format=fmt)

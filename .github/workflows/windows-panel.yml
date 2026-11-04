@@ -77,6 +77,30 @@ jobs:
           exit /b %errorlevel%
           "@ | Set-Content build-native.cmd -Encoding ascii
           Run-NativeBuildStep @('cmd', '/d', '/c', 'build-native.cmd')
+      - name: Verify speed command parsing on a non-game process
+        shell: pwsh
+        run: |
+          $probeInstance = Get-Process -Id $PID
+          foreach ($probeOperation in @('--speed-apply', '--speed-restore')) {
+            $probeArguments = @(
+              $probeOperation, '--pid', "$PID", '--created', "$($probeInstance.StartTime.ToFileTimeUtc())",
+              '--window', '1', '--thread', '1', '--speed-table', '65536',
+              '--speed-player', '65536', '--speed-original-bits', '1068708659',
+              '--speed-requested-bits', '1069128090', '--battle-manager', '65536',
+              '--battle-context', '65536', '--turn-number', '0', '--turn-tick', '1',
+              '--actor-kind', '1', '--actor-serial', '1', '--actor-unique', '0'
+            )
+            foreach ($probeContext in 0..1) {
+              foreach ($probeField in 0..3) {
+                $probeArguments += @("--speed-root$probeContext-$probeField", '65536')
+              }
+            }
+            & build/native/Release/AtlanticaBridge.exe @probeArguments
+            if ($LASTEXITCODE -ne 4) {
+              throw "Speed parser returned $LASTEXITCODE; expected process/build rejection 4."
+            }
+          }
+          exit 0
       - name: Build executable
         run: >-
           uv run --frozen --group build pyinstaller

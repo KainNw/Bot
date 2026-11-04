@@ -69,6 +69,11 @@ confirmarse, sigue exigiendo comprobar el juego y reconectar. El **estado nativo
 20** de una respuesta válida es distinto: significa que el personaje ya tenía
 un desplazamiento activo, y no se sustituye ese movimiento.
 
+La restauración de la prueba de velocidad 0.16 es una excepción deliberada a la
+comprobación de ventana minimizada/deshabilitada: solo permite revertir sus dos
+campos ya guardados, con las demás comprobaciones de instancia y propiedad.
+No habilita ataques ni movimiento en ventanas minimizadas.
+
 El usuario confirmó el inicio del ataque individual con Auto Battle apagado y una
 sola ventana. El ciclo 0.4 añade Iniciar bot/Parar bot usando la misma ruta y sin
 modificar marcadores. El usuario ya empezó las pruebas con varias ventanas y reportó

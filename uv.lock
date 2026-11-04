@@ -13,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "atlantica-bot"
-version = "0.15.3"
+version = "0.16.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

@@ -270,3 +270,25 @@ def test_different_wrappers_can_share_the_same_final_rate_receiver():
     rates = read_speed_snapshot(session, None)["graphics_rates"]
     assert rates["contexts"]["0"]["backend"] != rates["contexts"]["1"]["backend"]
     assert rates["shared_receiver"]
+
+
+def test_complete_captured_getter_resolves_the_extra_member_pointer():
+    target = 0x00A46DEA
+    session, calls = speed_session(
+        overrides={
+            RATE_GETTER_ADDRESS: bytes.fromhex("8b09e99373fdff") + b"\x90" * 9,
+            target: bytes.fromhex("8b8120010000d94050c3") + b"\x90" * 6,
+            0x30000000: struct.pack("<I", 0x40000000),
+            0x30001000: struct.pack("<I", 0x40001000),
+            0x40000120: struct.pack("<I", 0x50000000),
+            0x40001120: struct.pack("<I", 0x50001000),
+            0x50000050: struct.pack("<f", 1.0),
+            0x50001050: struct.pack("<f", 1.4),
+        }
+    )
+    rates = read_speed_snapshot(session, None)["graphics_rates"]
+    assert rates["status"] == "read" and rates["getter"]["offset"] == 0x50
+    assert rates["getter"]["receiver_dereferences"] == [0, 0x120]
+    assert rates["contexts"]["1"]["receiver"] == 0x50001000
+    assert rates["contexts"]["1"]["value"] == pytest.approx(1.4)
+    assert (0x50001050, 4) in calls and not rates["shared_receiver"]
