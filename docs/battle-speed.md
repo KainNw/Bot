@@ -180,3 +180,25 @@ lectura de los originales y restauración. Si el valor gráfico no es 1,40 o el
 receptor se comparte con el mapa, no aplica el cambio. Esto evita necesitar otro
 volcado para decidir si esa instancia cumple las condiciones. El efecto visible
 y la estabilidad siguen pendientes de prueba. Véase [la prueba manual](speed-trial.md).
+
+## Prueba 0.16.0: cambio confirmado sin aceleración visible
+
+El informe aportado por el usuario pertenece a la misma instancia PID 21076.
+El getter resolvió ambos receptores finales y encontró que son distintos:
+mapa en 1,00 y combate en 1,40. La operación 11 devolvió estado 38, con gestor
+y gráfico en 1,45000005; la operación 12 devolvió 39, con ambos en 1,39999998.
+Todas las lecturas reportadas del mapa permanecieron en 1,00, sin excepciones.
+El usuario indicó «No siguieron igual todo igua»: no observó aceleración.
+
+Las respuestas prueban la aplicación y restauración, pero no la persistencia
+entre ellas ni un efecto perceptible. El incremento nominal es aproximadamente
+3,6 %. Las rutinas capturadas consumen `gestor+265C`: `0059C319` calcula un
+intervalo `33 / escala` antes de convertirlo a entero y `005A0EAC` multiplica
+el avance de movimiento. Esas instrucciones no demuestran que una acción
+concreta del usuario haya pasado por ellas durante la prueba. La captura tampoco
+establece que el campo se reescribiera: esa hipótesis requiere observación.
+
+0.16.1 registra muestras durante los mismos 10 segundos, comprueba enlaces
+antes y después, y termina la prueba si ve un cambio de escala. Conserva la
+restauración y no insiste en aplicar el valor. Esto permite investigar la
+persistencia sin subir el ajuste ni sustituir los relojes de Windows.

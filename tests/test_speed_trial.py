@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from atlantica_bot import speed_trial
 from atlantica_bot.clients import ClientWindow
 from atlantica_bot.errors import DiagnosticError, WindowUnavailable
 from atlantica_bot.session import LiveState
@@ -66,6 +67,19 @@ def trial_env(turn_frame, monkeypatch, tmp_path):
     data = snapshot()
     monkeypatch.setattr("atlantica_bot.speed_trial.read_battle_frame", lambda _: turn_frame)
     monkeypatch.setattr("atlantica_bot.speed_trial.read_speed_snapshot", lambda *a: deepcopy(data))
+    monkeypatch.setattr(
+        "atlantica_bot.speed_trial.read_speed_sample",
+        lambda *a: {
+            "manager_rate": TRIAL_RATE,
+            "battle_graphics_rate": TRIAL_RATE,
+            "map_graphics_rate": 1.0,
+            "graphics_context_index": 1,
+            "phase": 3,
+            "turn_number": turn_frame.turn_number,
+            "turn_tick": turn_frame.turn_tick,
+            "client_tick": 100,
+        },
+    )
     monkeypatch.setattr("atlantica_bot.speed_trial.BotLease", lambda _: nullcontext())
     monkeypatch.setattr(
         "atlantica_bot.speed_trial.Cancellation",
@@ -322,3 +336,112 @@ def test_blocked_preview_is_kept_in_the_copied_report_without_sending(trial_env,
         experiment.start()
     assert experiment.report["preview"]["graphics_rates"]["shared_receiver"]
     assert not experiment.active and experiment.lease is None
+
+
+def monitored_experiment(trial_env, monkeypatch):
+    clock = [100.0]
+    commands = []
+    monkeypatch.setattr("atlantica_bot.speed_trial.time.monotonic", lambda: clock[0])
+
+    def send(session, window, plan, *, restore):
+        commands.append(restore)
+        return response(plan, restore=restore)
+
+    monkeypatch.setattr("atlantica_bot.speed_trial.request_speed", send)
+    battle = Observation(100, 777, 2, GridPosition(127, 1, 1), False, LocalState(33, 0, -1, 0))
+    monkeypatch.setattr("atlantica_bot.speed_trial.observe_scene", lambda _: battle)
+    experiment = SpeedExperiment(*trial_env[:2])
+    experiment.start()
+    return experiment, clock, commands
+
+
+def test_samples_show_persistence_over_time_without_additional_commands(trial_env, monkeypatch):
+    experiment, clock, commands = monitored_experiment(trial_env, monkeypatch)
+    assert not experiment.should_restore()
+    clock[0] = 100.1
+    assert not experiment.should_restore()
+    assert len(experiment.report["observations"]) == 1
+    clock[0] = 104.0
+    assert not experiment.should_restore()
+    samples = experiment.report["observations"]
+    assert [s["elapsed_ms"] for s in samples] == [0, 4000]
+    assert experiment.report["monitoring"]["all_samples_match_requested"] is True
+    assert experiment.report["visual_speedup_confirmed"] is False
+    assert commands == [False]
+    clock[0] = 110.0
+    assert experiment.should_restore()
+    assert experiment.report["monitoring"]["stop_reason"] == "deadline"
+    experiment.restore()
+    assert experiment.report["monitoring"]["restored_after_ms"] == 10000
+    assert commands == [False, True]
+
+
+@pytest.mark.parametrize(
+    "changes,reason",
+    [
+        ({"manager_rate": ORIGINAL_RATE, "battle_graphics_rate": ORIGINAL_RATE}, "rate_changed"),
+        ({"manager_rate": ORIGINAL_RATE}, "rate_changed"),
+        ({"map_graphics_rate": 1.1}, "map_rate_changed"),
+        ({"graphics_context_index": 0}, "battle_state_changed"),
+        ({"phase": 4}, "battle_state_changed"),
+    ],
+)
+def test_changed_sample_requests_cleanup_without_reapplying(
+    trial_env, monkeypatch, changes, reason
+):
+    experiment, _, commands = monitored_experiment(trial_env, monkeypatch)
+    original = speed_trial.read_speed_sample
+    monkeypatch.setattr(
+        "atlantica_bot.speed_trial.read_speed_sample", lambda *a: {**original(*a), **changes}
+    )
+    assert experiment.should_restore()
+    assert experiment.report["monitoring"]["stop_reason"] == reason
+    assert commands == [False]
+    if reason == "rate_changed":
+        assert experiment.report["monitoring"]["first_rate_change_ms"] == 0
+        assert not experiment.report["monitoring"]["all_samples_match_requested"]
+    experiment.restore()
+    assert not experiment.active and commands == [False, True]
+
+
+def test_read_failure_keeps_an_error_sample_and_requests_cleanup(trial_env, monkeypatch):
+    experiment, _, commands = monitored_experiment(trial_env, monkeypatch)
+
+    def unavailable(*args):
+        raise DiagnosticError("Objeto sustituido")
+
+    monkeypatch.setattr("atlantica_bot.speed_trial.read_speed_sample", unavailable)
+    assert experiment.should_restore()
+    assert experiment.report["observations"] == [
+        {"elapsed_ms": 0, "status": "read_error", "error": "Objeto sustituido"}
+    ]
+    assert experiment.report["monitoring"]["samples_read"] == 0
+    experiment.restore()
+    assert commands == [False, True]
+
+
+def test_deadline_takes_priority_over_sampling(trial_env, monkeypatch):
+    experiment, clock, commands = monitored_experiment(trial_env, monkeypatch)
+    clock[0] = 110
+    monkeypatch.setattr(
+        "atlantica_bot.speed_trial.read_speed_sample", lambda *a: pytest.fail("Cleanup first")
+    )
+    assert experiment.should_restore()
+    assert not experiment.report["observations"]
+    experiment.restore()
+    assert commands == [False, True]
+
+
+def test_repeated_trial_resets_previous_samples_and_results(trial_env, monkeypatch):
+    experiment, clock, commands = monitored_experiment(trial_env, monkeypatch)
+    assert not experiment.should_restore()
+    experiment.restore()
+    assert experiment.report["observations"] and "restore" in experiment.report
+    clock[0] = 120
+    experiment.start()
+    assert not experiment.report["observations"] and "restore" not in experiment.report
+    assert experiment.report["monitoring"]["stop_reason"] is None
+    assert not experiment.should_restore()
+    assert experiment.report["observations"][0]["elapsed_ms"] == 0
+    experiment.restore()
+    assert commands == [False, True, False, True]

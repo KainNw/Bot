@@ -17,11 +17,14 @@ from .ipc import BotLease, Cancellation
 from .native_action import bridge_path
 from .session import GameSession
 from .speed import read_speed_snapshot
+from .speed_observation import read_speed_sample
 from .world import observe_scene
 
 ORIGINAL_RATE = 1.4
 TRIAL_RATE = 1.45
 TRIAL_SECONDS = 10
+SAMPLE_INTERVAL_SECONDS = 0.2
+SAMPLE_LIMIT = 60
 MESSAGES = {
     9: "El código del cliente no coincide; no se cambió la escala.",
     13: "Prueba cancelada antes del cambio.",
@@ -308,6 +311,8 @@ class SpeedExperiment:
         self.deadline = None
         self.auto_restore_attempted = False
         self.detector = None
+        self.started_at = None
+        self.next_sample_at = None
         self.report = {
             "tool_version": __version__,
             "pid": session.process.pid,
@@ -317,6 +322,73 @@ class SpeedExperiment:
             "visual_speedup_confirmed": False,
         }
 
+    def _reset_observations(self) -> None:
+        for key in ("apply", "restore", "apply_error", "restore_error", "error", "plan", "before"):
+            self.report.pop(key, None)
+        self.started_at = self.next_sample_at = self.deadline = None
+        self.auto_restore_attempted = False
+        self.report["observations"] = []
+        self.report["monitoring"] = {
+            "read_only": True,
+            "interval_ms": round(SAMPLE_INTERVAL_SECONDS * 1000),
+            "sample_limit": SAMPLE_LIMIT,
+            "samples_read": 0,
+            "all_samples_match_requested": None,
+            "stop_reason": None,
+        }
+
+    def _stop(self, reason: str) -> bool:
+        self.report["monitoring"]["stop_reason"] = reason
+        return True
+
+    def _sample(self, now: float) -> bool:
+        if self.next_sample_at is None or now < self.next_sample_at:
+            return False
+        observations = self.report["observations"]
+        if len(observations) >= SAMPLE_LIMIT:
+            return self._stop("sample_limit")
+        elapsed = round((now - self.started_at) * 1000)
+        try:
+            sample = read_speed_sample(self.session, self.plan)
+        except (DiagnosticError, OSError) as exc:
+            observations.append({"elapsed_ms": elapsed, "status": "read_error", "error": str(exc)})
+            return self._stop("sample_read_error")
+        sample.update(
+            elapsed_ms=elapsed,
+            read_duration_ms=round((time.monotonic() - now) * 1000),
+            status="read",
+        )
+        sample["manager_matches_requested"] = float_bits(sample["manager_rate"]) == float_bits(
+            TRIAL_RATE
+        )
+        sample["graphics_matches_requested"] = float_bits(
+            sample["battle_graphics_rate"]
+        ) == float_bits(TRIAL_RATE)
+        sample["map_matches_original"] = float_bits(sample["map_graphics_rate"]) == float_bits(
+            self.report["before"]["graphics_rates"]["contexts"]["0"]["value"]
+        )
+        observations.append(sample)
+        monitoring = self.report["monitoring"]
+        monitoring["samples_read"] += 1
+        monitoring["observed_ms"] = elapsed
+        matches = sample["manager_matches_requested"] and sample["graphics_matches_requested"]
+        monitoring["all_samples_match_requested"] = (
+            monitoring["all_samples_match_requested"] is not False and matches
+        )
+        self.next_sample_at = time.monotonic() + SAMPLE_INTERVAL_SECONDS
+        if not sample["map_matches_original"]:
+            return self._stop("map_rate_changed")
+        if sample["graphics_context_index"] != 1 or sample["phase"] != 3:
+            return self._stop("battle_state_changed")
+        if not matches:
+            monitoring["first_rate_change_ms"] = elapsed
+            monitoring["original_rates_observed"] = all(
+                float_bits(sample[key]) == float_bits(ORIGINAL_RATE)
+                for key in ("manager_rate", "battle_graphics_rate")
+            )
+            return self._stop("rate_changed")
+        return False
+
     def _release(self) -> None:
         if self.lease is not None:
             self.lease.__exit__(None, None, None)
@@ -325,6 +397,7 @@ class SpeedExperiment:
     def start(self) -> dict:
         if self.active:
             raise DiagnosticError("Restaura la escala antes de otra prueba.")
+        self._reset_observations()
         self.lease = BotLease(self.session.process.pid)
         self.lease.__enter__()
         try:
@@ -348,7 +421,9 @@ class SpeedExperiment:
                 raise
             self.report["apply"] = result
             if result["status"] == 38:
-                self.deadline = time.monotonic() + TRIAL_SECONDS
+                self.started_at = time.monotonic()
+                self.next_sample_at = self.started_at
+                self.deadline = self.started_at + TRIAL_SECONDS
                 self.auto_restore_attempted = False
             else:
                 self.active = False
@@ -365,6 +440,13 @@ class SpeedExperiment:
     def restore(self) -> dict:
         if not self.active or self.plan is None:
             return self.report.get("restore", {})
+        monitoring = self.report["monitoring"]
+        if monitoring["stop_reason"] is None:
+            monitoring["stop_reason"] = "manual_restore"
+        if self.started_at is not None:
+            monitoring["restoration_requested_after_ms"] = round(
+                (time.monotonic() - self.started_at) * 1000
+            )
         creation = getattr(self.session.system, "process_creation_time", None)
         ended = False
         if creation is not None:
@@ -373,6 +455,7 @@ class SpeedExperiment:
             except (DiagnosticError, OSError):
                 ended = not any(p.pid == self.plan.pid for p in self.session.system.processes())
         if ended:
+            monitoring["stop_reason"] = "instance_ended"
             self.active = False
             self.deadline = None
             self._release()
@@ -387,6 +470,8 @@ class SpeedExperiment:
         self.report["restore"] = result
         if result["status"] not in (39, 42):
             raise DiagnosticError(result["message"] + " La restauración sigue pendiente.")
+        if self.started_at is not None:
+            monitoring["restored_after_ms"] = round((time.monotonic() - self.started_at) * 1000)
         self.active = False
         self.deadline = None
         self._release()
@@ -396,9 +481,18 @@ class SpeedExperiment:
         if not self.active or self.auto_restore_attempted:
             return False
         if self.deadline is None or time.monotonic() >= self.deadline:
-            return True
+            return self._stop("deadline")
         try:
             observation = observe_scene(self.session)
-            return observation.native_active or self.detector.classify(observation) != "battle"
-        except (DiagnosticError, OSError):
-            return True
+            if observation.native_active:
+                return self._stop("native_active")
+            if self.detector.classify(observation) != "battle":
+                return self._stop("scene_changed")
+            # Recheck the deadline after scene reads: cleanup takes priority over sampling.
+            now = time.monotonic()
+            if now >= self.deadline:
+                return self._stop("deadline")
+            return self._sample(now)
+        except (DiagnosticError, OSError) as exc:
+            self.report["monitoring"]["error"] = str(exc)
+            return self._stop("observation_error")

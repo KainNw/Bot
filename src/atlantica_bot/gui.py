@@ -1517,11 +1517,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 "También puedes pulsar Restaurar en cualquier momento.\n"
                 "La escala pasa de 1,40 a 1,45; "
                 "no equivale a un multiplicador del combate completo.\n"
+                "Se registran lecturas durante la prueba para comprobar si conserva la escala.\n"
                 "El efecto y la estabilidad en el juego todavía requieren esta prueba.",
                 wraplength=700,
             ).pack(anchor="w")
             status = tk.StringVar(value="Sin cambios. Lee el estado dentro de un combate.")
             ttk.Label(frame, textvariable=status, wraplength=700).pack(anchor="w", pady=14)
+            monitoring_status = tk.StringVar(value="Seguimiento: sin muestras todavía.")
+            ttk.Label(frame, textvariable=monitoring_status, wraplength=700).pack(
+                anchor="w", pady=(0, 14)
+            )
             timer_id = None
 
             def scope() -> None:
@@ -1569,7 +1574,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 try:
                     experiment.auto_restore_attempted = True
                     result = experiment.restore()
-                    status.set(result.get("message", "No hay cambios pendientes."))
+                    reason = experiment.report.get("monitoring", {}).get("stop_reason")
+                    prefix = {
+                        "rate_changed": "La escala cambió durante la prueba. ",
+                        "map_rate_changed": "Cambió la escala del mapa. ",
+                        "sample_read_error": "La lectura dejó de ser válida. ",
+                        "battle_state_changed": "Cambió el estado del combate. ",
+                    }.get(reason, "")
+                    status.set(prefix + result.get("message", "No hay cambios pendientes."))
                     return not experiment.active
                 except (DiagnosticError, OSError) as exc:
                     experiment.report["restore_error"] = str(exc)
@@ -1588,6 +1600,20 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     return
                 if experiment.should_restore():
                     restore()
+                observations = experiment.report.get("observations", [])
+                if observations:
+                    last = observations[-1]
+                    count = experiment.report["monitoring"]["samples_read"]
+                    if last["status"] == "read":
+                        monitoring_status.set(
+                            f"Seguimiento: {count} muestras; última a "
+                            f"{last['elapsed_ms'] / 1000:.1f} s. "
+                            f"Escala de combate {last['manager_rate']:.2f} / "
+                            f"{last['battle_graphics_rate']:.2f}; "
+                            f"mapa {last['map_graphics_rate']:.2f}."
+                        )
+                    else:
+                        monitoring_status.set(f"Seguimiento interrumpido: {last['error']}")
                 timer_id = window.after(200, tick)
 
             def copy() -> None:

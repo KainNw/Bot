@@ -1,4 +1,4 @@
-# Prueba manual de escala de combate — 0.16.0
+# Prueba manual de escala de combate — 0.16.1
 
 La investigación identificó el getter y el setter finales de la compilación
 compatible. `00A46DEA` toma el puntero en `objeto+120`, carga su float `+50` y
@@ -13,6 +13,14 @@ observado es 1,50. Ese techo no garantiza la sincronización con el servidor.
 El efecto visible, la recogida y la duración real de las batallas todavía deben
 comprobarse jugando. No hay velocidad automática por perfil en esta versión.
 
+En la prueba del usuario con 0.16.0, el puente confirmó 1,45 en ambos campos
+y después la restauración a 1,40, con el mapa en 1,00 y sin excepciones. El
+usuario no observó aceleración. Las dos respuestas no muestran cuánto persistió
+la escala entre ellas. 0.16.1 añade seguimiento durante la misma prueba para
+distinguir una escala que el cliente reemplaza de una que se mantiene en las
+muestras sin efecto visible. No aumenta el valor ni repite escrituras para
+contrarrestar cambios del cliente.
+
 ## Uso
 
 1. Conecta con la ventana elegida, detén el bot y deja Auto Battle y caza nativa apagados.
@@ -26,6 +34,27 @@ comprobarse jugando. No hay velocidad automática por perfil en esta versión.
    originales y la reserva del PID.
 5. Pulsa **Copiar resultado** y pega el JSON, indicando aparte si notaste el efecto
    y si el combate y el botín terminaron normalmente.
+
+El seguimiento intenta una lectura cada 200 ms, con hasta 60 registros. Guarda
+escalas de gestor, gráfico de combate y mapa, contexto gráfico, fase, turno y el
+contador que lee la rutina de animación en `owner+BA4`. Conserva el tiempo
+transcurrido y la duración de la lectura. Ese contador no tiene todavía una
+unidad comprobada y no se presenta como FPS ni como multiplicador de velocidad.
+La ventana muestra las últimas escalas observadas.
+
+Cada muestra comprueba la instancia y obtiene de nuevo los objetos actuales;
+si un enlace cambia, descarta la lectura. La restauración tiene prioridad al
+vencer el plazo o cambiar la escena. Si cambia una escala o el estado deja de
+ser el esperado, interrumpe la prueba e intenta limpiar. El informe incluye
+`observations`, `monitoring.stop_reason`, el tiempo de solicitud de restauración
+y el de su respuesta. Las muestras coincidentes no prueban que el campo haya
+permanecido igual entre lecturas, ni que las animaciones se hayan acelerado.
+
+Los multiplicadores solicitados 1,5×, 2×, 3× y 4× expresan una velocidad relativa
+a la normal y no equivalen al valor de esta escala interna. El campo está
+sujeto al umbral local observado de 1,50. El panel conserva la prueba fija a
+1,45; todavía no hay un selector de esos multiplicadores ni un cambio de reloj
+del proceso limitado al combate.
 
 Abrir la ventana solo lee. La prueba exige que ambos campos de combate estén
 inicialmente en 1,40 y que los receptores gráficos finales de mapa y batalla sean
