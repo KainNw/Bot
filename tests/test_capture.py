@@ -203,6 +203,56 @@ def test_combat_export_contains_fixed_code_dependencies_readonly_tables_and_cont
     assert not (session.directory / MARKER_NAME).exists()
 
 
+def test_export_includes_bounded_animation_dependencies_and_labels_static_data(
+    session, tmp_path, monkeypatch
+):
+    from atlantica_bot.animation_code import ANCHORS, ROOT
+
+    session.creation_time = 777
+    monkeypatch.setattr("atlantica_bot.capture.observe_scene", lambda _: battle_observation())
+    update = bytearray(b"\xcc" * 0x3000)
+    for address, expected in ANCHORS.items():
+        update[address - 0xA19000 : address - 0xA19000 + len(expected)] = expected
+    child, static = 0xA527C0, 0x043E1000
+    body = (
+        b"\x68"
+        + struct.pack("<I", static)
+        + b"\xe8"
+        + struct.pack("<i", child - (ROOT + 16 + 5) - 5)
+        + b"\xc3"
+    )
+    update[ROOT - 0xA19000 + 16 : ROOT - 0xA19000 + 16 + len(body)] = body
+    child_page = bytearray(b"\xcc" * 4096)
+    child_page[child % 4096] = 0xC3
+    extra = {
+        (0xA19000, 0x3000): bytes(update),
+        (0xA52000, 4096): bytes(child_page),
+        (static, 4096): b"labels\0" + bytes(4089),
+    }
+    original = session.system.read_memory
+    monkeypatch.setattr(
+        session.system,
+        "read_memory",
+        lambda pid, address, size: (
+            extra[(address, size)] if (address, size) in extra else original(pid, address, size)
+        ),
+    )
+    output = tmp_path / "animation.zip"
+    export_code_context(session, output, include_combat=True)
+    with ZipFile(output) as archive:
+        assert archive.testzip() is None
+        manifest = json.loads(archive.read("manifest.json"))
+        graph = manifest["animation_dependencies"]
+        assert graph["status"] == "captured" and len(graph["nodes"]) == 2
+        assert graph["new_code_pages"] == ["00A52000"] and graph["new_data_pages"] == ["043E1000"]
+        blocks = {block["address"]: block for block in manifest["blocks"]}
+        assert blocks["043E1000"]["kind"] == "readonly_constants"
+        assert blocks["00A52000"]["kind"] == "code"
+        for address in ("043E1000", "00A52000"):
+            block = blocks[address]
+            assert hashlib.sha256(archive.read(block["file"])).hexdigest() == block["sha256"]
+
+
 def test_incomplete_method_tables_are_not_saved_as_a_complete_battle_capture(
     session, tmp_path, monkeypatch
 ):

@@ -240,3 +240,53 @@ Para obtenerlo, usa **Exportar combate** en una batalla con el bot detenido y
 Auto Battle apagado. No hace falta volver a aplicar 1,45 ni repetir la magia.
 Este bloque permitirá seguir la actualización del objeto gráfico y determinar
 qué avance consume el campo, sin deducir una aceleración visual de su valor.
+
+## Captura 085806 y dependencias acotadas en 0.16.4
+
+El ZIP de 0.16.3 del 4 de noviembre contiene 41 bloques, 979 200 bytes, con CRC,
+tamaños y SHA-256 verificados. Sigue en la misma instancia PID 21076; la escala
+vuelve a 1,40 en ambas muestras y el mapa conserva 1,00. El bloque nuevo resuelve
+`00A19CC0` y `00A1A82E`.
+
+`00A19CC0` busca un registro en la colección `this+5C`. `00A1A82E` elige entre
+`00A19FA0` y `00A1A66C` según el estado de `1539CE00`. La primera rama recorre
+objetos y delega en `00A523EF`, `00A527C0`, `00A5282F`, `00A52876`, `00A52A4B`
+y `00A52AD7`. La segunda distribuye grupos de objetos y usa `00A041DE/00A04229`.
+En esas tres rutinas de actualización no se observa una carga directa del
+campo `this+50` probado. Esto no demuestra que el campo no intervenga en otros
+consumidores ni que las funciones delegadas tengan un ajuste de velocidad.
+Falta resolver las dependencias; no se ha localizado otro multiplicador.
+
+0.16.4 usa Capstone 5.0.7 para decodificar instrucciones x86 de 32 bits, sin
+ejecutarlas. **Exportar combate** y **Exportar diagnóstico** añaden
+`animation_dependencies`. Primero exigen los bytes completos observados en la
+entrada `00A1A82E` y sus dos llamadas de selección de rama; si no coinciden,
+conservan el diagnóstico fijo y anotan que el recorrido no está disponible.
+
+El recorrido reúne candidatos desde `00A1A82E`: hasta cuatro saltos de llamadas
+desde la raíz de profundidad cero, 64 entradas,
+256 instrucciones por entrada y 4096 bytes desde cada entrada. Sigue saltos
+directos locales, detiene cada camino en retorno o salto indirecto, y registra
+las llamadas indirectas sin adivinar sus receptores. Las llamadas fuera del
+intervalo del motor `00980000`–`00C00000` y tres auxiliares comunes se anotan pero
+no se recorren. No se certifican los límites de una función ni la semántica de
+código protegido a partir de una decodificación candidata.
+
+Reutiliza los bloques ya capturados. Los intentos de lectura nuevos se limitan
+a 48 páginas de código y ocho de datos estáticos, de 4096 bytes: un máximo de
+224 KiB adicionales. Los datos deben estar en `03F85000`–`044F9000` y aparecer
+como direcciones inmediatas o accesos absolutos en las instrucciones decodificadas.
+No sigue punteros del montón. También limita los registros de referencias a
+1024. Los intentos fallidos consumen su presupuesto, se anotan y no se repiten.
+
+El informe conserva los límites alcanzados, páginas inaccesibles, bytes y hashes;
+siempre marca la cobertura y las semánticas como no completas/verificadas.
+La validación de instancia y del contexto al finalizar la exportación sigue
+rechazando una captura mezclada. El trabajador de caza y la prueba a 1,45 no
+reciben nuevos comandos. No se modifican relojes, controles o turnos.
+
+El ejecutable de Windows incluye la biblioteca del decodificador y comprueba su
+carga durante el arranque automatizado con bytes fijos, sin acceder al juego.
+Al usar los fuentes sin instalar esa dependencia, la exportación fija continúa
+y registra `decoder_unavailable`. Esta fase necesita una nueva exportación de
+combate con 0.16.4; no necesita otra prueba de escala.

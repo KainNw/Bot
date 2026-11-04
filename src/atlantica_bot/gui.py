@@ -2292,6 +2292,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
     panel = Panel()
     if smoke_test:
+        from .animation_code import decoder_probe
+
+        assert decoder_probe()
         # Exercise the real packaged GUI without connecting or changing any files.
         assert tuple(panel.tabs.tab(tab, "text") for tab in panel.tabs.tabs()) == (
             "Control",

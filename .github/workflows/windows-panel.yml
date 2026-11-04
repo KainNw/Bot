@@ -106,6 +106,7 @@ jobs:
           uv run --frozen --group build pyinstaller
           --noconfirm --clean --onefile --windowed --noupx
           --name AtlanticaPanel --paths src
+          --collect-binaries capstone
           --add-binary "build/native/Release/AtlanticaBridge.exe;native"
           --add-binary "build/native/Release/AtlanticaHook.dll;native" panel_caza.py
       - name: Verify executable opens and closes its GUI

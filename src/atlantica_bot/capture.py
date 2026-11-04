@@ -9,6 +9,7 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from . import __version__, hunting
+from .animation_code import capture_animation_dependencies
 from .battle_context import NormalBattleContext, read_normal_battle
 from .combat import CombatDetector
 from .errors import DiagnosticError
@@ -287,6 +288,7 @@ def export_code_context(
         combat["normal_client_method_resolution"] = _normal_methods(
             session, normal, blocks, role="client"
         )
+    animation_dependencies = capture_animation_dependencies(session, blocks)
     speed_after = read_speed_snapshot(session, normal)
     speed_scene_after = None
     if not include_combat:
@@ -342,6 +344,7 @@ def export_code_context(
         else "attack_and_navigation_diagnostic",
         "bot_context": context,
         "dispatch_resolution": dispatch,
+        "animation_dependencies": animation_dependencies,
         "state_at_start": {
             "auto_battle": state.auto_battle,
             "condition_b": state.condition_b,
@@ -354,7 +357,11 @@ def export_code_context(
                 "size": len(data),
                 "sha256": hashlib.sha256(data).hexdigest(),
                 **(
-                    {"kind": "readonly_constants" if name in readonly_names else "code"}
+                    {
+                        "kind": "readonly_constants"
+                        if name in readonly_names or name == "graphics-dependency-data"
+                        else "code"
+                    }
                     if include_combat
                     else {}
                 ),

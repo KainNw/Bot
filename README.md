@@ -1,7 +1,15 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.16.3** amplía la exportación de memoria
+con Auto Battle apagado. La versión **0.16.4** añade una captura acotada de las
+dependencias de actualización gráfica: sigue llamadas directas del código ya
+verificado, recoge sus páginas y datos estáticos referidos y registra las
+llamadas indirectas que no puede resolver. Solo lee; no ejecuta las instrucciones
+analizadas. El paquete de Windows incluye el desensamblador. Se conservan los
+límites por profundidad, nodos, instrucciones y páginas, y cada bloque tiene
+tamaño y SHA-256. Consulta [la investigación](docs/battle-speed.md).
+
+Conserva 0.16.3, que amplía la exportación de memoria
 para seguir la actualización gráfica que usa el objeto de la escala. La prueba
 0.16.1 mantuvo 1,45 en 46 muestras y el usuario confirmó una magia dentro del
 intervalo; no se midió la duración de la animación. El nuevo bloque permite
