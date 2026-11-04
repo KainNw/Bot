@@ -1,7 +1,14 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.13.1** distingue claramente **Combate
+con Auto Battle apagado. La versión **0.14.0** añade **Atacar desde mi posición
+(experimental)**: elige el mob más cercano dentro del radio y solicita iniciar
+combate desde la posición actual, sin enviar persecución ni rutas. La aceptación
+de objetivos lejanos por el servidor todavía necesita prueba en el juego. Se elige
+en **Caza y botín → Modo de ataque al mob** y se guarda por perfil.
+Consulta [ataque desde la posición](docs/stationary-attack.md).
+
+Conserva los indicadores de 0.13.1, que distinguen claramente **Combate
 automático** de **Turnos manuales**, también al tener activa la recogida. Un cambio
 de selección que impide enviar una recogida pausa esa función hasta la siguiente
 batalla, en vez de detener toda la caza. Consulta [el diagnóstico del combate
@@ -48,7 +55,7 @@ observaciones y tres perfiles. Al conectar con la compilación
 compatible vincula el detector local ya comprobado a ese PID y fecha de creación.
 **Calibrar combate** permite comparar manualmente las señales si hace falta.
 
-El modo nuevo usa las órdenes nativas observadas en Auto Battle: persecución del mob
+El modo **Perseguir y atacar (nativo)** usa las órdenes observadas en Auto Battle: persecución del mob
 si está lejos y ataque cuando entra en el mismo alcance que establece el cliente.
 El radio de búsqueda selecciona objetivos; no amplía el alcance del golpe ni escribe
 el umbral nativo. El panel conserva la identidad del mob aunque cambie de puesto.
@@ -119,9 +126,14 @@ La prueba individual todavía no ejecuta el perfil ni recoge botín. Las instruc
 están en [prueba de básico](docs/basic-battle-trial.md) y
 [selección y magia](docs/magic-battle-trial.md).
 
-**Ataque nativo por radio (experimental)** viene marcado para la prueba solicitada.
+**Perseguir y atacar (nativo)** es el modo predeterminado; corresponde a la opción
+**Ataque nativo por radio** de versiones anteriores.
 El radio va de 5 a 500 casillas alrededor del inicio de esa ejecución, con valor
-inicial 60. Si lo desmarcas, conserva el ciclo cercano. El panel no utiliza las
+inicial 60. **Atacar solo a mobs en alcance** conserva el ciclo cercano.
+**Atacar desde mi posición (experimental)** solicita el combate directo con un mob
+del radio sin ordenar acercamiento, incluso si supera el umbral habitual del cliente.
+No modifica ese umbral y todavía no se ha validado la aceptación del servidor.
+El panel no utiliza las
 rutas por rejilla del modo anterior. **Parar bot** cancela nuevas órdenes y solicita
 parar una persecución que todavía pueda identificar como propia. Un clic de movimiento
 pausa la búsqueda hasta que el personaje queda quieto; entonces centra el radio en
@@ -162,8 +174,10 @@ py -3 panel_caza.py
 3. El detector queda listo al conectar. Si necesitas contrastarlo, **Calibrar combate**
    permite capturar mapa → combate → regreso. Tras una prueba individual, reconecta
    al mismo PID antes de iniciar el ciclo.
-4. En **Caza y botín**, deja marcado **Ataque nativo por radio (experimental)** y elige
-   el radio (60 casillas inicialmente). **Calibrar radio** permite incluir un mob de la lista.
+4. En **Caza y botín**, elige **Modo de ataque al mob**: **Perseguir y atacar (nativo)**
+   para el recorrido habitual o **Atacar desde mi posición (experimental)** para
+   solicitar combate sin acercarse. Elige el radio (60 casillas inicialmente).
+   **Calibrar radio** permite incluir un mob de la lista.
    El punto al iniciar será el centro del área de selección. Configura también la espera
    antes de atacar y, si quieres probarla, la recogida de bonus/botín restante.
    **Guardar opciones del perfil** conserva los cambios; iniciar también los guarda.

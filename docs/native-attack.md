@@ -2,9 +2,11 @@
 
 El usuario pidió omitir el acercamiento por rutas de 0.6 y probar el mismo sistema
 de persecución/ataque de Auto Battle, conservando su alcance y dejándolo apagado.
-El panel ofrece **Ataque nativo por radio (experimental)** marcado inicialmente,
-con radio de selección 60 y límites de 5–500 casillas desde 0.13.0. Desmarcarlo conserva el ciclo
-de mobs cercanos. Los turnos de mercenarios siguen siendo manuales.
+Desde 0.14.0 se elige como **Perseguir y atacar (nativo)** en **Modo de ataque al mob**,
+con radio de selección 60 y límites de 5–500 casillas desde 0.13.0. **Atacar solo a mobs
+en alcance** conserva el ciclo cercano. **Atacar desde mi posición** es una opción
+experimental [separada de la persecución](stationary-attack.md).
+Los turnos de mercenarios dependen de **Ejecutar turnos según el perfil**.
 
 ## Qué mostraron las últimas pruebas
 

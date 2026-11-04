@@ -66,6 +66,12 @@ static bool NavigationSupported() {
 static bool Idle(uint32_t player) {
     return !Read<uint8_t>(player + 0x1012) && !Read<uint8_t>(player + 0xb78);
 }
+static bool SamePlayerPosition(uint32_t player, const SharedCommand* cmd) {
+    for (unsigned i = 0; i < 3; ++i)
+        if (!std::isfinite(cmd->world_goal[i]) || std::abs(cmd->world_goal[i]) > 1.e7f
+            || Read<float>(player + 0xb8c + i * 4) != cmd->world_goal[i]) return false;
+    return true;
+}
 static bool OwnRoute(uint32_t player, const SharedCommand* cmd) {
     return player == cmd->route_player && Read<uint32_t>(player + 0x1014) == cmd->route_tick
         && Read<int16_t>(player + 0x1018) == cmd->map_id
@@ -492,19 +498,25 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
         ReadRoute(player, cmd);
         return Read<uint8_t>(player + 0x1012) == 1 ? ApproachRequested : MovementNotConfirmed;
     }
-    if (cmd->operation == NativeAttack) {
-        if (!NativePursuitSupported()) return Unsupported;
+    if (cmd->operation == NativeAttack || cmd->operation == StationaryAttack) {
+        if (cmd->operation == NativeAttack && !NativePursuitSupported()) return Unsupported;
         if (!InsideArea(Read<int16_t>(ti + 0xca), Read<int16_t>(ti + 0xcc), Read<int16_t>(ti + 0xce), cmd)
             || !InsideArea(Read<int16_t>(pi + 0xca), Read<int16_t>(pi + 0xcc), Read<int16_t>(pi + 0xce), cmd))
             return OutsideArea;
         if (cmd->route_player && !OwnNativePursuit(owner, player, cmd)) return NativePursuitChanged;
+        if (cmd->operation == StationaryAttack) {
+            // This sender only checks readiness and forwards 0xAE2; it creates no path.
+            if (!HexAnchor(0x43652d, "e8baf0ffff84c0740b8b0d0c29a9048b01ff6064c20400")) return Unsupported;
+            if (!Idle(player)) { ReadRoute(player, cmd); return MovementBusy; }
+            if (!SamePlayerPosition(player, cmd)) { ReadRoute(player, cmd); return MovementChanged; }
+        }
     } else if (distance > limit) return OutOfRange;
     uint32_t queue = 0;
     const auto validation = SendQueue(owner, &queue);
     if (validation != Verified) return validation;
     if (Read<uint8_t>(player + 0x1012) == 1) { ReadRoute(player, cmd); return MovementBusy; }
     if (cmd->operation == Probe) return Verified; // Probe never calls any client function.
-    if (cmd->operation != Attack && cmd->operation != NativeAttack) return Unsupported;
+    if (cmd->operation != Attack && cmd->operation != NativeAttack && cmd->operation != StationaryAttack) return Unsupported;
     if (IsCancelled(cancellation)) return Cancelled;
     using Can = int(__thiscall*)(void*, int);
     using Ready = bool(__thiscall*)(void*);
@@ -545,6 +557,10 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
             result = Cancelled;
         } else if (capacity <= 0 || used < 0 || used > capacity || capacity - used < 25) {
             result = QueueFull;
+        } else if (cmd->operation == StationaryAttack && !Idle(player)) {
+            ReadRoute(player, cmd); result = MovementBusy;
+        } else if (cmd->operation == StationaryAttack && !SamePlayerPosition(player, cmd)) {
+            ReadRoute(player, cmd); result = MovementChanged;
         } else {
             // The client's queue lock is recursive; this serializes the capacity check and copy.
             reinterpret_cast<Send>(0x43652d)(reinterpret_cast<void*>(player), message);
@@ -586,7 +602,7 @@ extern "C" LRESULT CALLBACK AtlanticaHookProc(int code, WPARAM removed, LPARAM d
                 if (mapping) {
                     auto cmd = static_cast<SharedCommand*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedCommand)));
                     if (cmd) {
-                        if (cmd->magic == kMagic && cmd->version == 8 && cmd->pid == pid
+                        if (cmd->magic == kMagic && cmd->version == 9 && cmd->pid == pid
                             && cmd->nonce_lo == msg->wParam && cmd->nonce_hi == static_cast<DWORD>(msg->lParam)
                             && InterlockedCompareExchange(&cmd->state, 2, 1) == 1) {
                             cmd->thread_id = GetCurrentThreadId();

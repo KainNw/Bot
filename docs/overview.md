@@ -3,6 +3,8 @@
 Desde 0.13.0 también incluye **Caza y botín** para guardar la espera antes de atacar,
 el radio calibrable y la recogida restante. Comparte sus valores con el panel principal;
 consulta [las opciones y la validación pendiente del bonus](hunt-settings.md).
+Desde 0.14.0 comparte también **Modo de ataque al mob**, con la opción experimental
+de solicitar combate desde la posición actual sin ordenar acercamiento.
 
 **Vista general** abre una ventana flotante oscura desde **Control** o **Mercenarios**.
 Se inspira en la distribución de la imagen aportada por el usuario y muestra los

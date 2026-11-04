@@ -19,6 +19,7 @@ from .native_action import (
     try_attack,
     try_battle_action,
     try_native_attack,
+    try_stationary_attack,
 )
 from .navigation import ApproachSettings
 from .profiles import BotProfile
@@ -131,6 +132,8 @@ class HuntEngine:
     delayed_target: Candidate | None = None
     attack_ready_at: float | None = None
     delayed_phase: str = ""
+    stationary_request_position: GridPosition | None = None
+    stationary_request_world_position: tuple[float, float, float] | None = None
 
     def _event(self, kind: str, now: float | None = None, **data) -> None:
         if now is not None:
@@ -153,10 +156,16 @@ class HuntEngine:
             raise DiagnosticError("Revisa la ejecución de turnos del perfil.")
         if type(self.native_attack) is not bool or self.native_attack and self.approach.enabled:
             raise DiagnosticError("Elige ataque nativo o ruta del bot, no ambos.")
+        if self.stationary_attack and (self.native_attack or self.approach.enabled):
+            raise DiagnosticError("El ataque desde la posición no admite persecución ni rutas.")
+
+    @property
+    def stationary_attack(self) -> bool:
+        return self.profile.world_attack_mode == "stationary"
 
     @property
     def uses_radius(self) -> bool:
-        return self.approach.enabled or self.native_attack
+        return self.approach.enabled or self.native_attack or self.stationary_attack
 
     def stop(self, reason: str, *, reconnect: bool = False) -> None:
         previous_phase = self.phase
@@ -270,6 +279,27 @@ class HuntEngine:
             self.stop("Cambió el mapa; bot detenido.")
             return False
         if self.deadline is not None:
+            if (
+                self.stationary_attack
+                and classification == "map"
+                and (
+                    observation.player != self.stationary_request_position
+                    or not same_world_position(
+                        self.stationary_request_world_position, observation.world_position
+                    )
+                    or observation.navigation is not None
+                    and (
+                        observation.navigation.active is True
+                        or observation.navigation.moving is True
+                    )
+                )
+            ):
+                self.last_attack["stationary_movement_observed"] = True
+                self.stop(
+                    "El personaje se movió tras la solicitud directa; detenido sin repetirla.",
+                    reconnect=True,
+                )
+                return False
             if now >= self.deadline:
                 self._event(
                     "attack_not_confirmed",
@@ -282,7 +312,14 @@ class HuntEngine:
                     reconnect=True,
                 )
             else:
-                self.phase, self.message = "waiting_battle", "Solicitud enviada; esperando combate."
+                self.phase, self.message = (
+                    "waiting_battle",
+                    (
+                        "Solicitud directa enviada sin acercamiento; esperando combate."
+                        if self.stationary_attack
+                        else "Solicitud enviada; esperando combate."
+                    ),
+                )
             return False
         if classification != "map" or observation.player is None:
             self.phase, self.message = "waiting_map", "Esperando una escena de mapa estable."
@@ -476,12 +513,12 @@ class HuntEngine:
                 and math.isfinite(distance)
                 and distance >= 0
                 and (
-                    self.native_attack
+                    (self.native_attack or self.stationary_attack)
                     and self.origin is not None
                     and self.approach.contains(
                         self.origin, GridPosition(candidate.map_id, candidate.x, candidate.y)
                     )
-                    or not self.native_attack
+                    or not (self.native_attack or self.stationary_attack)
                     and distance <= limit
                 )
                 and len(candidate.identity) == 3
@@ -501,10 +538,13 @@ class HuntEngine:
             "nearest_slot": nearest.slot if nearest else None,
             "nearest_distance_squared": nearest.distance_squared if nearest else None,
             "available_in_range": sum(c.distance_squared <= limit for c in available),
-            "available_in_search_radius": len(available) if self.native_attack else None,
+            "available_in_search_radius": len(available)
+            if self.native_attack or self.stationary_attack
+            else None,
             "excluded_previously_engaged": len(view.candidates) - len(eligible),
             "automatic_approach": self.approach.enabled,
             "native_attack": self.native_attack,
+            "stationary_attack": self.stationary_attack,
             "search_radius": self.approach.radius if self.uses_radius else None,
         }
         if self.delayed_target is not None:
@@ -618,9 +658,19 @@ class HuntEngine:
                 else (candidate.distance_squared,)
             ),
         )
-        self.selection_source = "native_radius" if self.native_attack else "nearby"
+        self.selection_source = (
+            "stationary"
+            if self.stationary_attack
+            else "native_radius"
+            if self.native_attack
+            else "nearby"
+        )
         self.phase, self.message = (
-            "requesting_native_attack" if self.native_attack else "requesting",
+            "requesting_stationary_attack"
+            if self.stationary_attack
+            else "requesting_native_attack"
+            if self.native_attack
+            else "requesting",
             f"Solicitando ataque al objetivo {candidate.slot}.",
         )
         self._event(
@@ -955,6 +1005,9 @@ class HuntEngine:
         code = report["status"]
         self.next_scan = now + 1.5
         if code == 1:
+            if self.stationary_attack:
+                self.stationary_request_position = self.anchor
+                self.stationary_request_world_position = self.anchor_world_position
             self.queued += 1
             self.deadline = now + 30
             self.pending_target = candidate
@@ -962,7 +1015,14 @@ class HuntEngine:
             self.transport.clear()
             self.transport_first = {}
             self.cooldowns[target_key(candidate)] = now + 10
-            self.phase, self.message = "waiting_battle", "Solicitud enviada; esperando combate."
+            self.phase, self.message = (
+                "waiting_battle",
+                (
+                    "Solicitud directa enviada sin acercamiento; esperando combate."
+                    if self.stationary_attack
+                    else "Solicitud enviada; esperando combate."
+                ),
+            )
         elif code in (2, 3, 6):
             self.cooldowns[target_key(candidate)] = now + (10 if code == 2 else 3)
             self.phase, self.message = "searching", report["message"]
@@ -971,6 +1031,14 @@ class HuntEngine:
             self.anchor = None
         elif code == 13:
             self.stop("Bot detenido; solicitud pendiente cancelada.")
+        elif self.stationary_attack and code in (17, 20):
+            self.anchor = None
+            self.phase, self.message = (
+                "waiting_map",
+                "La posición cambió; esperando que termine el movimiento.",
+            )
+        elif self.stationary_attack and code == 18:
+            self.phase, self.message = "searching", "El objetivo salió del radio; buscando otro."
         else:
             self.stop(report["message"], reconnect=code in (7, 9, 10, 11, 12, 14))
 
@@ -1000,6 +1068,17 @@ class HuntEngine:
             "pid": self.pid,
             "running": self.running,
             "execute_turns": self.execute_turns,
+            "world_attack_mode": "stationary"
+            if self.stationary_attack
+            else "native"
+            if self.native_attack
+            else "nearby",
+            "stationary_attack": {
+                "enabled": self.stationary_attack,
+                "search_radius": self.approach.radius,
+                "movement_requested": False,
+                "server_range_acceptance_verified": False,
+            },
             "phase": self.phase,
             "message": self.message,
             "scans": self.scans,
@@ -1269,7 +1348,18 @@ class HuntWorker:
             candidate = self.engine.select(view, time.monotonic())
             if candidate is not None and not self.stop_event.is_set():
                 self._publish()
-                if self.engine.phase == "requesting_native_attack":
+                if self.engine.phase == "requesting_stationary_attack":
+                    report = try_stationary_attack(
+                        self.session,
+                        self.window,
+                        candidate,
+                        self.engine.origin,
+                        self.engine.approach,
+                        player_position=view.player_world_position,
+                        cancellation=self.cancellation,
+                    )
+                    self.engine.record(candidate, report, time.monotonic())
+                elif self.engine.phase == "requesting_native_attack":
                     report = try_native_attack(
                         self.session,
                         self.window,

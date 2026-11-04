@@ -81,7 +81,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 8; command.pid = pid;
+        command.magic = kMagic; command.version = 9; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -122,6 +122,11 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
                     << ",\"x\":" << shared->x << ",\"y\":" << shared->y
                     << ",\"world_goal\":[" << shared->world_goal[0] << "," << shared->world_goal[1]
                     << "," << shared->world_goal[2] << "],\"pending_raw\":" << shared->route_active << "}";
+            } else std::cout << "null";
+            std::cout << ",\"source_position\":";
+            if (shared->operation == StationaryAttack) {
+                std::cout << "[" << shared->world_goal[0] << "," << shared->world_goal[1]
+                    << "," << shared->world_goal[2] << "]";
             } else std::cout << "null";
             std::cout << ",\"battle\":";
             if (shared->operation >= BattleBasic && shared->operation <= BattleLoot) {
@@ -204,6 +209,9 @@ static int SelfTest() {
     SharedCommand loot_response = {};
     cancelled.operation = BattleLoot;
     const int loot_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &loot_response, true) : 32;
+    SharedCommand stationary_response = {};
+    cancelled.operation = StationaryAttack;
+    const int stationary_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &stationary_response, true) : 32;
     if (cancellation) CloseHandle(cancellation);
     const int missing_code = Run(test.window, GetCurrentProcessId(), cancelled, &missing_response, true);
     SharedCommand empty_channel = {}, empty_response = {};
@@ -223,6 +231,7 @@ static int SelfTest() {
         && !select_code && select_response.result == Cancelled
         && !magic_code && magic_response.result == Cancelled
         && !loot_code && loot_response.result == Cancelled
+        && !stationary_code && stationary_response.result == Cancelled
         && !missing_code && missing_response.result == CancellationUnavailable
         && !empty_code && empty_response.result == CancellationUnavailable ? 0 : 31);
     if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result
@@ -235,27 +244,33 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wcscmp(argv[1], L"--self-test") == 0) return SelfTest();
     try {
         DWORD pid = 0, expected_thread = 0; uint64_t created = 0, hwnd = 0; SharedCommand command = {};
-        bool operation = false; unsigned goal_fields = 0, battle_fields = 0, magic_fields = 0;
+        bool operation = false; unsigned goal_fields = 0, position_fields = 0, battle_fields = 0, magic_fields = 0;
         for (int i = 1; i < argc; ++i) {
             std::wstring key(argv[i]);
             if (key == L"--attack" || key == L"--probe" || key == L"--approach" || key == L"--stop-move"
                 || key == L"--native-attack" || key == L"--stop-native" || key == L"--battle-basic"
-                || key == L"--battle-select" || key == L"--battle-magic" || key == L"--battle-loot") {
+                || key == L"--battle-select" || key == L"--battle-magic" || key == L"--battle-loot"
+                || key == L"--stationary-attack") {
                 if (operation) return 2;
                 command.operation = key == L"--attack" ? Attack : key == L"--probe" ? Probe
                     : key == L"--approach" ? Approach : key == L"--stop-move" ? StopMovement
                     : key == L"--native-attack" ? NativeAttack : key == L"--stop-native" ? StopNativePursuit
                     : key == L"--battle-basic" ? BattleBasic : key == L"--battle-select" ? BattleSelect
-                    : key == L"--battle-magic" ? BattleMagic : BattleLoot;
+                    : key == L"--battle-magic" ? BattleMagic : key == L"--battle-loot" ? BattleLoot : StationaryAttack;
                 operation = true; continue;
             }
             if (i + 1 >= argc) return 2;
-            if (key == L"--goal-x" || key == L"--goal-y" || key == L"--goal-z") {
+            if (key == L"--goal-x" || key == L"--goal-y" || key == L"--goal-z"
+                || key == L"--player-world-x" || key == L"--player-world-y" || key == L"--player-world-z") {
                 std::wstring value(argv[++i]); size_t used = 0;
                 const float coordinate = std::stof(value, &used);
                 if (used != value.size() || !std::isfinite(coordinate) || std::abs(coordinate) > 1.e7f) return 2;
-                command.world_goal[key == L"--goal-x" ? 0 : key == L"--goal-y" ? 1 : 2] = coordinate;
-                goal_fields |= key == L"--goal-x" ? 1 : key == L"--goal-y" ? 2 : 4;
+                const unsigned axis = key == L"--goal-x" || key == L"--player-world-x" ? 0
+                    : key == L"--goal-y" || key == L"--player-world-y" ? 1 : 2;
+                command.world_goal[axis] = coordinate;
+                auto& supplied = key.find(L"--player-world-") == 0 ? position_fields : goal_fields;
+                if (supplied & (1u << axis)) return 2;
+                supplied |= 1u << axis;
                 continue;
             }
             if (key == L"--cancel-event") {
@@ -328,6 +343,9 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (command.operation == Approach && (!command.radius || !command.x || !command.y || !command.route_player)) return 2;
         if (command.operation == NativeAttack && !command.radius) return 2;
+        if (command.operation == StationaryAttack && (!command.radius || position_fields != 7
+            || goal_fields || command.route_player || battle_fields || magic_fields)) return 2;
+        if (command.operation != StationaryAttack && position_fields) return 2;
         if ((command.operation == StopNativePursuit
             || command.operation == NativeAttack && command.route_player) && goal_fields != 7) return 2;
         auto process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);

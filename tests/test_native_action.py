@@ -19,6 +19,7 @@ from atlantica_bot.native_action import (
     try_battle_action,
     try_battle_basic,
     try_native_attack,
+    try_stationary_attack,
 )
 from atlantica_bot.navigation import ApproachSettings
 from atlantica_bot.session import LiveState
@@ -83,6 +84,125 @@ def test_one_request_targets_only_selected_pid_window_creation_and_identity(brid
     assert args[args.index("--serial") + 1] == "77"
     assert "--attack" in args
     assert result["battle_confirmed"] is False
+
+
+@pytest.mark.parametrize("status", [1, 2, 17, 18, 20])
+def test_stationary_request_binds_far_target_source_position_and_pid_without_movement(
+    bridge, monkeypatch, status
+):
+    session, window, candidate = bridge
+    calls = []
+    position = (12.125, -33.5, 0.0)
+
+    def run(args, **kwargs):
+        calls.append(args)
+        assert "--stationary-attack" in args
+        assert "--native-attack" not in args and "--approach" not in args
+        assert "--goal-x" not in args and "--route-player" not in args
+        for key, value in {
+            "pid": 200,
+            "thread": 1234,
+            "created": 123456,
+            "radius": 200,
+            "player-world-x": 12.125,
+            "player-world-y": -33.5,
+            "player-world-z": 0.0,
+            "serial": 77,
+        }.items():
+            assert args[args.index(f"--{key}") + 1] == str(value)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "pid": 200,
+                    "slot": 6,
+                    "operation": 10,
+                    "status": status,
+                    "thread_id": 1234,
+                    "source_position": [12.125, -33.5000001, 0.0],
+                }
+            ),
+        )
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    report = try_stationary_attack(
+        session,
+        window,
+        candidate,
+        GridPosition(52, 193, 340),
+        ApproachSettings(radius=200),
+        player_position=position,
+    )
+    assert len(calls) == 1 and not report["battle_confirmed"]
+    assert report["stationary"]["movement_requested"] is False
+    assert report["stationary"]["server_range_acceptance_verified"] is False
+
+
+@pytest.mark.parametrize(
+    "status,position",
+    [
+        (22, [12.125, -33.5, 0.0]),
+        (15, [12.125, -33.5, 0.0]),
+        (26, [12.125, -33.5, 0.0]),
+        (3, [12.125, -33.5, 0.0]),
+        (1, [13.0, -33.5, 0.0]),
+        (1, None),
+        (1, [True, -33.5, 0.0]),
+        (1, [12.125, float("nan"), 0.0]),
+        (1, [12.125, -33.5]),
+    ],
+)
+def test_stationary_rejects_a_movement_reply_or_a_different_source_without_retry(
+    bridge, monkeypatch, status, position
+):
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "pid": 200,
+                    "slot": 6,
+                    "operation": 10,
+                    "status": status,
+                    "thread_id": 1234,
+                    "source_position": position,
+                }
+            ),
+        )
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    with pytest.raises(DiagnosticError, match="respuesta no válida"):
+        try_stationary_attack(
+            bridge[0],
+            bridge[1],
+            bridge[2],
+            GridPosition(52, 193, 340),
+            ApproachSettings(radius=200),
+            player_position=(12.125, -33.5, 0.0),
+        )
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "position", [None, (1, 2), (1, 2, float("inf")), (1, True, 3), (1, 2, 1e9)]
+)
+def test_stationary_invalid_source_position_never_launches_helper(bridge, monkeypatch, position):
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run",
+        lambda *a, **kw: pytest.fail("Invalid position"),
+    )
+    with pytest.raises(DiagnosticError):
+        try_stationary_attack(
+            bridge[0],
+            bridge[1],
+            bridge[2],
+            GridPosition(52, 193, 340),
+            ApproachSettings(radius=200),
+            player_position=position,
+        )
 
 
 def test_native_attack_passes_search_area_and_same_instance_without_grid_route(bridge, monkeypatch):

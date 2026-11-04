@@ -34,7 +34,7 @@ def test_magic_actions_and_fallback_are_saved_per_mercenary_in_priority_order(tm
     store.save(updated)
     assert store.load(1) == updated
     payload = json.loads((tmp_path / "profile-1.json").read_text())
-    assert payload["schema_version"] == 4
+    assert payload["schema_version"] == 5
     assert [m["action"] for m in payload["mercenaries"]] == list(reversed(actions))
     assert payload["turn_execution_available"] is True
 
@@ -58,7 +58,7 @@ def test_legacy_profile_migrates_in_memory_without_rewriting_or_losing_settings(
     assert all(m.action == "basic" and m.fallback_basic for m in loaded.mercenaries)
     assert path.read_bytes() == saved
     store.save(loaded)
-    assert json.loads(path.read_bytes())["schema_version"] == 4
+    assert json.loads(path.read_bytes())["schema_version"] == 5
     assert store.load(1) == loaded
 
 
@@ -129,6 +129,55 @@ def test_hunt_options_are_saved_per_profile_with_mercenary_order(tmp_path):
     store.save(updated)
     assert store.load(2) == updated
     assert store.load(1) == BotProfile.default(1)
+
+
+@pytest.mark.parametrize("mode", ["native", "stationary", "nearby"])
+def test_encounter_mode_is_saved_with_delay_and_mercenaries(tmp_path, mode):
+    profile = replace(
+        BotProfile.default(2), world_attack_mode=mode, search_radius=200, attack_delay_seconds=1.5
+    )
+    store = ProfileStore(tmp_path)
+    store.save(profile)
+    assert store.load(2) == profile
+
+
+def test_schema_four_preserves_previous_hunt_settings_and_defaults_to_native_pursuit(tmp_path):
+    payload = replace(
+        BotProfile.default(1),
+        search_radius=200,
+        collect_remaining_loot=True,
+        attack_delay_seconds=3,
+    ).summary()
+    payload["schema_version"] = 4
+    del payload["world_attack_mode"]
+    saved = json.dumps(payload).encode()
+    path = tmp_path / "profile-1.json"
+    path.write_bytes(saved)
+    loaded = ProfileStore(tmp_path).load(1)
+    assert loaded.world_attack_mode == "native" and loaded.search_radius == 200
+    assert loaded.collect_remaining_loot and loaded.attack_delay_seconds == 3
+    assert path.read_bytes() == saved
+
+
+@pytest.mark.parametrize("mode", [None, "", "teleport", 1, True, []])
+def test_invalid_encounter_mode_cannot_overwrite_saved_profile(tmp_path, mode):
+    store = ProfileStore(tmp_path)
+    original = BotProfile.default(1)
+    store.save(original)
+    with pytest.raises(DiagnosticError):
+        store.save(replace(original, world_attack_mode=mode))
+    assert store.load(1) == original
+
+
+def test_missing_mode_in_new_schema_is_rejected_without_resetting_profile(tmp_path):
+    payload = BotProfile.default(1).summary()
+    del payload["world_attack_mode"]
+    saved = json.dumps(payload).encode()
+    path = tmp_path / "profile-1.json"
+    path.write_bytes(saved)
+    with pytest.raises(DiagnosticError):
+        ProfileStore(tmp_path).load(1)
+    assert path.read_bytes() == saved
 
 
 def test_schema_three_keeps_team_settings_and_uses_safe_hunt_defaults_without_rewriting(tmp_path):

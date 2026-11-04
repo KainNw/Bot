@@ -535,6 +535,7 @@ def test_out_of_range_wait_reports_distance_without_changing_native_limit():
         "excluded_previously_engaged": 0,
         "automatic_approach": False,
         "native_attack": False,
+        "stationary_attack": False,
         "search_radius": None,
     }
     assert engine.running and engine.attempts == 0

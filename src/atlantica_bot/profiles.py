@@ -19,6 +19,12 @@ ACTION_LABELS = {
     "T": "Magia T",
 }
 
+WORLD_ATTACK_LABELS = {
+    "native": "Perseguir y atacar (nativo)",
+    "stationary": "Atacar desde mi posición (experimental)",
+    "nearby": "Atacar solo a mobs en alcance",
+}
+
 
 def member_label(slot: int) -> str:
     return "Main (1)" if slot == 1 else f"Mercenario {slot}"
@@ -49,6 +55,7 @@ class BotProfile:
     attack_delay_seconds: float = 0.0
     search_radius: int = 60
     collect_remaining_loot: bool = False
+    world_attack_mode: str = "native"
 
     def validate(self) -> None:
         if type(self.number) is not int or self.number not in (1, 2, 3):
@@ -68,6 +75,11 @@ class BotProfile:
             raise DiagnosticError("El radio de búsqueda debe estar entre 5 y 500 casillas.")
         if type(self.collect_remaining_loot) is not bool:
             raise DiagnosticError("Revisa la opción de recogida de botín restante.")
+        if (
+            type(self.world_attack_mode) is not str
+            or self.world_attack_mode not in WORLD_ATTACK_LABELS
+        ):
+            raise DiagnosticError("Elige el modo de ataque al mob.")
         if (
             len(self.mercenaries) != 9
             or any(type(merc.slot) is not int for merc in self.mercenaries)
@@ -93,13 +105,14 @@ class BotProfile:
 
     def summary(self) -> dict:
         return {
-            "schema_version": 4,
+            "schema_version": 5,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "magic_first_turn_only": self.magic_first_turn_only,
             "attack_delay_seconds": self.attack_delay_seconds,
             "search_radius": self.search_radius,
             "collect_remaining_loot": self.collect_remaining_loot,
+            "world_attack_mode": self.world_attack_mode,
             "turn_execution_available": True,
         }
 
@@ -138,7 +151,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2, 3, 4)
+                or payload["schema_version"] not in (1, 2, 3, 4, 5)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -161,6 +174,7 @@ class ProfileStore:
                 payload["attack_delay_seconds"] if payload["schema_version"] >= 4 else 0.0,
                 payload["search_radius"] if payload["schema_version"] >= 4 else 60,
                 payload["collect_remaining_loot"] if payload["schema_version"] >= 4 else False,
+                payload["world_attack_mode"] if payload["schema_version"] >= 5 else "native",
             )
             profile.validate()
             return profile

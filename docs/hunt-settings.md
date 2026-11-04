@@ -5,6 +5,18 @@ valores de la misma conexión. Guarda las opciones en el perfil elegido (1–3),
 junto con sus mercenarios y orden. Iniciar también guarda los valores válidos.
 Durante la ejecución quedan fijos; para cambiarlos pulsa **Parar bot**.
 
+Desde 0.14.0, **Modo de ataque al mob** permite elegir:
+
+- **Perseguir y atacar (nativo)**: comportamiento habitual, con desplazamiento del cliente.
+- **Atacar desde mi posición (experimental)**: selecciona el más cercano por distancia
+  3D dentro del radio y solicita combate sin enviar acercamiento, aunque esté fuera
+  del umbral habitual. La aceptación del servidor sigue pendiente de prueba.
+- **Atacar solo a mobs en alcance**: solicita ataques dentro del umbral nativo y espera
+  si no hay candidatos disponibles.
+
+Se conserva el modo nativo al cargar perfiles anteriores. El modo nuevo se guarda
+con el perfil en esquema 5. Consulta [su uso y límites](stationary-attack.md).
+
 ## Espera antes del encuentro
 
 Elige 0, 1, 3 o escribe un número entre 0 y 60 segundos; admite decimales con punto

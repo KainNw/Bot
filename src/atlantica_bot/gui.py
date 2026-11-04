@@ -23,6 +23,7 @@ from .overview import OverviewWindow
 from .profiles import (
     ACTION_LABELS,
     TARGET_LABELS,
+    WORLD_ATTACK_LABELS,
     BotProfile,
     Mercenary,
     ProfileStore,
@@ -70,7 +71,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.detector_status = tk.StringVar(
                 value="Detector de combate: conecta con el cliente."
             )
-            self.native_attack_enabled = tk.BooleanVar(value=True)
+            self.world_attack_mode = tk.StringVar(value=WORLD_ATTACK_LABELS["native"])
             self.turns_enabled = tk.BooleanVar(value=False)
             self.team_status = tk.StringVar(value="Conecta para consultar el equipo.")
             self.search_radius = tk.StringVar(value="60")
@@ -171,12 +172,17 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.turns_check.pack(anchor="w", pady=4)
             row = ttk.Frame(self.hunt_tab)
             row.pack(fill="x", pady=6)
-            self.native_attack_check = ttk.Checkbutton(
+            ttk.Label(row, text="Modo de ataque al mob:").pack(side="left", padx=(0, 8))
+            self.attack_mode_list = ttk.Combobox(
                 row,
-                text="Ataque nativo por radio (experimental)",
-                variable=self.native_attack_enabled,
+                textvariable=self.world_attack_mode,
+                values=tuple(WORLD_ATTACK_LABELS.values()),
+                state="readonly",
+                width=43,
             )
-            self.native_attack_check.pack(side="left")
+            self.attack_mode_list.pack(side="left")
+            row = ttk.Frame(self.hunt_tab)
+            row.pack(fill="x", pady=6)
             ttk.Label(row, text="Radio de búsqueda (casillas):").pack(side="left", padx=(12, 4))
             self.radius_entry = ttk.Spinbox(
                 row,
@@ -193,7 +199,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ttk.Label(
                 self.hunt_tab,
                 text="Radio de 5 a 500 casillas desde el punto de inicio. "
-                "El cliente persigue al mob y establece el alcance del golpe. "
+                "Desde mi posición: elige el más cercano y solicita combate "
+                "sin ordenar acercamiento. El servidor debe aceptar la distancia. "
+                "Perseguir y atacar conserva el recorrido nativo. "
                 "Solo se detectan mobs cargados por el juego.",
                 wraplength=760,
             ).pack(anchor="w")
@@ -442,6 +450,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     collect_loot=self.collect_loot,
                     on_save=self.save_hunt_options,
                     on_calibrate=self.calibrate_radius,
+                    world_attack_mode=self.world_attack_mode,
                 )
             self.refresh_team()
             self.sync_overview_controls()
@@ -585,6 +594,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             active = self.bot_worker is not None or self.closing or self.calibrating
             self.window_list.configure(state="disabled" if active else "readonly")
             self.profile_list.configure(state="disabled" if active else "readonly")
+            self.attack_mode_list.configure(state="disabled" if active else "readonly")
             for button in (
                 self.list_button,
                 self.pick_button,
@@ -592,7 +602,6 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.connect_button,
                 self.pid_entry,
                 self.profile_button,
-                self.native_attack_check,
                 self.turns_check,
                 self.radius_entry,
                 self.radius_calibrate_button,
@@ -661,7 +670,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     self.detector,
                     profile,
                     ApproachSettings(False, profile.search_radius),
-                    native_attack=self.native_attack_enabled.get(),
+                    native_attack=profile.world_attack_mode == "native",
                     execute_turns=self.turns_enabled.get(),
                     battle_ledger=self.battle_trials,
                 )
@@ -732,6 +741,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.attack_delay.set(f"{self.profile.attack_delay_seconds:g}")
                 self.search_radius.set(str(self.profile.search_radius))
                 self.collect_loot.set(self.profile.collect_remaining_loot)
+                self.world_attack_mode.set(WORLD_ATTACK_LABELS[self.profile.world_attack_mode])
                 count = sum(merc.enabled for merc in self.profile.mercenaries)
                 magic_count = sum(
                     merc.enabled and merc.action != "basic" for merc in self.profile.mercenaries
@@ -766,6 +776,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 attack_delay_seconds=delay,
                 search_radius=radius,
                 collect_remaining_loot=self.collect_loot.get(),
+                world_attack_mode=next(
+                    (
+                        key
+                        for key, label in WORLD_ATTACK_LABELS.items()
+                        if label == self.world_attack_mode.get()
+                    ),
+                    None,
+                ),
             )
             updated.validate()
             return updated
@@ -1893,12 +1911,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.attack_delay.set("1,5")
         panel.search_radius.set("350")
         panel.collect_loot.set(True)
+        panel.world_attack_mode.set(WORLD_ATTACK_LABELS["stationary"])
         configured = panel.configured_profile(BotProfile.default(1))
         assert configured.attack_delay_seconds == 1.5 and configured.search_radius == 350
         assert configured.collect_remaining_loot
+        assert configured.world_attack_mode == "stationary"
+        assert overview.attack_mode_list.get() == WORLD_ATTACK_LABELS["stationary"]
         assert overview.hunt_controls[0].get() == "1,5"
         overview.set_controls(start=False, stop=True, editable=False)
         assert all(str(widget.cget("state")) == "disabled" for widget in overview.hunt_controls)
+        assert str(overview.attack_mode_list.cget("state")) == "disabled"
         overview.set_controls(start=False, stop=False, editable=True)
         panel.load_profile()
         assert overview.cells[1]["member"].cget("text") == "Main (1)"
@@ -1928,6 +1950,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             assert last.winfo_rooty() + last.winfo_height() <= (
                 overview.tabs.winfo_rooty() + overview.tabs.winfo_height()
             )
+        overview.tabs.select(2)
+        panel.root.update_idletasks()
+        last = overview.hunt_controls[-1]
+        assert last.winfo_rooty() + last.winfo_height() <= (
+            overview.tabs.winfo_rooty() + overview.tabs.winfo_height()
+        )
         overview.tabs.select(0)
         panel.toggle_advanced()
         panel.edit_profile()

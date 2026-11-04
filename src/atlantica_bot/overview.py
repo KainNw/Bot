@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
-from .profiles import member_label
+from .profiles import WORLD_ATTACK_LABELS, member_label
 
 BACKGROUND = "#25272d"
 SURFACE = "#30333b"
@@ -35,6 +35,7 @@ class OverviewWindow:
         collect_loot,
         on_save: Callable,
         on_calibrate: Callable,
+        world_attack_mode,
     ):
         import tkinter as tk
         from tkinter import ttk
@@ -45,8 +46,8 @@ class OverviewWindow:
         self.window = tk.Toplevel(parent)
         self.window.title("Atlantica — Vista general")
         self.window.configure(background=BACKGROUND)
-        self.window.minsize(770, 485)
-        self.window.geometry("840x520")
+        self.window.minsize(800, 570)
+        self.window.geometry("860x610")
         outer = tk.Frame(self.window, background=BACKGROUND, padx=14, pady=12)
         outer.pack(fill="both", expand=True)
         heading = tk.Frame(outer, background=BACKGROUND)
@@ -88,6 +89,15 @@ class OverviewWindow:
         delay = ttk.Combobox(hunting, textvariable=attack_delay, values=("0", "1", "3"), width=8)
         delay.pack(anchor="w")
         self.hunt_controls.append(delay)
+        option_label("Modo de ataque al mob:")
+        self.attack_mode_list = ttk.Combobox(
+            hunting,
+            textvariable=world_attack_mode,
+            values=tuple(WORLD_ATTACK_LABELS.values()),
+            state="readonly",
+            width=43,
+        )
+        self.attack_mode_list.pack(anchor="w")
         option_label("Radio de búsqueda (5–500 casillas):")
         radius = ttk.Spinbox(
             hunting,
@@ -99,7 +109,8 @@ class OverviewWindow:
         radius.pack(anchor="w")
         self.hunt_controls.append(radius)
         option_label(
-            "El cliente persigue al mob hasta su alcance normal. La espera no retrasa la magia Q."
+            "Desde mi posición solicita combate sin ordenar movimiento; la aceptación a distancia "
+            "depende del servidor. Perseguir y atacar usa el recorrido nativo."
         )
         loot = tk.Checkbutton(
             hunting,
@@ -305,6 +316,7 @@ class OverviewWindow:
         self.identity_label.configure(foreground=GREEN if automatic else GOLD)
 
     def set_controls(self, *, start: bool, stop: bool, editable: bool) -> None:
+        self.attack_mode_list.configure(state="readonly" if editable else "disabled")
         for widget in self.hunt_controls:
             widget.configure(state="normal" if editable else "disabled")
         self.start_button.configure(state="normal" if start else "disabled")

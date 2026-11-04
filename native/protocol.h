@@ -5,11 +5,11 @@
 
 constexpr uint32_t kMagic = 0x414F5031;
 constexpr uint32_t kMaxSearchRadius = 500;
-constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.8";
+constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.9";
 enum Operation : uint32_t {
     Probe = 0, Attack = 1, Approach = 2, StopMovement = 3,
     NativeAttack = 4, StopNativePursuit = 5, BattleBasic = 6,
-    BattleSelect = 7, BattleMagic = 8, BattleLoot = 9
+    BattleSelect = 7, BattleMagic = 8, BattleLoot = 9, StationaryAttack = 10
 };
 enum Result : uint32_t {
     Verified = 0, Queued = 1, Blocked = 2, OutOfRange = 3, InvalidScene = 4,
@@ -39,7 +39,7 @@ struct SharedCommand {
     int32_t origin_map, origin_x, origin_y;
     uint32_t radius;
     uint32_t route_active, route_moving;
-    float world_goal[3];
+    float world_goal[3]; // Destination for pursuit; expected source position for StationaryAttack.
     uint32_t battle_manager, battle_context, battle_client, turn_number, turn_tick;
     uint32_t mercenary, target_mercenary, source_unit, target_unit;
     uint32_t actor_identity[3], battle_error[4];

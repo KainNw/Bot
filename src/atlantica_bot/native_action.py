@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -161,6 +163,41 @@ def stop_native_pursuit(
     return _request(session, window, None, operation=5, pursuit=pursuit)
 
 
+def try_stationary_attack(
+    session: GameSession,
+    window: ClientWindow,
+    candidate: Candidate,
+    origin: GridPosition,
+    settings: ApproachSettings,
+    *,
+    player_position: tuple[float, float, float],
+    cancellation: Cancellation | None = None,
+) -> dict:
+    if not settings.contains(origin, GridPosition(candidate.map_id, candidate.x, candidate.y)):
+        raise DiagnosticError("El objetivo está fuera del radio de búsqueda configurado.")
+    if (
+        not isinstance(player_position, tuple)
+        or len(player_position) != 3
+        or any(
+            type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 1e7
+            for v in player_position
+        )
+    ):
+        raise DiagnosticError(
+            "Actualiza la posición 3D del personaje antes de atacar desde el sitio."
+        )
+    return _request(
+        session,
+        window,
+        candidate,
+        operation=10,
+        origin=origin,
+        radius=settings.radius,
+        stationary_position=player_position,
+        cancellation=cancellation,
+    )
+
+
 def try_battle_basic(session: GameSession, window: ClientWindow, trial: BattleTrial) -> dict:
     if trial.action != "basic":
         raise DiagnosticError("La prueba de básico no admite otra acción.")
@@ -208,6 +245,7 @@ def _request(
     route: NavigationState | None = None,
     pursuit: NativePursuit | None = None,
     battle: BattleTrial | None = None,
+    stationary_position: tuple[float, float, float] | None = None,
 ) -> dict:
     with BotLease(session.process.pid):
         signal = cancellation or Cancellation(session.process.pid)
@@ -223,6 +261,7 @@ def _request(
                 route=route,
                 pursuit=pursuit,
                 battle=battle,
+                stationary_position=stationary_position,
             )
         finally:
             if cancellation is None:
@@ -244,6 +283,7 @@ def _try_action(
     route: NavigationState | None,
     pursuit: NativePursuit | None,
     battle: BattleTrial | None,
+    stationary_position: tuple[float, float, float] | None,
 ) -> dict:
     """Issue one explicit request on the selected window's thread; never retry or move input."""
     if sys.platform != "win32":
@@ -279,6 +319,7 @@ def _try_action(
             "--battle-select",
             "--battle-magic",
             "--battle-loot",
+            "--stationary-attack",
         )[operation],
         "--pid",
         str(window.pid),
@@ -357,7 +398,7 @@ def _try_action(
                 str(route.player_address),
             )
         )
-    elif operation == 4:
+    elif operation in (4, 10):
         if (
             origin is None
             or candidate is None
@@ -378,6 +419,13 @@ def _try_action(
                 str(radius),
             )
         )
+        if operation == 10:
+            if stationary_position is None:
+                raise DiagnosticError(
+                    "Falta la posición del personaje para el ataque sin acercamiento."
+                )
+            for axis, value in zip("xyz", stationary_position, strict=True):
+                args.extend((f"--player-world-{axis}", str(value)))
     if operation in (4, 5) and pursuit is not None:
         NativePursuit.from_report(pursuit.summary())
         args.extend(
@@ -440,6 +488,21 @@ def _try_action(
         code = report["status"]
         if type(code) is not int or code not in RESULTS or type(report["thread_id"]) is not int:
             raise ValueError("Respuesta no válida")
+        if operation == 10:
+            if code not in {1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18, 20}:
+                raise ValueError("Resultado de otra operación")
+            position = report["source_position"]
+            if (
+                not isinstance(position, list)
+                or len(position) != 3
+                or any(
+                    type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 1e7
+                    for v in position
+                )
+            ):
+                raise ValueError("Posición no válida")
+            if struct.pack("<3f", *position) != struct.pack("<3f", *stationary_position):
+                raise ValueError("Respuesta de otra posición")
         if operation in (6, 7, 8, 9):
             outcomes = {6: {26, 30}, 7: {31, 33}, 8: {32, 33, 34, 35}, 9: {33, 36, 37}}[operation]
             if code not in {4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 27, 28, 29} | outcomes:
@@ -486,6 +549,8 @@ def _try_action(
             if operation == 4
             else {23, 24, 25}
             if operation == 5
+            else {17, 18, 20}
+            if operation == 10
             else {20}
         ):
             raise ValueError("Resultado de otra operación")
@@ -527,7 +592,18 @@ def _try_action(
         "battle_select",
         "battle_magic",
         "battle_loot",
+        "stationary_attack",
     )[operation]
+    if operation == 10:
+        report["stationary"] = {
+            "requested_position": list(stationary_position),
+            "movement_requested": False,
+            "server_range_acceptance_verified": False,
+        }
+        if code == 1:
+            report["message"] = (
+                "Solicitud directa encolada sin acercamiento; esperando confirmar combate."
+            )
     if operation in (6, 7, 8, 9):
         report["attack_confirmed"] = False
         if operation == 9:
