@@ -202,3 +202,41 @@ establece que el campo se reescribiera: esa hipótesis requiere observación.
 antes y después, y termina la prueba si ve un cambio de escala. Conserva la
 restauración y no insiste en aplicar el valor. Esto permite investigar la
 persistencia sin subir el ajuste ni sustituir los relojes de Windows.
+
+## Prueba 0.16.1: persistencia observada durante una magia
+
+El informe posterior de PID 21076 contiene 46 muestras válidas, desde 0 hasta
+9906 ms. Todas leen 1,4500000476837158 en gestor y gráfico, y 1,00 en el mapa.
+El selector sigue en 1 y la fase en 3. La petición de restauración ocurrió a
+10110 ms y su respuesta, estado 39, a 10188 ms, con ambos campos de nuevo en
+1,40. No hubo excepciones. El usuario confirmó que lanzó magia dentro de esos
+10 segundos. La prueba no registra inicio/final de esa animación ni permite
+medir su velocidad; tampoco demuestra constancia entre muestras.
+
+El contador de `owner+BA4` avanzó 9906 mientras el tiempo del panel avanzó
+9906 ms entre primera y última muestra. No se modificó ese contador ni se
+atribuye a este dato una medición de FPS. El turno publicado permaneció en 0;
+eso no contradice la acción manual confirmada por el usuario.
+
+El aumento nominal 1,40 → 1,45 es de aproximadamente 3,6 %. Incluso 1,50 sería
+solo un 7,1 % respecto a 1,40, no 1,5×. El umbral observado de 1,50 se conserva;
+esta ruta no proporciona los multiplicadores solicitados 1,5×–4× dentro de ese
+margen. No se presenta como una solución de aceleración comprobada.
+
+La revisión encontró otro paso concreto: `00A46DF4` usa el objeto `this+120`
+y llama a `00A1A82E` para actualizarlo. `00A46D9E` y `00A46DC1` resuelven registros
+mediante `00A19CC0` y consultan miembros `+44`/`+2C`. Los bloques aportados no
+incluyen esos destinos. Se comprobó que el ejecutable en disco no contiene
+instrucciones equivalentes al código descifrado; no se usan sus bytes protegidos
+para deducir el comportamiento de las funciones que faltan.
+
+0.16.3 añade un bloque fijo de solo lectura `00A19000/3000`, que contiene los dos
+destinos y espacio posterior para su inspección. Las regiones adicionales de
+velocidad suman 64 KiB. Ambos exportadores lo incluyen con tamaño y SHA-256;
+una región inaccesible queda anotada según el mecanismo anterior. No ejecuta
+esas funciones ni cambia sus instrucciones, relojes, turnos o controles.
+
+Para obtenerlo, usa **Exportar combate** en una batalla con el bot detenido y
+Auto Battle apagado. No hace falta volver a aplicar 1,45 ni repetir la magia.
+Este bloque permitirá seguir la actualización del objeto gráfico y determinar
+qué avance consume el campo, sin deducir una aceleración visual de su valor.

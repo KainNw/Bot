@@ -402,6 +402,7 @@ class SpeedExperiment:
         self.lease.__enter__()
         try:
             plan, snapshot = prepare_speed_plan(self.session)
+            self.report.pop("preview_error", None)
             self.plan = plan
             self.detector = CombatDetector(plan.pid, plan.creation_time, "local_context")
             self.report.update(plan=asdict(plan), before=snapshot)

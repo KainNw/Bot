@@ -1547,6 +1547,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     scope()
                     _, snapshot = prepare_speed_plan(session)
                     experiment.report["preview"] = snapshot
+                    experiment.report.pop("preview_error", None)
                     status.set(
                         "Lectura válida: escala original 1,40 y campos separados del mapa. "
                         "No se ha aplicado ningún cambio."

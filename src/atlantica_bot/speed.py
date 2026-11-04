@@ -17,6 +17,9 @@ SPEED_CODE_BLOCKS = (
     ("graphics-rate-backend", 0x00A6F000, 0x2000),
     ("graphics-shared-helper", 0x005FA000, 0x1000),
     ("graphics-rate-implementation", 0x00A46000, 0x2000),
+    # 00A46D9E/00A46DC1 resolve animation records through 00A19CC0;
+    # 00A46DF4 delegates updates of the rate-bearing object to 00A1A82E.
+    ("graphics-animation-update", 0x00A19000, 0x3000),
 )
 SPEED_READONLY_BLOCKS = (
     ("battle-rate-common-constants", 0x042C1000, 0x1000),

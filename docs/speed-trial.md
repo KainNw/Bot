@@ -1,4 +1,4 @@
-# Prueba manual de escala de combate — 0.16.1
+# Prueba manual de escala de combate
 
 La investigación identificó el getter y el setter finales de la compilación
 compatible. `00A46DEA` toma el puntero en `objeto+120`, carga su float `+50` y
@@ -20,6 +20,15 @@ la escala entre ellas. 0.16.1 añade seguimiento durante la misma prueba para
 distinguir una escala que el cliente reemplaza de una que se mantiene en las
 muestras sin efecto visible. No aumenta el valor ni repite escrituras para
 contrarrestar cambios del cliente.
+
+El informe posterior de 0.16.1 contiene 46 muestras coincidentes durante
+9,906 s, restauración confirmada a los 10,188 s y una magia manual confirmada
+por el usuario dentro del intervalo. Esto comprueba el valor en las muestras;
+no mide la animación ni confirma los multiplicadores solicitados. 0.16.3 amplía
+la captura del código de actualización gráfica para seguir esa investigación,
+sin aumentar la escala. Véase [el análisis actualizado](battle-speed.md).
+También retira un `preview_error` anterior cuando una nueva preparación o lectura
+previa tiene éxito, para que un mensaje antiguo no acompañe una prueba válida.
 
 ## Uso
 
