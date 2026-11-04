@@ -1,7 +1,14 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.16.1** registra lecturas durante la
+con Auto Battle apagado. La versión **0.16.2** conserva la vigilancia de un ataque
+pendiente después de 30 segundos, bloquea nuevos ataques al mapa y procesa el
+combate si se observa más tarde. Mantiene el PID conectado y el ejecutor del
+perfil disponible; no activa turnos si el usuario los dejó deshabilitados.
+**Parar bot** sigue deteniendo el trabajador. Una solicitud todavía sin confirmar
+conserva su revisión al detenerlo explícitamente. Consulta [recuperación](docs/recovery.md).
+
+Conserva 0.16.1, que registra lecturas durante la
 **prueba manual de velocidad en combate**, de escala 1,40 a 1,45 durante unos
 10 segundos. El usuario probó 0.16.0: los campos cambiaron y se restauraron,
 pero no observó una diferencia visual. El seguimiento permite comprobar si el
@@ -32,8 +39,8 @@ Conserva 0.15.1, que mantiene la conexión durante cambios
 transitorios de estado y permite caminar en **Atacar desde mi posición** sin la
 parada inmediata que exigía reconectar. Al buscar, pausa hasta quedar quieto y
 toma el punto nuevo como centro. Si ya envió un ataque, espera el combate pendiente
-sin repetirlo ni alargar su plazo; un resultado que siga sin confirmarse conserva
-su aviso y requiere revisión. Consulta [ataque desde la posición](docs/stationary-attack.md).
+sin repetirlo. Desde 0.16.2, el plazo original pasa a ser un aviso y continúa
+vigilando ese mismo envío. Consulta [ataque desde la posición](docs/stationary-attack.md).
 
 **Exportar combate** incorpora las funciones y valores observados al investigar
 la escala de animaciones. Solo los lee: aún no hay un control de velocidad
@@ -155,7 +162,8 @@ El ciclo selecciona candidatos en el radio configurado. Si están fuera del alca
 Espera dos observaciones de combate
 según el detector calibrado antes de permitir otra. Al volver al mismo mapa, exige
 una posición estable durante dos segundos. Si no observa el combate en treinta
-segundos, se detiene sin repetir el envío. El detector se sigue vinculando a cada
+segundos, avisa y conserva la espera sin repetir el envío ni elegir otro mob.
+Si el combate llega tarde, ejecuta el perfil habilitado. El detector se sigue vinculando a cada
 instancia. Los objetivos de combates
 confirmados quedan excluidos mientras su identidad siga en la colección activa,
 aunque cambien de puesto o queden fuera de los candidatos filtrados. Una consulta

@@ -46,12 +46,16 @@ El umbral de alcance leído sigue apareciendo en el diagnóstico, sin bloquear l
 selección directa por esa distancia. El IPC es versión 9, con 408 bytes.
 
 Una respuesta de cola no demuestra aceptación del servidor. Se esperan dos
-observaciones de combate. Si no aparecen en 30 s, se detiene sin repetir la solicitud.
+observaciones de combate. Desde 0.16.2, si no aparecen en 30 s, avisa de la demora
+y sigue vigilando esa misma solicitud sin enviar otra ni exigir reconexión solo
+por el tiempo transcurrido.
 En 0.15.1, si el personaje se mueve después del envío mientras todavía se observa
 mapa, conserva la conexión y espera ese combate pendiente sin repetir el ataque.
-El movimiento no amplía el plazo original. Si llega el combate, lo procesa y
-después retoma la búsqueda desde la nueva posición estable. Si vence el plazo
-sin confirmación, sigue deteniéndose con el aviso de resultado pendiente. No
+El movimiento no reinicia el plazo del aviso. Si llega el combate, lo procesa y
+después retoma la búsqueda desde la nueva posición estable. La espera prolongada
+conserva el envío y no permite seleccionar otro objetivo. **Parar bot** detiene
+el trabajador y mantiene el aviso de resultado pendiente si aún no se observó
+combate. No
 cancela ni corrige movimientos manuales. El juego o el servidor podrían rechazar
 la distancia o producir un movimiento; se debe observar el resultado real.
 

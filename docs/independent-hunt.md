@@ -46,8 +46,13 @@ solo en combate y desaparece al regresar. Los demás valores se tratan como desc
 solicitud. No confirma victoria, daño o finalización de turnos. El ciclo cercano
 está observado en dos encuentros; el movimiento nuevo requiere su propia prueba.
 
-Si no se observa el combate en treinta segundos, se detiene y exige comprobar el
-cliente/reconectar antes de otra solicitud. Los rechazos de objetivo, cambios de
+Desde 0.16.2, si no se observa el combate en treinta segundos, mantiene
+**Combate pendiente** y continúa vigilando ese envío, sin elegir otro objetivo ni
+exigir reconexión solo por el tiempo transcurrido. Dos observaciones de combate
+permiten procesar la batalla y, al regresar a un mapa estable, volver a buscar.
+Si no aparece el combate, permanece esperando hasta que el usuario pare el bot o
+cambie una condición que exija detenerlo. La cola vacía no confirma un rechazo.
+Los rechazos de objetivo, cambios de
 identidad y movimientos de rango tienen una espera antes de probar de nuevo con
 datos frescos. Nunca se reenvía una solicitud cuyo resultado sea incierto.
 

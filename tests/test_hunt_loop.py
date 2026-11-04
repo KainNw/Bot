@@ -200,18 +200,19 @@ def test_engaged_identity_is_excluded_across_slot_reassignment_and_filtered_scan
     assert engine.range_diagnostic["excluded_previously_engaged"] == 1
 
 
-def test_missing_battle_transition_stops_without_retry():
+def test_missing_battle_transition_keeps_watching_without_retry_or_reconnect():
     engine = ready_engine()
     engine.select(view(NEAR), 2)
     engine.record(NEAR, report(), 2.1)
     assert not engine.observe(observation(3), 5)
     assert engine.last_attack["battle_confirmed"] is False
     assert not engine.observe(observation(), 32.2)
-    assert not engine.running and engine.needs_reconnect
+    assert engine.running and not engine.needs_reconnect
+    assert engine.phase == "waiting_late_battle" and engine.battle_wait_delayed
     assert engine.queued == 1 and engine.select(view(NEAR), 30) is None
 
 
-def test_drained_queue_is_not_treated_as_battle_confirmation_and_timeout_keeps_target_history():
+def test_drained_queue_is_not_confirmation_and_delayed_wait_keeps_pending_target():
     engine = ready_engine()
     engine.select(view(NEAR), 2)
     engine.record(NEAR, report(), 2.1)
@@ -221,12 +222,93 @@ def test_drained_queue_is_not_treated_as_battle_confirmation_and_timeout_keeps_t
     assert engine.select(view(NEAR), 4) is None
     engine.observe(observation(), 32.2)
     summary = engine.summary()
-    assert not summary["running"] and summary["needs_reconnect"]
+    assert summary["running"] and not summary["needs_reconnect"]
     assert summary["pending_attack"]["target"]["identity"] == NEAR.identity
     assert summary["transport"]["first"]["queued_bytes"] == 25
     assert summary["transport"]["recent"][-1]["queued_bytes"] == 0
-    assert any(event["event"] == "attack_not_confirmed" for event in summary["events"])
+    assert any(event["event"] == "battle_confirmation_delayed" for event in summary["events"])
+    assert summary["pending_attack"]["new_world_attacks_blocked"]
     assert summary["queued"] == 1
+
+
+def test_delayed_battle_is_confirmed_once_then_search_resumes_after_stable_map():
+    engine = ready_engine()
+    engine.select(view(NEAR), 2)
+    engine.record(NEAR, report(), 2.1)
+    for now in (32.2, 40, 90, 120):
+        assert not engine.observe(observation(), now)
+        assert engine.select(view(NEAR, FAR), now) is None
+        assert engine.attempts == engine.queued == 1
+    assert engine.delayed_battle_requests == 1
+    assert sum(e["event"] == "battle_confirmation_delayed" for e in engine.events) == 1
+    assert not engine.observe(observation(active=True), 121)
+    assert engine.pending_target == NEAR and not engine.battles
+    assert not engine.observe(observation(active=True), 121.25)
+    assert not engine.observe(observation(active=True), 121.5)
+    assert engine.phase == "battle" and engine.late_battles_observed == 1
+    assert engine.last_attack["confirmation_delayed"]
+    assert engine.last_attack["seconds_to_observed_battle"] == 119.15
+    assert engine.deadline is None and engine.pending_target is None
+    assert not engine.needs_reconnect and not engine.battle_wait_delayed
+    assert not engine.observe(observation(), 130)
+    assert engine.observe(observation(), 132)
+    fresh = replace(NEAR, identity=(12053, 123, 0), slot=12)
+    assert engine.select(view(NEAR, fresh), 132) == fresh
+
+
+def test_transient_battle_sample_does_not_release_a_delayed_pending_request():
+    engine = ready_engine()
+    engine.record(NEAR, report(), 2.1)
+    engine.observe(observation(), 32.2)
+    engine.observe(observation(active=True), 40)
+    engine.observe(observation(), 40.25)
+    assert engine.running and engine.phase == "waiting_late_battle"
+    assert engine.battles == 0 and engine.pending_target == NEAR
+    assert engine.select(view(NEAR), 50) is None
+    assert engine.delayed_battle_requests == 1
+
+
+def test_first_observation_after_long_read_gap_can_confirm_a_late_battle():
+    engine = ready_engine()
+    engine.record(NEAR, report(), 2.1)
+    engine.observe(observation(active=True), 70)
+    engine.observe(observation(active=True), 70.25)
+    assert engine.running and engine.phase == "battle"
+    assert engine.delayed_battle_requests == engine.late_battles_observed == 1
+    assert engine.last_attack["confirmation_delayed"] and not engine.needs_reconnect
+
+
+@pytest.mark.parametrize(
+    "cause", ["manual_stop", "instance_changed", "native_active", "map_changed"]
+)
+def test_delayed_watch_still_stops_on_explicit_stop_or_changed_instance_or_map(cause):
+    engine = ready_engine()
+    engine.record(NEAR, report(), 2.1)
+    engine.observe(observation(), 32.2)
+    if cause == "manual_stop":
+        engine.stop("Parada solicitada")
+    else:
+        sample = (
+            observation(pid=200)
+            if cause == "instance_changed"
+            else observation(native=True)
+            if cause == "native_active"
+            else observation(player=GridPosition(53, 193, 340))
+        )
+        engine.observe(sample, 40)
+    assert not engine.running and engine.needs_reconnect
+    engine.observe(observation(active=True), 41)
+    engine.observe(observation(active=True), 41.25)
+    assert engine.battles == 0 and engine.queued == 1
+
+
+@pytest.mark.parametrize("code", [7, 9, 10, 11, 12, 14])
+def test_unknown_or_rejected_helper_result_is_never_converted_to_a_late_battle_watch(code):
+    engine = ready_engine()
+    engine.record(NEAR, report(code), 2.1)
+    assert not engine.running and engine.needs_reconnect
+    assert engine.deadline is None and not engine.battle_wait_delayed
+    assert not engine.observe(observation(active=True), 40)
 
 
 def test_transport_clock_does_not_evict_selection_and_battle_events():
@@ -484,6 +566,67 @@ def test_worker_dispatches_turns_only_when_enabled_and_never_scans_world_in_batt
     if execute_turns:
         assert worker.engine.summary()["combat"]["queued"] == 1
         assert len(worker.engine.summary()["combat"]["roster"]) == 9
+
+
+@pytest.mark.parametrize("mode", ["nearby", "native", "stationary"])
+@pytest.mark.parametrize("execute_turns", [False, True])
+def test_worker_handles_late_battle_without_resending_world_attack_or_losing_pid(
+    turn_frame, monkeypatch, mode, execute_turns
+):
+    session = SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100))
+    window = ClientWindow(100, 0x1234, "Atlantica", 1234)
+    profile = replace(BotProfile.default(1), world_attack_mode=mode)
+    worker = HuntWorker(
+        session,
+        window,
+        DETECTOR,
+        profile,
+        native_attack=mode == "native",
+        execute_turns=execute_turns,
+    )
+    worker.engine.observe(observation(), 0)
+    worker.engine.observe(observation(), 2)
+    assert worker.engine.select(view(NEAR), 2) == NEAR
+    worker.engine.record(NEAR, report(), 2.1)
+    worker.seen_map = True
+    signal = worker.cancellation = object()
+    clock, scenes, calls = [33.0], [observation()], []
+    monkeypatch.setattr("atlantica_bot.hunt_loop.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("atlantica_bot.hunt_loop.observe_scene", lambda *a, **k: scenes[0])
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.observe_transport",
+        lambda *a: {"available": True, "queued_bytes": 0},
+    )
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.scan_world", lambda *a, **k: pytest.fail("Pending world attack")
+    )
+    for name in ("try_attack", "try_native_attack", "try_stationary_attack"):
+        monkeypatch.setattr(
+            f"atlantica_bot.hunt_loop.{name}", lambda *a, **k: pytest.fail("Duplicate world attack")
+        )
+    monkeypatch.setattr("atlantica_bot.hunt_loop.read_battle_frame", lambda _: turn_frame)
+
+    def send(selected_session, selected_window, trial, *, cancellation):
+        assert selected_session is session and selected_window is window
+        assert cancellation is signal
+        calls.append(trial)
+        return {"pid": 100, "operation": trial.operation, "status": 26}
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.try_battle_action", send)
+    worker._iteration()
+    assert worker.engine.phase == "waiting_late_battle" and not calls
+    scenes[0], clock[0] = observation(active=True), 45
+    worker._iteration()
+    assert worker.engine.phase == "confirming_battle" and not calls
+    clock[0] = 45.25
+    worker._iteration()
+    clock[0] = 45.5
+    worker._iteration()
+    assert worker.engine.running and not worker.engine.needs_reconnect
+    assert worker.session is session and worker.window.pid == 100
+    assert worker.engine.phase == "battle" and worker.engine.late_battles_observed == 1
+    assert worker.engine.queued == worker.engine.attempts == 1
+    assert len(calls) == int(execute_turns)
 
 
 def test_battle_frame_race_to_map_does_not_dispatch_or_require_reconnection(monkeypatch):

@@ -1,10 +1,44 @@
-# Movimiento, combates recibidos y recuperación 0.12.1
+# Movimiento, combates recibidos y recuperación
 
 El usuario comunicó tres incidencias al probar varias ventanas: parar al caminar
 con un clic, falta de respuesta cuando un mob iniciaba combate durante lag y recogida
 variable del NeoACA. Confirmó que se movía el personaje, y que no podía reproducir
 fácilmente el caso con lag para obtener un registro. Las siguientes correcciones
 tienen pruebas automatizadas; la causa exacta de aquel episodio sigue sin confirmar.
+
+## Combate pendiente después de 30 segundos — 0.16.2
+
+Un registro de 0.16.0, PID 21076, mostró 85 combates observados y un ataque
+posterior sin transición durante 30,25 segundos. El trabajador se detuvo y marcó
+reconexión. El usuario encontró después al personaje en batalla sin órdenes del
+bot; no observó el instante de entrada. El encuentro anterior se había confirmado
+21,719 segundos después de su solicitud. Esto no demuestra la causa de la demora
+ni que el último mob aceptara el ataque, pero expone una limitación del cierre
+del trabajador al vencer el plazo: ya no puede atender una batalla posterior.
+
+0.16.2 trata esos 30 segundos como un aviso. Pasa a **Combate pendiente** y sigue
+observando con la misma reserva del PID. Bloquea nuevos ataques al mapa mientras
+conserve esa solicitud. No reintenta, no toma otro objetivo y no considera una
+cola vacía como aceptación o rechazo del servidor. Si no ve una batalla, sigue
+esperando; no abandona el envío por un nuevo límite de tiempo.
+
+Tras dos muestras consecutivas de combate retira la espera, registra el tiempo
+desde la solicitud y usa el ejecutor del perfil si **Ejecutar turnos** está
+habilitado. Espera el turno propio y conserva las comprobaciones de miembros,
+identidades y acciones. Al terminar el encuentro, exige el regreso estable antes
+de buscar otra vez. No prueba que la solicitud original causara ese encuentro.
+
+**Parar bot**, un cambio de proceso/mapa o la activación de Auto Battle conservan
+sus paradas. Una excepción o resultado de envío desconocido sigue deteniendo
+la ejecución: esta recuperación se aplica a ataques con copia confirmada en la
+cola. Parar explícitamente con ese envío pendiente sigue exigiendo revisión;
+no se borra el estado incierto para permitir otro envío.
+
+El estado incluye `waiting_late_battle`, `battle_wait`, la solicitud pendiente
+y eventos `battle_confirmation_delayed`/`battle_confirmed`. Las pruebas simulan
+demoras, una muestra transitoria, reanudación de turnos en los tres modos de
+ataque, turnos deshabilitados y paradas durante la espera. La prueba con el
+cliente del usuario continúa pendiente.
 
 ## Movimiento manual
 

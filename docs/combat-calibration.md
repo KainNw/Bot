@@ -53,8 +53,10 @@ para analizar diferencias; no les asigna un significado de combate sin evidencia
 
 El ciclo exige dos observaciones consecutivas de combate, pausa durante estados
 desconocidos y estabiliza el regreso durante dos segundos. Tras una solicitud
-encolada espera hasta treinta segundos y se detiene sin repetirla si no observa el
-combate. Los tests verifican la lógica con datos simulados; en la captura 0.7 del
+encolada espera dos muestras de combate; desde 0.16.2, tras treinta segundos
+avisa de la demora y sigue vigilando sin repetir el ataque. Esto mantiene el
+ejecutor disponible para un combate tardío. Los tests verifican la lógica con
+datos simulados; en la captura 0.7 del
 cliente real se confirmaron seis solicitudes y seis combates.
 
 ## Configurar el equipo

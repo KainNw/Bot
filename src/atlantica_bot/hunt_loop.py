@@ -37,6 +37,8 @@ from .world import (
     scan_world,
 )
 
+BATTLE_CONFIRMATION_WARNING_SECONDS = 30
+
 
 def target_key(candidate: Candidate) -> tuple:
     # Active-table slots can be reused or reassigned between observations.
@@ -69,6 +71,9 @@ class HuntEngine:
     resume_at: float = 0
     stable_samples: int = 0
     deadline: float | None = None
+    battle_wait_delayed: bool = False
+    delayed_battle_requests: int = 0
+    late_battles_observed: int = 0
     cooldowns: dict = field(default_factory=dict)
     engaged_targets: dict[tuple[int, int, int], int] = field(default_factory=dict)
     attempts: int = 0
@@ -176,6 +181,18 @@ class HuntEngine:
         self._clear_attack_delay()
         self._event("stopped", reason=reason, previous_phase=previous_phase)
 
+    def _mark_delayed_confirmation(self, now: float) -> None:
+        if self.battle_wait_delayed:
+            return
+        self.battle_wait_delayed = True
+        self.delayed_battle_requests += 1
+        self._event(
+            "battle_confirmation_delayed",
+            now,
+            attempt=self.attempts,
+            target=asdict(self.pending_target) if self.pending_target else None,
+        )
+
     def observe(self, observation: Observation, now: float) -> bool:
         """Return True only when a fresh world scan may select a new target."""
         if not self.running:
@@ -234,6 +251,15 @@ class HuntEngine:
                 }
                 self._event("battle_entered", now, source=self.battle_entry["source"])
             if self.deadline is not None:
+                if now >= self.deadline:
+                    self._mark_delayed_confirmation(now)
+                elapsed = (
+                    round(now - self.attack_queued_at, 3)
+                    if self.attack_queued_at is not None
+                    else None
+                )
+                if self.battle_wait_delayed:
+                    self.late_battles_observed += 1
                 if self.pending_target is not None:
                     self.engaged_targets[self.pending_target.identity] = self.pending_target.slot
                 self.last_attack = {
@@ -241,15 +267,20 @@ class HuntEngine:
                     "battle_confirmed": True,
                     "confirmation_scene": observation.scene_code,
                     "confirmation_signal": self.detector.signal,
+                    "confirmation_delayed": self.battle_wait_delayed,
+                    "seconds_to_observed_battle": elapsed,
                 }
                 self._event(
                     "battle_confirmed",
                     now,
                     attempt=self.attempts,
                     target=asdict(self.pending_target) if self.pending_target else None,
+                    delayed=self.battle_wait_delayed,
+                    seconds_since_queue=elapsed,
                 )
             self.deadline = None
             self.pending_target = None
+            self.battle_wait_delayed = False
             self.phase = "battle"
             self.message = (
                 "Combate: preparando las órdenes del perfil."
@@ -304,15 +335,16 @@ class HuntEngine:
                 self.anchor_world_position = observation.world_position
                 self.resume_at, self.stable_samples = now + 2, 0
             if now >= self.deadline:
-                self._event(
-                    "attack_not_confirmed",
-                    now,
-                    attempt=self.attempts,
-                    target=asdict(self.pending_target) if self.pending_target else None,
+                self._mark_delayed_confirmation(now)
+                elapsed = (
+                    now - self.attack_queued_at
+                    if self.attack_queued_at is not None
+                    else BATTLE_CONFIRMATION_WARNING_SECONDS
                 )
-                self.stop(
-                    "No se observó el combate tras la solicitud; detenido sin repetirla.",
-                    reconnect=True,
+                self.phase, self.message = (
+                    "waiting_late_battle",
+                    f"Combate pendiente desde hace {elapsed:.0f} s. "
+                    "Sigo vigilando; no se enviará otro ataque al mapa.",
                 )
             else:
                 self.phase, self.message = (
@@ -1015,7 +1047,10 @@ class HuntEngine:
                 self.stationary_request_position = self.anchor
                 self.stationary_request_world_position = self.anchor_world_position
             self.queued += 1
-            self.deadline = now + 30
+            # Keep the pending request after the warning threshold. A late battle
+            # still needs profile orders; never replace this request with another.
+            self.deadline = now + BATTLE_CONFIRMATION_WARNING_SECONDS
+            self.battle_wait_delayed = False
             self.pending_target = candidate
             self.attack_queued_at = now
             self.transport.clear()
@@ -1093,6 +1128,11 @@ class HuntEngine:
             "battles_observed": self.battles,
             "transient_reads": self.transient_reads,
             "needs_reconnect": self.needs_reconnect,
+            "battle_wait": {
+                "warning_after_seconds": BATTLE_CONFIRMATION_WARNING_SECONDS,
+                "delayed_requests": self.delayed_battle_requests,
+                "late_battles_observed": self.late_battles_observed,
+            },
             "last_attack": dict(self.last_attack),
             "detector": self.detector.summary(),
             "observation_count": self.observation_count,
@@ -1106,6 +1146,8 @@ class HuntEngine:
                 "elapsed_since_queue": round(self.trace_time - self.attack_queued_at, 3)
                 if self.attack_queued_at is not None
                 else None,
+                "confirmation_delayed": self.battle_wait_delayed,
+                "new_world_attacks_blocked": True,
             }
             if self.pending_target is not None
             else None,

@@ -110,7 +110,8 @@ def test_one_direct_request_waits_for_confirmation_and_never_replays_on_server_s
         assert not bot.observe(observation(), now)
         assert bot.select(view(FAR), now) is None
     bot.observe(observation(), 32.1)
-    assert not bot.running and bot.needs_reconnect and bot.attempts == bot.queued == 1
+    assert bot.running and not bot.needs_reconnect and bot.attempts == bot.queued == 1
+    assert bot.phase == "waiting_late_battle" and bot.pending_target == FAR
     assert bot.native_requests == bot.moves == 0 and bot.pursuit is None
 
 
@@ -164,7 +165,7 @@ def test_moved_stationary_request_can_confirm_battle_then_resume_from_the_new_po
     assert bot.attempts == bot.queued == 1
 
 
-def test_manual_movement_does_not_extend_an_unconfirmed_request_deadline():
+def test_manual_movement_does_not_reset_the_delayed_confirmation_warning_or_replay():
     bot = ready()
     bot.select(view(FAR), 2)
     bot.record(FAR, result(), 2.1)
@@ -172,7 +173,8 @@ def test_manual_movement_does_not_extend_an_unconfirmed_request_deadline():
         bot.observe(observation(position=GridPosition(52, int(now) + 193, 340)), now)
         assert bot.running and bot.deadline == 32.1
     bot.observe(observation(position=GridPosition(52, 230, 340)), 32.1)
-    assert not bot.running and bot.needs_reconnect
+    assert bot.running and not bot.needs_reconnect and bot.phase == "waiting_late_battle"
+    assert bot.deadline == 32.1 and bot.select(view(FAR), 40) is None
     assert bot.queued == 1 and bot.attempts == 1 and bot.manual_pauses == 1
 
 

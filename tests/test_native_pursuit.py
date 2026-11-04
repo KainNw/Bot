@@ -223,7 +223,9 @@ def test_no_replay_when_native_attack_is_queued_but_battle_is_not_observed():
         assert not engine.observe(observation(), now)
         assert engine.select(view(near), now) is None
     assert not engine.observe(observation(), 33)
-    assert not engine.running and engine.needs_reconnect and engine.queued == 1
+    assert engine.running and not engine.needs_reconnect and engine.queued == 1
+    assert engine.phase == "waiting_late_battle" and engine.pending_target == near
+    assert engine.select(view(near), 60) is None
 
 
 def test_stop_cancels_pending_native_request_and_stops_owned_pursuit_before_releasing_pid(
