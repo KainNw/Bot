@@ -1943,16 +1943,19 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.show_overview()
         assert panel.overview is not overview and panel.overview.alive
         overview = panel.overview
+        overview.window.deiconify()
+        panel.root.update()
         for tab, cells in enumerate((overview.cells, overview.order_cells)):
             overview.tabs.select(tab)
-            panel.root.update_idletasks()
+            panel.root.update()
             last = cells[9]["member"]
             assert last.winfo_rooty() + last.winfo_height() <= (
                 overview.tabs.winfo_rooty() + overview.tabs.winfo_height()
             )
         overview.tabs.select(2)
-        panel.root.update_idletasks()
+        panel.root.update()
         last = overview.hunt_controls[-1]
+        assert last.winfo_ismapped() and overview.tabs.winfo_height() > 1
         control_bottom = last.winfo_rooty() + last.winfo_height()
         page_bottom = overview.tabs.winfo_rooty() + overview.tabs.winfo_height()
         assert control_bottom <= page_bottom, (control_bottom, page_bottom)
