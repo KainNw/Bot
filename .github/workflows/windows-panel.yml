@@ -32,7 +32,11 @@ jobs:
           if (Test-Path build/pytest.xml) {
             [xml]$testReport = Get-Content build/pytest.xml -Raw
             foreach ($problem in $testReport.SelectNodes('//failure|//error')) {
-              $failureText = $problem.InnerText.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              $failureTail = $problem.InnerText
+              if ($failureTail.Length -gt 3500) {
+                $failureTail = $failureTail.Substring($failureTail.Length - 3500)
+              }
+              $failureText = $failureTail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
               Write-Output "::error title=Windows test failure::$failureText"
             }
           }
