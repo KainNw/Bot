@@ -1953,9 +1953,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         overview.tabs.select(2)
         panel.root.update_idletasks()
         last = overview.hunt_controls[-1]
-        assert last.winfo_rooty() + last.winfo_height() <= (
-            overview.tabs.winfo_rooty() + overview.tabs.winfo_height()
-        )
+        control_bottom = last.winfo_rooty() + last.winfo_height()
+        page_bottom = overview.tabs.winfo_rooty() + overview.tabs.winfo_height()
+        assert control_bottom <= page_bottom, (control_bottom, page_bottom)
         overview.tabs.select(0)
         panel.toggle_advanced()
         panel.edit_profile()

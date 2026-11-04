@@ -83,30 +83,40 @@ class OverviewWindow:
                 anchor="w",
                 justify="left",
                 wraplength=710,
-            ).pack(anchor="w", pady=(6, 4))
+            ).pack(anchor="w", pady=(2, 3))
 
-        option_label("Espera antes de atacar al mob (0–60 segundos; admite decimales):")
-        delay = ttk.Combobox(hunting, textvariable=attack_delay, values=("0", "1", "3"), width=8)
-        delay.pack(anchor="w")
-        self.hunt_controls.append(delay)
-        option_label("Modo de ataque al mob:")
+        mode_row = tk.Frame(hunting, background=SURFACE)
+        mode_row.pack(fill="x", pady=(0, 10))
+        tk.Label(mode_row, text="Modo de ataque al mob:", background=SURFACE, foreground=TEXT).pack(
+            side="left", padx=(0, 8)
+        )
         self.attack_mode_list = ttk.Combobox(
-            hunting,
+            mode_row,
             textvariable=world_attack_mode,
             values=tuple(WORLD_ATTACK_LABELS.values()),
             state="readonly",
             width=43,
         )
-        self.attack_mode_list.pack(anchor="w")
-        option_label("Radio de búsqueda (5–500 casillas):")
+        self.attack_mode_list.pack(side="left")
+        fields_row = tk.Frame(hunting, background=SURFACE)
+        fields_row.pack(fill="x", pady=(0, 8))
+        tk.Label(
+            fields_row, text="Espera antes de atacar (0–60 s):", background=SURFACE, foreground=TEXT
+        ).pack(side="left", padx=(0, 6))
+        delay = ttk.Combobox(fields_row, textvariable=attack_delay, values=("0", "1", "3"), width=7)
+        delay.pack(side="left")
+        self.hunt_controls.append(delay)
+        tk.Label(
+            fields_row, text="Radio (5–500 casillas):", background=SURFACE, foreground=TEXT
+        ).pack(side="left", padx=(16, 6))
         radius = ttk.Spinbox(
-            hunting,
+            fields_row,
             from_=MIN_SEARCH_RADIUS,
             to=MAX_SEARCH_RADIUS,
             textvariable=search_radius,
             width=8,
         )
-        radius.pack(anchor="w")
+        radius.pack(side="left")
         self.hunt_controls.append(radius)
         option_label(
             "Desde mi posición solicita combate sin ordenar movimiento; la aceptación a distancia "
