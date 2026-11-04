@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "atlantica-bot"
-version = "0.15.0"
+version = "0.15.1"
 description = "Caza de mobs cercanos y control por ventana para Atlantica Online en Windows."
 readme = "README.md"
 requires-python = ">=3.11"

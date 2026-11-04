@@ -19,7 +19,10 @@ from atlantica_bot.errors import DiagnosticError
 from atlantica_bot.hunting import MARKER_NAME, HuntingResult
 from atlantica_bot.report import Process
 from atlantica_bot.session import GameSession, LiveState
+from atlantica_bot.speed import SPEED_CODE_BLOCKS, SPEED_GLOBAL_FIELDS, SPEED_READONLY_BLOCKS
 from atlantica_bot.world import GridPosition, LocalState, Observation
+
+SPEED_CAPTURE_SIZE = sum(size for _, _, size in SPEED_CODE_BLOCKS + SPEED_READONLY_BLOCKS)
 
 
 class CaptureSystem:
@@ -34,6 +37,7 @@ class CaptureSystem:
         self.short_normal_method = False
         self.many_normal_methods = False
         self.many_client_methods = False
+        self.missing_speed = False
 
     def read_memory(self, pid, address, size):
         assert pid == 123
@@ -65,9 +69,19 @@ class CaptureSystem:
             return b"\x90" * size
         if (address, size) == (0x00700000, 0x2000):
             return b"\x90" * (size - int(self.short_normal_method))
+        for _, candidate, fmt in SPEED_GLOBAL_FIELDS:
+            if address == candidate and size == struct.calcsize(fmt):
+                return struct.pack(fmt, 100 if fmt in ("<i", "<I") else 1.0)
+        if (address, size) == (0x0060265C, 4):
+            return struct.pack("<f", 1.0)
+        speed_blocks = SPEED_CODE_BLOCKS + SPEED_READONLY_BLOCKS
+        if self.missing_speed and (address, size) in [(a, s) for _, a, s in speed_blocks]:
+            raise DiagnosticError("Página de investigación no disponible")
         assert (address, size) in [
             (address, size)
-            for _, address, size in CODE_BLOCKS + COMBAT_CODE_BLOCKS + COMBAT_READONLY_BLOCKS
+            for _, address, size in (
+                CODE_BLOCKS + COMBAT_CODE_BLOCKS + COMBAT_READONLY_BLOCKS + speed_blocks
+            )
         ]
         if self.short_combat and address == COMBAT_CODE_BLOCKS[0][1]:
             return bytes(size - 1)
@@ -140,9 +154,14 @@ def test_combat_export_contains_fixed_code_dependencies_readonly_tables_and_cont
         assert archive.testzip() is None
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["schema_version"] == 4 and manifest["purpose"] == "battle_turn_diagnostic"
-        assert sum(b["size"] for b in manifest["blocks"]) == 892 * 1024
+        assert sum(b["size"] for b in manifest["blocks"]) == 892 * 1024 + SPEED_CAPTURE_SIZE
         assert len(archive.namelist()) == (
-            len(CODE_BLOCKS) + len(COMBAT_CODE_BLOCKS) + len(COMBAT_READONLY_BLOCKS) + 2
+            len(CODE_BLOCKS)
+            + len(COMBAT_CODE_BLOCKS)
+            + len(COMBAT_READONLY_BLOCKS)
+            + len(SPEED_CODE_BLOCKS)
+            + len(SPEED_READONLY_BLOCKS)
+            + 2
         )
         for block in manifest["blocks"]:
             data = archive.read(block["file"])
@@ -155,7 +174,7 @@ def test_combat_export_contains_fixed_code_dependencies_readonly_tables_and_cont
                 assert block["kind"] == "code"
                 assert 0x00401000 <= address < address + block["size"] <= 0x03F85000
         constants = [b for b in manifest["blocks"] if b["kind"] == "readonly_constants"]
-        assert sorted(b["size"] for b in constants) == [8 * 1024, 16 * 1024]
+        assert sorted(b["size"] for b in constants) == [4 * 1024] * 3 + [8 * 1024, 16 * 1024]
     combat = manifest["combat"]
     assert combat["before"]["local"]["context_a"] == combat["after"]["local"]["context_a"] == 0
     assert combat["reported_controls"]["magic_shortcuts"] == list("QWERT")
@@ -175,6 +194,26 @@ def test_incomplete_method_tables_are_not_saved_as_a_complete_battle_capture(
     with pytest.raises(DiagnosticError, match="incompleta"):
         export_code_context(session, output, include_combat=True)
     assert not output.exists()
+
+
+def test_missing_speed_research_pages_do_not_block_the_existing_battle_export(
+    session, tmp_path, monkeypatch
+):
+    session.creation_time = 777
+    session.system.missing_speed = True
+    monkeypatch.setattr("atlantica_bot.capture.observe_scene", lambda _: battle_observation())
+    output = tmp_path / "battle.zip"
+    export_code_context(session, output, include_combat=True)
+    with ZipFile(output) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert archive.testzip() is None
+    speed = manifest["combat"]["speed_diagnostic"]
+    assert speed["unavailable_blocks"] == [
+        name for name, _, _ in SPEED_CODE_BLOCKS + SPEED_READONLY_BLOCKS
+    ]
+    assert sum(b["size"] for b in manifest["blocks"]) == 892 * 1024
+    assert speed["before"]["fields"]["rate_input"]["value"] == 100
+    assert not speed["speed_control_available"]
 
 
 @pytest.fixture
@@ -212,7 +251,11 @@ def test_normal_context_capture_follows_only_verified_image_methods_and_reuses_c
         assert not methods["limit_reached"]
         assert methods["entries"][0]["block"] == methods["entries"][1]["block"]
         assert methods["entries"][2]["block"] == "battle-client-actions"
-        assert sum(b["size"] for b in manifest["blocks"]) == 900 * 1024 + 256
+        assert sum(b["size"] for b in manifest["blocks"]) == (900 * 1024 + 256 + SPEED_CAPTURE_SIZE)
+        speed = report["speed_diagnostic"]
+        assert speed["before"]["fields"]["manager_rate_candidate"]["value"] == 1.0
+        assert speed["after"]["manager"] == normal_context.manager
+        assert not speed["speed_control_available"] and not speed["writes_or_client_commands"]
         table = next(b for b in manifest["blocks"] if b["address"] == "04303000")
         assert table["kind"] == "readonly_constants"
         assert archive.testzip() is None
@@ -260,7 +303,7 @@ def test_related_client_table_is_captured_and_reuses_normal_client_and_manager_b
     assert methods["entries"][2]["block"] == "normal-manager-method-00"
     tables = [b for b in manifest["blocks"] if b["size"] == 256]
     assert len(tables) == 2 and all(b["kind"] == "readonly_constants" for b in tables)
-    assert sum(b["size"] for b in manifest["blocks"]) == 900 * 1024 + 512
+    assert sum(b["size"] for b in manifest["blocks"]) == 900 * 1024 + 512 + SPEED_CAPTURE_SIZE
     assert (context.context_word, 256) not in session.system.reads
 
 
@@ -320,7 +363,7 @@ def test_known_normal_table_stops_before_utf16_label_words_that_resemble_code_po
     resolution = manifest["combat"]["normal_method_resolution"]
     assert resolution["entry_limit"] == 13 and len(resolution["entries"]) == 13
     assert resolution["boundary_source"] == "verified_table_end_before_utf16_label"
-    assert sum(b["size"] for b in manifest["blocks"]) == 892 * 1024 + 256
+    assert sum(b["size"] for b in manifest["blocks"]) == 892 * 1024 + 256 + SPEED_CAPTURE_SIZE
     assert (0x6C0000, 0x2000) not in session.system.reads
 
 
@@ -342,7 +385,7 @@ def test_large_method_table_cannot_expand_export_beyond_the_documented_limit(
         manifest = json.loads(archive.read("manifest.json"))
     methods = manifest["combat"]["normal_method_resolution"]
     assert methods["limit_reached"] and len(methods["entries"]) == 64
-    assert sum(b["size"] for b in manifest["blocks"]) == 1404 * 1024 + 256
+    assert sum(b["size"] for b in manifest["blocks"]) == 1404 * 1024 + 256 + SPEED_CAPTURE_SIZE
 
 
 def test_two_large_tables_stay_within_combined_limit_and_reuse_existing_code(

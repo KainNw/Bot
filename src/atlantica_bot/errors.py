@@ -6,6 +6,10 @@ class SceneChanged(DiagnosticError):
     """A coherent snapshot was interrupted; discard it before requesting another."""
 
 
+class BeforeSendChanged(SceneChanged):
+    """The native adapter could not read a stable state before launching the helper."""
+
+
 class WindowUnavailable(DiagnosticError):
     """The bridge rejected the window before installing a hook or sending a command."""
 

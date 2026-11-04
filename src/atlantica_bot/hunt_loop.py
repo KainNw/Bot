@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from .battle import BattleFrame, read_battle_frame
 from .clients import ClientWindow
 from .combat import CombatDetector
-from .errors import DiagnosticError, SceneChanged, WindowUnavailable
+from .errors import BeforeSendChanged, DiagnosticError, SceneChanged, WindowUnavailable
 from .ipc import BotLease, Cancellation
 from .native_action import (
     stop_movement,
@@ -294,12 +294,15 @@ class HuntEngine:
                     )
                 )
             ):
-                self.last_attack["stationary_movement_observed"] = True
-                self.stop(
-                    "El personaje se movió tras la solicitud directa; detenido sin repetirla.",
-                    reconnect=True,
-                )
-                return False
+                if not self.last_attack.get("stationary_movement_observed"):
+                    self.last_attack["stationary_movement_observed"] = True
+                    self.manual_pauses += 1
+                    self.last_manual_reason = "movement_during_stationary_request"
+                    self._event("manual_movement_during_stationary_request", now)
+                self.manual_active = True
+                self.anchor = observation.player
+                self.anchor_world_position = observation.world_position
+                self.resume_at, self.stable_samples = now + 2, 0
             if now >= self.deadline:
                 self._event(
                     "attack_not_confirmed",
@@ -315,7 +318,10 @@ class HuntEngine:
                 self.phase, self.message = (
                     "waiting_battle",
                     (
-                        "Solicitud directa enviada sin acercamiento; esperando combate."
+                        "Movimiento manual: esperando el combate ya solicitado, sin repetirlo."
+                        if self.stationary_attack
+                        and self.last_attack.get("stationary_movement_observed")
+                        else "Solicitud directa enviada sin acercamiento; esperando combate."
                         if self.stationary_attack
                         else "Solicitud enviada; esperando combate."
                     ),
@@ -1287,6 +1293,8 @@ class HuntWorker:
                                 reconnect=bool(self.turns and self.turns.needs_reconnect),
                             )
                         except SceneChanged as exc:
+                            if isinstance(exc, BeforeSendChanged) and self.turns is not None:
+                                self.turns.inflight = None
                             self.engine.transient_reads += 1
                             consecutive_changes += 1
                             now = time.monotonic()

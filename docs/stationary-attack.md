@@ -3,7 +3,9 @@
 El usuario pidió elegir el mob más cercano e iniciar el encuentro desde la posición
 del personaje, sin acercarse. **Atacar desde mi posición (experimental)** añade la
 solicitud directa a un objetivo del radio, sin utilizar las órdenes de persecución.
-Todavía no hay una prueba real de que el servidor acepte esta solicitud a distancia.
+El usuario confirmó el resultado en 0.14.0. Su registro mostró cuatro solicitudes
+y cuatro combates, tres fuera del umbral de cercanía de 20 unidades al cuadrado,
+con la misma posición 3D en los cuatro envíos. Eso describe esa sesión y compilación.
 
 ## Uso
 
@@ -45,16 +47,21 @@ selección directa por esa distancia. El IPC es versión 9, con 408 bytes.
 
 Una respuesta de cola no demuestra aceptación del servidor. Se esperan dos
 observaciones de combate. Si no aparecen en 30 s, se detiene sin repetir la solicitud.
-Si el personaje se mueve después del envío mientras todavía se observa mapa, se
-detiene y conserva el resultado pendiente; no intenta corregir o cancelar un
-movimiento que no puede identificar como propio. El juego o el servidor podrían
-rechazar la distancia o producir un movimiento; esta versión no garantiza que lo
-eviten. Para la primera prueba hay que observar ambas cosas.
+En 0.15.1, si el personaje se mueve después del envío mientras todavía se observa
+mapa, conserva la conexión y espera ese combate pendiente sin repetir el ataque.
+El movimiento no amplía el plazo original. Si llega el combate, lo procesa y
+después retoma la búsqueda desde la nueva posición estable. Si vence el plazo
+sin confirmación, sigue deteniéndose con el aviso de resultado pendiente. No
+cancela ni corrige movimientos manuales. El juego o el servidor podrían rechazar
+la distancia o producir un movimiento; se debe observar el resultado real.
 
 Una vez confirmado el combate, las órdenes del perfil y la recogida conservan su
 funcionamiento. Los combates recibidos también tienen prioridad. Al regresar al
 mapa espera estabilidad y puede elegir otro objetivo sin crear una persecución.
 La pausa por caminar manualmente se conserva antes de enviar nuevas solicitudes.
+Un estado transitorio del cliente durante el sondeo ya no elimina la conexión;
+mantiene el PID y deja las acciones deshabilitadas hasta una lectura completa.
+Un proceso terminado o reutilizado sigue exigiendo conectar de nuevo.
 
 ## Diagnóstico y pruebas
 

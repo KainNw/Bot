@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .clients import control_native_marker
-from .errors import DiagnosticError
+from .errors import DiagnosticError, SceneChanged
 from .hunting import HuntingResult, control_hunting, marker_state
 from .report import Module, Process, select_process
 
@@ -88,14 +88,16 @@ class GameSession:
         read = self.system.read_memory
         owner = int.from_bytes(read(self.process.pid, 0x04A9290C, 4), "little")
         if not 0 < owner <= 0xFFFFFFFF - 0x1639C:
-            raise DiagnosticError("El cliente todavía no publica un estado válido.")
+            raise SceneChanged("El cliente todavía no publica un estado válido.")
         auto = read(self.process.pid, owner + 0x16394, 1)[0]
         condition = int.from_bytes(
             read(self.process.pid, owner + 0x16398, 4), "little", signed=True
         )
         hunting = read(self.process.pid, 0x04E52C5A, 1)[0]
         if auto not in (0, 1) or hunting not in (0, 1):
-            raise DiagnosticError("Los indicadores del cliente no tienen los valores esperados.")
+            raise SceneChanged("Los indicadores del cliente no tienen los valores esperados.")
+        if int.from_bytes(read(self.process.pid, 0x04A9290C, 4), "little") != owner:
+            raise SceneChanged("El estado del cliente cambió durante la lectura.")
         return LiveState(bool(auto), condition, bool(hunting), marker_state(self.directory))
 
     def start(self) -> HuntingResult:

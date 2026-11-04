@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from atlantica_bot.errors import DiagnosticError
+from atlantica_bot.errors import DiagnosticError, SceneChanged
 from atlantica_bot.hunting import MARKER_NAME, control_hunting
 from atlantica_bot.report import Module, Process
 from atlantica_bot.session import GameSession
@@ -149,3 +149,32 @@ def test_invalid_owner_is_not_dereferenced(live, owner):
     with pytest.raises(DiagnosticError, match="estado válido"):
         session.snapshot()
     assert live.reads == [0x04A9290C]
+
+
+def test_state_pointer_change_is_transient_and_the_same_session_can_recover(live, monkeypatch):
+    session = GameSession.connect(live)
+    original = live.read_memory
+    owner_reads = 0
+
+    def changing(pid, address, size):
+        nonlocal owner_reads
+        if address == 0x04A9290C:
+            owner_reads += 1
+            if owner_reads == 2:
+                return (0x40000000).to_bytes(4, "little")
+        return original(pid, address, size)
+
+    monkeypatch.setattr(live, "read_memory", changing)
+    with pytest.raises(SceneChanged, match="durante la lectura"):
+        session.snapshot()
+    assert session.process.pid == 100 and session.snapshot().auto_battle
+
+
+@pytest.mark.parametrize("field", ["auto", "hunting"])
+def test_unstable_flags_do_not_invalidate_the_process_identity(live, field):
+    session = GameSession.connect(live)
+    setattr(live, field, 255)
+    with pytest.raises(SceneChanged):
+        session.snapshot()
+    setattr(live, field, 0)
+    assert not session.snapshot().hunting

@@ -89,5 +89,8 @@ NeoACA. Falta comprobar estas mejoras de recuperación y la recogida variable en
 ## Velocidad — etapa posterior
 
 Se solicitó estudiar una velocidad configurable durante batallas y restaurarla al
-salir/parar. Esa función continúa sin implementar. Queda para después de validar
-el ciclo, la estabilidad y el comportamiento de los turnos.
+salir/parar. Esa función continúa sin implementar. En 0.15.1 se localizó una escala
+que consumen las rutinas de avance de fotogramas y movimiento en combate. Faltan
+los auxiliares de acceso y constantes para contrastar sus límites y restauración.
+**Exportar combate** añade esas lecturas, sin escribir valores ni ejecutar las
+funciones. Véase [el análisis de velocidad](battle-speed.md).

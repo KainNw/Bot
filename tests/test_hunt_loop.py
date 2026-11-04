@@ -8,7 +8,7 @@ import pytest
 from atlantica_bot.battle import BattleTrial
 from atlantica_bot.clients import ClientWindow
 from atlantica_bot.combat import CombatDetector
-from atlantica_bot.errors import DiagnosticError, WindowUnavailable
+from atlantica_bot.errors import BeforeSendChanged, DiagnosticError, WindowUnavailable
 from atlantica_bot.hunt_loop import HuntEngine, HuntWorker
 from atlantica_bot.navigation import ApproachSettings
 from atlantica_bot.profiles import BotProfile
@@ -404,6 +404,37 @@ def test_window_preflight_stops_worker_without_losing_previous_uncertainty(
     assert "minimizada" in worker.engine.message
     if previous_request == "route_cleanup":
         assert "Parada del desplazamiento sin confirmar" in worker.engine.message
+
+
+def test_unstable_pre_send_snapshot_does_not_leave_a_phantom_battle_order(turn_frame, monkeypatch):
+    session = SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100))
+    worker = HuntWorker(
+        session, ClientWindow(100, 0x1234, "Atlantica", 1234), DETECTOR, execute_turns=True
+    )
+    calls = []
+    monkeypatch.setattr("atlantica_bot.hunt_loop.BotLease", lambda _: nullcontext())
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.Cancellation",
+        lambda _: nullcontext(SimpleNamespace(cancel=lambda: None)),
+    )
+    monkeypatch.setattr(worker.stop_event, "wait", lambda _: False)
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.observe_scene", lambda *a, **kw: observation(active=True)
+    )
+    monkeypatch.setattr("atlantica_bot.hunt_loop.read_battle_frame", lambda _: turn_frame)
+
+    def send(session, window, trial, **kwargs):
+        calls.append(trial)
+        if len(calls) == 1:
+            raise BeforeSendChanged("Estado en transición antes de abrir el puente")
+        worker.stop_event.set()
+        return {"pid": 100, "operation": trial.operation, "status": 26}
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.try_battle_action", send)
+    worker._run()
+    assert len(calls) == 2 and calls[0].key() == calls[1].key()
+    assert worker.turns.queued == 1 and len(worker.turns.ledger) == 1
+    assert worker.turns.inflight is None and not worker.engine.needs_reconnect
 
 
 @pytest.mark.parametrize("execute_turns", [False, True])

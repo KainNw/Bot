@@ -43,3 +43,6 @@ una opción de animación habría que localizarla y comprobar que respeta los tu
 del servidor, sin cambiar relojes globales ni la cadencia de solicitudes, y que
 se restaura al salir del combate o parar. Acelerar la presentación no garantiza
 reducir el tiempo que el servidor necesita para completar una acción.
+La investigación posterior de 0.15.1 localizó una escala consumida por las rutinas
+de combate y amplió **Exportar combate** para obtener sus dependencias. Véase
+[el análisis de velocidad](battle-speed.md); todavía no ofrece un ajuste ejecutable.

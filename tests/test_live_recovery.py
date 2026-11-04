@@ -46,8 +46,15 @@ def plan():
     )
 
 
-def test_manual_walk_waits_without_attacking_and_recenters_after_two_seconds_still():
-    engine = HuntEngine(100, 777, CombatDetector(100, 777, "local_context"), native_attack=True)
+@pytest.mark.parametrize("mode", ["native", "stationary"])
+def test_manual_walk_waits_without_attacking_and_recenters_after_two_seconds_still(mode):
+    engine = HuntEngine(
+        100,
+        777,
+        CombatDetector(100, 777, "local_context"),
+        replace(BotProfile.default(1), world_attack_mode=mode),
+        native_attack=mode == "native",
+    )
     assert not engine.observe(observation(), 0)
     assert engine.observe(observation(), 2)
     moved = GridPosition(52, 300, 340)  # Explicit manual movement outside the old area.

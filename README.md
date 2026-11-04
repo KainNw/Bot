@@ -1,7 +1,19 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.15.0** explica la causa del **código 20
+con Auto Battle apagado. La versión **0.15.1** conserva la conexión durante cambios
+transitorios de estado y permite caminar en **Atacar desde mi posición** sin la
+parada inmediata que exigía reconectar. Al buscar, pausa hasta quedar quieto y
+toma el punto nuevo como centro. Si ya envió un ataque, espera el combate pendiente
+sin repetirlo ni alargar su plazo; un resultado que siga sin confirmarse conserva
+su aviso y requiere revisión. Consulta [ataque desde la posición](docs/stationary-attack.md).
+
+**Exportar combate** incorpora las funciones y valores observados al investigar
+la escala de animaciones. Solo los lee: aún no hay un control de velocidad
+validado. Consulta [el análisis de velocidad](docs/battle-speed.md) para obtener
+la captura que falta.
+
+Conserva 0.15.0, que explica la causa del **código 20
 del puente**: ventana minimizada, bloqueada, desaparecida o vinculada a otro proceso
 o hilo. Ese rechazo ocurre antes de enviar la orden; por sí solo ya no exige
 reconectar ni presenta el resultado como desconocido. Las solicitudes anteriores

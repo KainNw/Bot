@@ -13,6 +13,7 @@ from .battle_context import NormalBattleContext, read_normal_battle
 from .combat import CombatDetector
 from .errors import DiagnosticError
 from .session import GameSession
+from .speed import SPEED_CODE_BLOCKS, SPEED_READONLY_BLOCKS, read_speed_snapshot
 from .world import observe_scene
 
 # Fixed regions of the verified executable image, never arbitrary heap-memory exports.
@@ -253,6 +254,10 @@ def export_code_context(
     if read(pid, ANCHOR_ADDRESS, len(ANCHOR_BYTES)) != ANCHOR_BYTES:
         raise DiagnosticError("El código cargado no coincide con el contexto analizado.")
     blocks = []
+    speed_errors = []
+    speed_before = None
+    if include_combat:
+        speed_before = read_speed_snapshot(session, normal)
     selected = CODE_BLOCKS + (COMBAT_CODE_BLOCKS + COMBAT_READONLY_BLOCKS if include_combat else ())
     for name, address, size in selected:
         data = read(pid, address, size)
@@ -261,6 +266,16 @@ def export_code_context(
         if not any(data):
             raise DiagnosticError(f"El bloque {name} está vacío; no se puede analizar.")
         blocks.append((name, address, data))
+    if include_combat:
+        # Optional research pages must not prevent exporting the existing battle data.
+        for name, address, size in SPEED_CODE_BLOCKS + SPEED_READONLY_BLOCKS:
+            try:
+                data = read(pid, address, size)
+                if len(data) != size or not any(data):
+                    raise DiagnosticError("Bloque incompleto")
+                blocks.append((name, address, data))
+            except (DiagnosticError, OSError):
+                speed_errors.append(name)
     dispatch, dispatch_block = _dispatcher_context(session)
     if dispatch_block is not None:
         blocks.append(dispatch_block)
@@ -269,6 +284,7 @@ def export_code_context(
         combat["normal_client_method_resolution"] = _normal_methods(
             session, normal, blocks, role="client"
         )
+    speed_after = read_speed_snapshot(session, normal) if include_combat else None
     session.snapshot()  # Do not label an export valid if the process exited during capture.
     if detector is not None:
         after = observe_scene(session)
@@ -278,6 +294,14 @@ def export_code_context(
             raise DiagnosticError("El contexto del combate cambió durante la captura.")
         combat.update(
             {
+                "speed_diagnostic": {
+                    "before": speed_before,
+                    "after": speed_after,
+                    "unavailable_blocks": speed_errors,
+                    "scope": "observed_battle_rate_inputs_and_direct_code_dependencies",
+                    "speed_control_available": False,
+                    "writes_or_client_commands": False,
+                },
                 "after": after.summary(),
                 "detector": detector.summary(),
                 "scope": "normal_manager_and_related_client_code_dependencies",
@@ -292,7 +316,7 @@ def export_code_context(
                 },
             }
         )
-    readonly_names = {name for name, _, _ in COMBAT_READONLY_BLOCKS} | {
+    readonly_names = {name for name, _, _ in COMBAT_READONLY_BLOCKS + SPEED_READONLY_BLOCKS} | {
         "normal-manager-method-table",
         "normal-client-method-table",
     }

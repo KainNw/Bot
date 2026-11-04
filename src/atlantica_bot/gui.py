@@ -14,7 +14,7 @@ from .bonus import BONUS_LABELS, BonusComparison, capture_bonus_snapshot, read_b
 from .capture import export_code_context
 from .clients import control_native_marker, marker_scope
 from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
-from .errors import DiagnosticError, WindowUnavailable
+from .errors import DiagnosticError, SceneChanged, WindowUnavailable
 from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
 from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
@@ -1323,6 +1323,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def poll(self) -> None:
             try:
                 self.refresh()
+            except SceneChanged as exc:
+                # An unstable state is not a different process. Keep the binding and
+                # leave actions disabled until a later complete snapshot succeeds.
+                self.last_state = None
+                pid = self.session.process.pid if self.session is not None else self.pid.get()
+                self.status.set(f"PID {pid}: esperando una lectura estable del cliente.")
+                self.detail.set(str(exc))
+                self.lock_target_controls()
             except (DiagnosticError, OSError) as exc:
                 self.disconnect()
                 self.status.set("Cliente: sin confirmación actual")
@@ -2144,7 +2152,19 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.toggle_advanced()
         panel.edit_profile()
         panel.profile_editor.destroy()
-        panel.session = SimpleNamespace(process=SimpleNamespace(pid=1), creation_time=1)
+
+        def changing_state():
+            raise SceneChanged("Cambio de estado simulado")
+
+        panel.session = SimpleNamespace(
+            process=SimpleNamespace(pid=1), creation_time=1, snapshot=changing_state
+        )
+        panel.pid.set("1")
+        bound_session = panel.session
+        panel.poll()
+        assert panel.session is bound_session and panel.pid.get() == "1"
+        assert "PID 1" in panel.status.get()
+        assert str(panel.bot_start_button.cget("state")) == "disabled"
         panel.bot_report = {
             "pid": 2,
             "detector": {"instance_creation_time": 2},

@@ -9,7 +9,12 @@ import pytest
 from atlantica_bot.battle import BattleFrame, BattleTrial, BattleUnit
 from atlantica_bot.battle_context import NormalBattleContext
 from atlantica_bot.clients import ClientWindow
-from atlantica_bot.errors import DiagnosticError, WindowUnavailable
+from atlantica_bot.errors import (
+    BeforeSendChanged,
+    DiagnosticError,
+    SceneChanged,
+    WindowUnavailable,
+)
 from atlantica_bot.hunting import HuntingResult
 from atlantica_bot.native_action import (
     stop_movement,
@@ -318,6 +323,20 @@ def test_mismatched_window_is_rejected_before_launching_helper(bridge, monkeypat
     )
     with pytest.raises(DiagnosticError, match="instancia conectada"):
         try_attack(session, ClientWindow(300, 0x99999, "Atlantica"), candidate)
+
+
+def test_unstable_live_state_is_explicitly_rejected_before_launching_the_helper(
+    bridge, monkeypatch
+):
+    def changing():
+        raise SceneChanged("Estado en transición")
+
+    bridge[0].snapshot = changing
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run", lambda *a, **kw: pytest.fail("No send")
+    )
+    with pytest.raises(BeforeSendChanged):
+        try_attack(*bridge)
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .battle import BattleTrial
 from .clients import ClientWindow
-from .errors import DiagnosticError, WindowUnavailable
+from .errors import BeforeSendChanged, DiagnosticError, SceneChanged, WindowUnavailable
 from .hunting import control_hunting
 from .ipc import BotLease, Cancellation
 from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
@@ -288,7 +288,10 @@ def _try_action(
     """Issue one explicit request on the selected window's thread; never retry or move input."""
     if sys.platform != "win32":
         raise DiagnosticError("La prueba nativa se ejecuta en Windows.")
-    state = session.snapshot()
+    try:
+        state = session.snapshot()
+    except SceneChanged as exc:
+        raise BeforeSendChanged(str(exc)) from exc
     control_hunting(session.directory, "status")
     if state.auto_battle or state.hunting or state.files.marker_present:
         raise DiagnosticError("La prueba requiere Auto Battle y caza nativa desactivados.")

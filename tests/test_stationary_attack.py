@@ -128,7 +128,7 @@ def test_battle_confirmation_sets_the_result_without_confusing_an_intermediate_m
 
 
 @pytest.mark.parametrize("changed", ["grid", "world", "route"])
-def test_movement_after_a_queued_direct_request_stops_without_sending_a_stop_or_attack(changed):
+def test_movement_after_a_queued_direct_request_waits_without_losing_instance_or_replaying(changed):
     bot = ready()
     bot.select(view(FAR), 2)
     bot.record(FAR, result(), 2.1)
@@ -140,9 +140,40 @@ def test_movement_after_a_queued_direct_request_stops_without_sending_a_stop_or_
     else:
         sample = observation(navigation=replace(IDLE, active=True, moving=True))
     bot.observe(sample, 3)
-    assert not bot.running and bot.needs_reconnect
+    assert bot.running and not bot.needs_reconnect and bot.phase == "waiting_battle"
+    assert (bot.pid, bot.creation_time) == (100, 777)
+    assert bot.deadline == 32.1 and bot.select(view(FAR), 3) is None
     assert bot.last_attack["stationary_movement_observed"]
     assert bot.pursuit is None and bot.route is None and bot.attempts == 1
+
+
+def test_moved_stationary_request_can_confirm_battle_then_resume_from_the_new_position():
+    bot = ready()
+    bot.select(view(FAR), 2)
+    bot.record(FAR, result(), 2.1)
+    moved = GridPosition(52, 300, 340)
+    assert not bot.observe(observation(position=moved), 3)
+    assert bot.manual_active and bot.running
+    for now in (3.2, 3.4):
+        bot.observe(observation(position=moved, battle=True), now)
+    assert bot.battles == 1 and bot.deadline is None and bot.last_attack["battle_confirmed"]
+    assert not bot.observe(observation(position=moved), 4)
+    assert not bot.observe(observation(position=moved), 5)
+    assert bot.observe(observation(position=moved), 6)
+    assert bot.origin == moved and not bot.needs_reconnect and not bot.manual_active
+    assert bot.attempts == bot.queued == 1
+
+
+def test_manual_movement_does_not_extend_an_unconfirmed_request_deadline():
+    bot = ready()
+    bot.select(view(FAR), 2)
+    bot.record(FAR, result(), 2.1)
+    for now in (3, 20, 31):
+        bot.observe(observation(position=GridPosition(52, int(now) + 193, 340)), now)
+        assert bot.running and bot.deadline == 32.1
+    bot.observe(observation(position=GridPosition(52, 230, 340)), 32.1)
+    assert not bot.running and bot.needs_reconnect
+    assert bot.queued == 1 and bot.attempts == 1 and bot.manual_pauses == 1
 
 
 @pytest.mark.parametrize("code", [17, 20])
