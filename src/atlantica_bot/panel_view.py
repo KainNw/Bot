@@ -101,11 +101,12 @@ def _control(p) -> None:
     p.pid_entry.pack(side="left", padx=(0, 8))
     p.connect_button = ttk.Button(row, text="Conectar", command=p.connect, style="Primary.TButton")
     p.connect_button.pack(side="left")
-    ttk.Label(body, text="Nombre del Main (alias de esta ventana)", style="Caption.TLabel").pack(
-        anchor="w", pady=(14, 5)
-    )
+    ttk.Label(body, text="Nombre del Main", style="Caption.TLabel").pack(anchor="w", pady=(14, 5))
     p.alias_entry = ttk.Entry(body, textvariable=p.main_alias, state="disabled")
     p.alias_entry.pack(fill="x")
+    ttk.Label(body, textvariable=p.main_name_status, style="Caption.TLabel", wraplength=460).pack(
+        anchor="w", pady=(6, 0)
+    )
 
     profile, body = card(columns, "02  Perfil de combate")
     profile.grid(row=0, column=1, sticky="nsew")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import queue
 import sys
+import time
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
 from .errors import DiagnosticError, SceneChanged, WindowUnavailable
 from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
+from .identity import read_main_identity
 from .native_action import try_attack, try_battle_action
 from .navigation import ApproachSettings, calibrated_radius
 from .overview import OverviewWindow
@@ -95,6 +97,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.detail = tk.StringVar(value="El panel abre sin activar la caza.")
             self.scope_status = tk.StringVar()
             self.main_alias = tk.StringVar()
+            self.main_name_status = tk.StringVar(value="Conecta para leer el nombre del Main.")
+            self.main_identity = None
+            self.reading_main_name = False
+            self.next_identity_poll = 0.0
             self.header_name = tk.StringVar(value="Main sin identificar")
             self.header_context = tk.StringVar(value="Sin conexión")
             self.run_phase = tk.StringVar(value="Bot detenido")
@@ -226,17 +232,61 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 )
 
         def alias_changed(self, *_) -> None:
-            if self.identity_key is not None:
+            if self.identity_key is not None and not self.reading_main_name:
                 self.main_aliases[self.identity_key] = " ".join(self.main_alias.get().split())[:48]
+                self.main_name_status.set("Nombre manual para esta ventana.")
             self.render_identity()
 
         def sync_identity(self, *_) -> None:
             key = (self.session.process.pid, self.session.creation_time) if self.session else None
             if key != self.identity_key:
                 self.identity_key = key
-                self.main_alias.set(self.main_aliases.get(key, ""))
-            self.alias_entry.configure(state="normal" if key else "disabled")
+                self.main_identity = None
+                self.next_identity_poll = 0.0
+                self.reading_main_name = True
+                try:
+                    self.main_alias.set(self.main_aliases.get(key, ""))
+                finally:
+                    self.reading_main_name = False
+                self.main_name_status.set(
+                    "Esperando el nombre del juego."
+                    if key
+                    else "Conecta para leer el nombre del Main."
+                )
+            self.alias_entry.configure(
+                state="readonly" if self.main_identity else "normal" if key else "disabled"
+            )
             self.render_identity()
+
+        def refresh_main_identity(self, *, force: bool = False) -> None:
+            session = self.session
+            now = time.monotonic()
+            if session is None or (not force and now < self.next_identity_poll):
+                return
+            self.next_identity_poll = now + 2.0
+            try:
+                identity = read_main_identity(session)
+                if (identity.pid, identity.creation_time) != self.identity_key:
+                    raise SceneChanged("La conexión cambió al consultar el nombre.")
+            except (DiagnosticError, OSError) as exc:
+                if self.main_identity is not None:
+                    self.main_identity = None
+                    self.reading_main_name = True
+                    try:
+                        self.main_alias.set(self.main_aliases.get(self.identity_key, ""))
+                    finally:
+                        self.reading_main_name = False
+                self.main_name_status.set("Nombre pendiente: " + str(exc))
+                self.alias_entry.configure(state="normal")
+                return
+            self.main_identity = identity
+            self.reading_main_name = True
+            try:
+                self.main_alias.set(identity.name)
+            finally:
+                self.reading_main_name = False
+            self.alias_entry.configure(state="readonly")
+            self.main_name_status.set("Nombre leído del personaje principal del juego.")
 
         def render_identity(self) -> None:
             alias = " ".join(self.main_alias.get().split())[:48]
@@ -1157,6 +1207,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     "Las lecturas quedan vinculadas a ese cliente."
                 )
                 self.refresh()
+                self.refresh_main_identity(force=True)
             except Exception as exc:
                 self.session = None
                 self.start_button.configure(state="disabled")
@@ -1245,6 +1296,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.disconnect()
                 self.status.set("Cliente: sin confirmación actual")
                 self.detail.set(str(exc))
+            self.refresh_main_identity()
             self.root.after(750, self.poll)
 
         def start(self) -> None:
@@ -2288,6 +2340,26 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.session = bound_session
         panel.sync_identity()
         assert panel.main_alias.get() == "Main Uno"
+        from unittest.mock import patch
+
+        from .identity import MainIdentity
+
+        detected = MainIdentity(1, 1, 0x300000, (100, 200, 0), "NombreDelJuego")
+        with patch("atlantica_bot.gui.read_main_identity", return_value=detected):
+            panel.refresh_main_identity(force=True)
+            assert panel.main_alias.get() == "NombreDelJuego"
+            assert str(panel.alias_entry.cget("state")) == "readonly"
+            assert "NombreDelJuego" in panel.root.title()
+            assert "NombreDelJuego" in overview.window.title()
+        with patch("atlantica_bot.gui.read_main_identity", side_effect=SceneChanged("Cargando")):
+            panel.refresh_main_identity(force=True)
+            assert panel.session is bound_session and panel.main_identity is None
+            assert panel.main_alias.get() == "Main Uno"
+            assert str(panel.alias_entry.cget("state")) == "normal"
+        with patch("atlantica_bot.gui.read_main_identity", return_value=replace(detected, pid=2)):
+            panel.refresh_main_identity(force=True)
+            assert panel.session is bound_session and panel.main_identity is None
+            assert panel.main_alias.get() == "Main Uno"
         panel.session = SimpleNamespace(process=SimpleNamespace(pid=1), creation_time=3)
         panel.sync_identity()
         assert panel.main_alias.get() == ""

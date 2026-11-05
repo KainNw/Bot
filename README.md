@@ -1,15 +1,16 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.20.0** organiza la interfaz con un tema
-oscuro y cuatro pestañas: **Control**, **Mercenarios**, **Caza y botín** y
-**Diagnóstico**. **Iniciar bot**, **Parar bot** y **Copiar estado** permanecen
-visibles al cambiar de pestaña.
+con Auto Battle apagado. La versión **0.21.0** añade la consulta del **nombre del
+Main al conectar**. El resultado aparece en la cabecera, en el título de Windows
+y en la vista general junto al PID. Si el nombre no está disponible, la lectura
+se reintenta y permite un alias manual sin cortar la conexión. Consulta
+[la ruta de lectura y su validación](docs/main-identity.md).
 
-En **Control**, el campo **Nombre del Main (alias de esta ventana)** permite
-poner un nombre manual a la conexión. Se muestra en la cabecera, junto al PID,
-en el título de Windows y en la vista general. Cada instancia conserva su alias
-mientras el panel esté abierto. Consulta [la interfaz](docs/panel-interface.md).
+Conserva la interfaz oscura de **0.20.0** y sus cuatro pestañas: **Control**,
+**Mercenarios**, **Caza y botín** y **Diagnóstico**. **Iniciar bot**, **Parar bot**
+y **Copiar estado** permanecen visibles al cambiar de pestaña. Consulta
+[la distribución del panel](docs/panel-interface.md).
 
 Conserva el **Speed integrado** de 0.19.0: factores **1,25×, 1,5×, 2×, 3× y 4×**
 y vuelta a **1×** en el mapa o al parar. El usuario confirmó la aceleración y la

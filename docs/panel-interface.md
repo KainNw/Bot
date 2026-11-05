@@ -5,12 +5,13 @@ agrupados y una barra de acciones que permanece visible en todas las pestañas.
 
 ## Main y ventana conectada
 
-En **Control**, conecta la ventana del juego y completa **Nombre del Main
-(alias de esta ventana)**. El nombre se introduce manualmente y aparece arriba,
-en el título de Windows y en la vista general, junto al PID de la conexión.
-Esto permite identificar el panel desde la barra de tareas o con Alt+Tab.
+Desde **0.21.0**, **Conectar** consulta automáticamente el nombre del Main del
+PID elegido. Aparece arriba, en el título de Windows y en la vista general. El
+campo **Nombre del Main** indica si se obtuvo del juego o si la lectura está
+pendiente. Consulta [la lectura y sus comprobaciones](main-identity.md).
 
-El alias se conserva para esa instancia mientras el panel esté abierto. Al
+Si la lectura está pendiente, puedes introducir un alias manual. Se conserva
+para esa instancia mientras el panel esté abierto. Al
 cambiar de cliente se muestra su propio alias; si el juego se reinicia, la nueva
 instancia comienza sin nombre asignado. Puedes editar el alias durante la caza.
 
