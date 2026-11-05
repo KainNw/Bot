@@ -37,6 +37,24 @@ TARGET_LABELS = {
 }
 
 
+def atomic_json_write(path: Path, payload: dict) -> None:
+    text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as output:
+            temporary = Path(output.name)
+            output.write(text)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 @dataclass(frozen=True)
 class Mercenary:
     slot: int
@@ -206,19 +224,4 @@ class ProfileStore:
 
     def save(self, profile: BotProfile) -> None:
         profile.validate()
-        path = self._path(profile.number)
-        payload = json.dumps(profile.summary(), ensure_ascii=False, indent=2) + "\n"
-        self.directory.mkdir(parents=True, exist_ok=True)
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=self.directory, delete=False
-            ) as output:
-                temporary = Path(output.name)
-                output.write(payload)
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary, path)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        atomic_json_write(self._path(profile.number), profile.summary())

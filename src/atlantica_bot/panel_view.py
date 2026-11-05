@@ -128,6 +128,9 @@ def _control(p) -> None:
     ttk.Label(body, textvariable=p.profile_status, style="Caption.TLabel", wraplength=280).pack(
         anchor="w"
     )
+    ttk.Label(
+        body, textvariable=p.character_settings_status, style="Caption.TLabel", wraplength=280
+    ).pack(anchor="w", pady=(8, 0))
 
     session, body = card(content, "Estado de la sesión")
     session.pack(fill="both", expand=True, pady=(14, 0))

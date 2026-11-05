@@ -1,7 +1,15 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.22.0** revisa las órdenes pendientes de
+con Auto Battle apagado. La versión **0.23.0** guarda la configuración de cada
+personaje y la carga al reconocer su **nick** al conectar, aunque cambie el PID.
+Recuerda el último perfil, las órdenes de sus mercenarios, caza, botín, Speed y
+la opción de ejecutar turnos. Los ajustes de caza se guardan automáticamente;
+las órdenes se guardan desde el editor. Conectar carga los ajustes y deja el bot
+detenido hasta que pulses **Iniciar bot**. Consulta
+[configuración por personaje](docs/character-profiles.md).
+
+Conserva las mejoras de **0.22.0**: revisa las órdenes pendientes de
 combate cada 100 ms para observar mejor las animaciones cortas, separa los rechazos
 de ataque de las comprobaciones de recogida y permite ajustar la **espera del
 NeoACA entre 0 y 5 segundos** en **Caza y botín**. Los perfiles anteriores mantienen

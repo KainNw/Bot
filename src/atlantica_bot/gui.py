@@ -13,6 +13,7 @@ from .battle import BattleTrial, read_battle_frame
 from .battle_context import read_normal_battle
 from .bonus import BONUS_LABELS, BonusComparison, capture_bonus_snapshot, read_bonus_code
 from .capture import export_code_context
+from .character_profiles import CharacterPreferences, CharacterProfileStore, character_key
 from .clients import control_native_marker, marker_scope
 from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
 from .errors import DiagnosticError, SceneChanged, WindowUnavailable
@@ -72,7 +73,15 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.profile_editor = None
             self.overview: OverviewWindow | None = None
             self.detector: CombatDetector | None = None
-            self.profile_store = ProfileStore.for_windows()
+            self.template_profile_store = ProfileStore.for_windows()
+            self.profile_store = self.template_profile_store
+            self.character_store: CharacterProfileStore | None = None
+            self.character_settings_status = tk.StringVar(
+                value="Conecta para cargar la configuración de tu personaje."
+            )
+            self.loading_profile = False
+            self.settings_save_job = None
+            self.settings_dirty = False
             self.profile: BotProfile | None = None
             self.profile_number = tk.StringVar(value="1")
             self.profile_status = tk.StringVar()
@@ -119,6 +128,17 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.profile_number.trace_add("write", self.sync_identity)
             self.load_profile()
             self.sync_identity()
+            for variable in (
+                self.attack_delay,
+                self.search_radius,
+                self.collect_loot,
+                self.neo_loot_grace,
+                self.battle_speed_enabled,
+                self.battle_speed_rate,
+                self.world_attack_mode,
+                self.turns_enabled,
+            ):
+                variable.trace_add("write", self.schedule_character_save)
             if not smoke_test:
                 self.root.after(100, self.list_windows)
             self.root.after(750, self.poll)
@@ -242,6 +262,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             key = (self.session.process.pid, self.session.creation_time) if self.session else None
             if key != self.identity_key:
                 self.identity_key = key
+                self.reset_character_settings()
                 self.main_identity = None
                 self.next_identity_poll = 0.0
                 self.reading_main_name = True
@@ -288,6 +309,132 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.reading_main_name = False
             self.alias_entry.configure(state="readonly")
             self.main_name_status.set("Nombre leído del personaje principal del juego.")
+            self.activate_character_settings(identity)
+
+        def cancel_character_save(self) -> None:
+            if self.settings_save_job is not None:
+                self.root.after_cancel(self.settings_save_job)
+                self.settings_save_job = None
+
+        def reset_character_settings(self) -> None:
+            self.cancel_character_save()
+            self.settings_dirty = False
+            self.character_store = None
+            self.profile_store = self.template_profile_store
+            self.loading_profile = True
+            try:
+                self.turns_enabled.set(False)
+                self.profile_number.set("1")
+                self.apply_profile(self.profile_store.load(1))
+            except (DiagnosticError, OSError) as exc:
+                self.profile = None
+                self.profile_status.set(str(exc))
+            finally:
+                self.loading_profile = False
+            self.character_settings_status.set(
+                "Esperando el nombre del juego para cargar su configuración."
+                if self.session
+                else "Conecta para cargar la configuración de tu personaje."
+            )
+
+        def character_settings_match(self) -> bool:
+            identity, session, store = self.main_identity, self.session, self.character_store
+            directory = getattr(session, "directory", None)
+            return bool(
+                identity is not None
+                and session is not None
+                and store is not None
+                and directory is not None
+                and (identity.pid, identity.creation_time) == self.identity_key
+                and store.key == character_key(directory, identity.name)
+            )
+
+        def activate_character_settings(self, identity) -> None:
+            directory = getattr(self.session, "directory", None)
+            if directory is None:
+                return
+            try:
+                store = CharacterProfileStore(self.template_profile_store, directory, identity.name)
+                if self.character_store is not None and self.character_store.key == store.key:
+                    if self.settings_dirty and self.settings_save_job is None:
+                        self.schedule_character_save()
+                    return  # Name polling must never reload over edits or an active run.
+                if (
+                    self.bot_worker is not None
+                    or self.calibrating
+                    or self.bonus_open()
+                    or self.speed_open()
+                    or self.closing
+                    or self.profile_editor is not None
+                    and self.profile_editor.winfo_exists()
+                ):
+                    self.character_settings_status.set(
+                        "La configuración del personaje se cargará al terminar la operación actual."
+                    )
+                    return
+                preferences = store.load_preferences()
+                profile = store.load(preferences.selected_profile)
+                self.cancel_character_save()
+                self.loading_profile = True
+                try:
+                    self.character_store = store
+                    self.profile_store = store
+                    self.settings_dirty = False
+                    self.profile_number.set(str(preferences.selected_profile))
+                    self.turns_enabled.set(preferences.execute_turns)
+                    self.apply_profile(profile)
+                finally:
+                    self.loading_profile = False
+                self.character_settings_status.set(
+                    f"Configuración de {identity.name} cargada · guardado automático."
+                )
+                self.sync_overview_controls()
+            except (DiagnosticError, OSError) as exc:
+                self.profile = None
+                self.character_settings_status.set(f"No se pudo cargar la configuración: {exc}")
+
+        def persist_profile(self, profile: BotProfile) -> None:
+            self.cancel_character_save()
+            if self.session is not None and not self.character_settings_match():
+                raise DiagnosticError(
+                    "Espera al nombre del juego antes de guardar la configuración del personaje."
+                )
+            if self.character_store is not None:
+                self.character_store.load_preferences()
+            self.profile_store.save(profile)
+            if self.character_store is not None:
+                self.character_store.save_preferences(
+                    CharacterPreferences(profile.number, self.turns_enabled.get())
+                )
+                self.character_settings_status.set(
+                    f"Configuración de {self.character_store.name} guardada automáticamente."
+                )
+            self.profile = profile
+            self.settings_dirty = False
+
+        def schedule_character_save(self, *_) -> None:
+            if self.loading_profile or self.closing or self.character_store is None:
+                return
+            self.settings_dirty = True
+            self.cancel_character_save()
+            if not self.character_settings_match() or self.bot_worker is not None:
+                return
+            self.settings_save_job = self.root.after(600, self.flush_character_settings)
+
+        def flush_character_settings(self) -> None:
+            self.cancel_character_save()
+            if (
+                self.loading_profile
+                or self.profile is None
+                or self.bot_worker is not None
+                or not self.settings_dirty
+                or not self.character_settings_match()
+            ):
+                return
+            try:
+                self.persist_profile(self.configured_profile(self.profile))
+            except (DiagnosticError, OSError, ValueError) as exc:
+                self.character_settings_status.set(f"Cambios sin guardar: {exc}")
 
         def render_identity(self) -> None:
             alias = " ".join(self.main_alias.get().split())[:48]
@@ -472,7 +619,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         for m in self.profile.mercenaries
                     ),
                 )
-                self.profile_store.save(profile)
+                self.persist_profile(self.configured_profile(profile))
                 self.load_profile()
                 self.refresh_team()
             except (DiagnosticError, OSError, ValueError) as exc:
@@ -485,6 +632,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 except (DiagnosticError, OSError) as exc:
                     self.detail.set(f"Conservando la conexión para restaurar la escala: {exc}")
                     return
+            self.flush_character_settings()
             self.stop_bot()
             self.session = None
             self.directory = None
@@ -611,6 +759,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def start_bot(self) -> None:
             try:
                 self.require_idle_bot()
+                self.refresh_main_identity(force=True)
                 session = self.session
                 if session is None:
                     raise DiagnosticError("Conecta con la ventana elegida antes de iniciar el bot.")
@@ -638,7 +787,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     execute_turns=self.turns_enabled.get(),
                     battle_ledger=self.battle_trials,
                 )
-                self.profile_store.save(profile)
+                if self.character_settings_match() or self.session is None:
+                    self.persist_profile(profile)
+                else:
+                    self.character_settings_status.set(
+                        "Nombre pendiente: esta ejecución usa los ajustes actuales sin guardarlos."
+                    )
                 self.profile = profile
                 self.bot_report = worker.engine.summary()
                 self.bot_worker = worker
@@ -712,34 +866,47 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def load_profile(self, event=None) -> None:
             try:
                 self.require_idle_bot()
-                self.profile = self.profile_store.load(int(self.profile_number.get()))
-                self.attack_delay.set(f"{self.profile.attack_delay_seconds:g}")
-                self.search_radius.set(str(self.profile.search_radius))
-                self.collect_loot.set(self.profile.collect_remaining_loot)
-                self.neo_loot_grace.set(f"{self.profile.neo_loot_grace_seconds:g}")
-                self.battle_speed_enabled.set(self.profile.battle_speed_enabled)
-                self.battle_speed_rate.set(f"{self.profile.battle_speed_rate:g}")
-                self.world_attack_mode.set(WORLD_ATTACK_LABELS[self.profile.world_attack_mode])
-                count = sum(merc.enabled for merc in self.profile.mercenaries)
-                magic_count = sum(
-                    merc.enabled and merc.action != "basic" for merc in self.profile.mercenaries
-                )
-                self.profile_status.set(
-                    f"Perfil {self.profile.number}: {count} habilitados, {magic_count} con magia. "
-                    + (
-                        "Magia solo en primer turno; básicos después."
-                        if self.profile.magic_first_turn_only
-                        else "Repetir la acción configurada por turno."
-                    )
-                )
+                if event is not None:
+                    self.flush_character_settings()
+                self.apply_profile(self.profile_store.load(int(self.profile_number.get())))
+                if event is not None and self.character_settings_match():
+                    self.persist_profile(self.profile)
             except (DiagnosticError, OSError, ValueError) as exc:
                 self.profile = None
                 self.profile_status.set(f"No se pudo cargar el perfil: {exc}")
-            self.paint_team(
-                roster_rows(self.profile or BotProfile.default(1), None),
-                "Perfil cargado; actualiza el equipo para consultar la batalla.",
-            )
+                self.paint_team(roster_rows(BotProfile.default(1), None), str(exc))
             self.sync_overview_controls()
+
+        def apply_profile(self, profile: BotProfile) -> None:
+            was_loading = self.loading_profile
+            self.loading_profile = True
+            try:
+                self.profile = profile
+                self.attack_delay.set(f"{profile.attack_delay_seconds:g}")
+                self.search_radius.set(str(profile.search_radius))
+                self.collect_loot.set(profile.collect_remaining_loot)
+                self.neo_loot_grace.set(f"{profile.neo_loot_grace_seconds:g}")
+                self.battle_speed_enabled.set(profile.battle_speed_enabled)
+                self.battle_speed_rate.set(f"{profile.battle_speed_rate:g}")
+                self.world_attack_mode.set(WORLD_ATTACK_LABELS[profile.world_attack_mode])
+                count = sum(merc.enabled for merc in profile.mercenaries)
+                magic_count = sum(
+                    merc.enabled and merc.action != "basic" for merc in profile.mercenaries
+                )
+                self.profile_status.set(
+                    f"Perfil {profile.number}: {count} habilitados, {magic_count} con magia. "
+                    + (
+                        "Magia solo en primer turno; básicos después."
+                        if profile.magic_first_turn_only
+                        else "Repetir la acción configurada por turno."
+                    )
+                )
+                self.paint_team(
+                    roster_rows(profile, None),
+                    "Perfil cargado; actualiza el equipo para consultar la batalla.",
+                )
+            finally:
+                self.loading_profile = was_loading
 
         def configured_profile(self, profile: BotProfile) -> BotProfile:
             try:
@@ -778,7 +945,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 if self.profile is None:
                     raise DiagnosticError("Carga un perfil válido antes de guardar.")
                 updated = self.configured_profile(self.profile)
-                self.profile_store.save(updated)
+                self.persist_profile(updated)
                 self.load_profile()
                 self.detail.set(f"Opciones de caza y botín del perfil {updated.number} guardadas.")
             except (DiagnosticError, OSError, ValueError) as exc:
@@ -802,6 +969,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.profile_editor.lift()
                 return
             profile = self.profile or BotProfile.default(number)
+            selected_store = self.profile_store
             window = self.profile_editor = tk.Toplevel(self.root)
             window.title(f"Perfil {number} — mercenarios")
             frame = ttk.Frame(window, padding=16)
@@ -910,9 +1078,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             def save() -> None:
                 try:
                     self.require_idle_bot()
-                    if self.profile_number.get() != str(number):
+                    if (
+                        self.profile_number.get() != str(number)
+                        or self.profile_store is not selected_store
+                    ):
                         raise DiagnosticError(
-                            "El perfil seleccionado cambió; vuelve a abrir el editor."
+                            "El personaje o perfil seleccionado cambió; vuelve a abrir el editor."
                         )
                     updated = BotProfile(
                         number,
@@ -937,7 +1108,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                         ),
                         first_turn.get(),
                     )
-                    self.profile_store.save(self.configured_profile(updated))
+                    self.persist_profile(self.configured_profile(updated))
                     self.load_profile()
                     status.set(
                         f"Perfil {number} guardado. Revisa el equipo en la pestaña Mercenarios "
@@ -1173,6 +1344,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             try:
                 directory = Path(value).resolve(strict=True)
                 control_hunting(directory, "status")
+                self.flush_character_settings()
                 self.directory = directory
                 self.session = None
                 self.last_state = None
@@ -1349,6 +1521,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 except (DiagnosticError, OSError) as exc:
                     self.error(DiagnosticError(f"Restaura la escala antes de cerrar: {exc}"))
                     return
+            self.flush_character_settings()
             self.stop_bot()
             try:
                 active = self.directory is not None and marker_state(self.directory).marker_present
@@ -2220,7 +2393,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         from .animation_code import decoder_probe
 
         assert decoder_probe()
-        # Exercise the real packaged GUI without connecting or changing any files.
+        # Exercise the real packaged GUI without connecting to a game. Settings
+        # persistence checks below use an isolated temporary directory.
         assert tuple(panel.tabs.tab(tab, "text") for tab in panel.tabs.tabs()) == (
             "Control",
             "Mercenarios",
@@ -2418,6 +2592,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.show_members(load=False)
         panel.calibrate_combat()
         panel.calibration_window.destroy()
+        from .gui_smoke import check_character_settings
+
+        check_character_settings(panel)
         panel.session = None
         panel.root.update_idletasks()
         panel.toggle_advanced()
