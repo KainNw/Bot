@@ -5,6 +5,7 @@ import math
 import struct
 import subprocess
 import time
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 
 from . import __version__
@@ -13,7 +14,7 @@ from .clients import ClientWindow
 from .combat import CombatDetector
 from .errors import DiagnosticError, WindowUnavailable
 from .hunting import control_hunting
-from .ipc import BotLease, Cancellation
+from .ipc import BotLease, Cancellation, SpeedLease
 from .native_action import bridge_path
 from .session import GameSession
 from .speed import read_speed_snapshot
@@ -196,7 +197,7 @@ def request_speed(
     if not helper.is_file() or not helper.with_name("AtlanticaHook.dll").is_file():
         raise DiagnosticError("Falta el puente de Windows de esta versión.")
     operation = 12 if restore else 11
-    with BotLease(plan.pid), Cancellation(plan.pid) as cancellation:
+    with SpeedLease(plan.pid), BotLease(plan.pid), Cancellation(plan.pid) as cancellation:
         args = [
             str(helper),
             "--speed-restore" if restore else "--speed-apply",
@@ -398,8 +399,13 @@ class SpeedExperiment:
         if self.active:
             raise DiagnosticError("Restaura la escala antes de otra prueba.")
         self._reset_observations()
-        self.lease = BotLease(self.session.process.pid)
-        self.lease.__enter__()
+        self.lease = ExitStack()
+        try:
+            self.lease.enter_context(SpeedLease(self.session.process.pid))
+            self.lease.enter_context(BotLease(self.session.process.pid))
+        except BaseException:
+            self._release()
+            raise
         try:
             plan, snapshot = prepare_speed_plan(self.session)
             self.report.pop("preview_error", None)

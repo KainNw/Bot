@@ -1,19 +1,31 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.17.2** distingue el cambio de contexto
+con Auto Battle apagado. La versión **0.18.0** añade **Automático en cada combate**
+al complemento de Cheat Engine. Se activa una vez para el PID elegido, aplica
+el factor dentro del combate y solicita 1× al salir. Puede convivir con el bot
+de ataques del panel. Conserva un límite de 60 s por combate y espera el mapa
+antes de otro envío si debe restaurar por tiempo o por cambio gráfico.
+**Restaurar 1× / parar** en CE desactiva este automático. El paquete
+**AtlanticaPanel-Windows** incluye el panel y la carpeta de la tabla CE.
+Consulta [cómo usarlo](docs/ce-speed-trial.md#automático-con-el-bot-de-ataques).
+
+Conserva 0.17.2, que distingue el cambio de contexto
 gráfico de una salida de combate confirmada en **Atlantica-SpeedTrial-CE**.
 Mantiene la vuelta preventiva a 1× cuando cambia el gráfico y conserva el último
 resultado si se rechaza un nuevo intento. El usuario confirmó un ensayo a 3×
 con salida de combate detectada a los 6,69 s y vuelta a velocidad normal.
 Conserva **Hasta salir del combate (máx. 60 s)**, la prueba de 10 segundos,
 **Copiar registro** y la selección de 1,25×, 1,5×, 2×, 3× y 4×.
-Requiere CE de 64 bits instalado y el bot detenido. Reserva el PID y solicita
+Requiere CE de 64 bits instalado; las pruebas manuales necesitan el bot detenido.
+Reserva el control de velocidad por PID y solicita
 1× al terminar o salir de ese combate. El usuario observó aceleración y la
 respuesta inmediata de la parada manual. La confirmación de salida corresponde
 a ese ensayo; no demuestra estabilidad prolongada. El factor informado por CE no mide la animación
-ni demuestra estabilidad con el servidor. No se integra aún
-en los turnos automáticos. Consulta [cómo probarlo](docs/ce-speed-trial.md).
+ni demuestra estabilidad con el servidor. El automático de 0.18.0 tiene pruebas
+simuladas y de sincronización en Windows; su uso combinado con ataques del bot
+necesita validación en el cliente. CE controla la velocidad desde su propia
+ventana. Consulta [cómo probarlo](docs/ce-speed-trial.md).
 
 Conserva 0.16.5, que extiende la captura de animaciones
 con cuatro métodos candidatos de una tabla estática contrastada con el último

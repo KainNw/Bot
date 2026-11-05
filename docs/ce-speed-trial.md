@@ -1,4 +1,4 @@
-# Prueba manual de temporizadores con Cheat Engine — 0.17.2
+# Control de temporizadores con Cheat Engine — 0.18.0
 
 Este paquete usa el **speedhack de Cheat Engine** como alternativa experimental.
 Necesita Cheat Engine **de 64 bits para Windows**, instalado por el usuario;
@@ -6,7 +6,63 @@ el Atlantica.exe admitido sigue siendo de 32 bits. No incluye Cheat Engine ni el
 cliente del juego. Obtén CE de su [proyecto oficial](https://github.com/cheat-engine/cheat-engine).
 No requiere activar un depurador.
 
-## Cómo probar
+## Automático con el bot de ataques
+
+0.18.0 permite activar la velocidad una vez y repetirla en cada combate del
+**mismo PID e instancia**. Se apoya en los dos ensayos enviados por el usuario:
+0.17.1 detectó una salida a los 6,69 s y el usuario confirmó el regreso a velocidad
+normal; 0.17.2 registró otra salida y CE informó 1× a los 5,91 s. Esos ensayos
+validan la salida en esas sesiones, sin medir el factor visual ni la estabilidad
+del nuevo automático junto a las acciones del bot.
+
+1. Descarga **AtlanticaPanel-Windows** de la compilación 0.18.0. Contiene
+   `AtlanticaPanel.exe` y la carpeta `Atlantica-SpeedTrial-CE`. Usa el panel
+   actualizado para que sus pruebas nativas compartan la reserva de velocidad.
+   Sigue disponible el artefacto CE separado para actualizar solo la tabla.
+2. Cierra la ventana anterior de prueba una vez restaurada a 1×. En **la misma
+   ventana de CE** donde elegiste el PID del juego, carga el CT nuevo. Su título
+   debe mostrar **0.18.0**. Mantén Auto Battle y HuntingMode.txt apagados.
+3. Elige el factor y **Automático en cada combate (máx. 60 s)**. Pulsa
+   **Activar en cada combate**. Puede activarse desde el mapa: allí espera a 1×,
+   sin instalar o cambiar la velocidad antes de un combate válido. La primera
+   prueba del uso combinado puede hacerse a 1,25×, el valor predeterminado.
+4. En el panel, conecta **ese mismo PID** e inicia tu bot de ataques y su perfil
+   de turnos. El bot puede iniciarse antes o después de armar CE. Cada entrada
+   de combate conserva las comprobaciones de instancia, personaje, contexto y
+   dos observaciones separadas al menos 200 ms antes de solicitar el factor.
+5. Al terminar, CE solicita 1× y espera el siguiente combate. Usa **Copiar
+   registro** para revisar varias entradas, salidas y factores en una sola copia.
+
+**Restaurar 1× / parar en CE** restaura la tasa si está pendiente y desactiva el
+automático de velocidad. **Parar bot en el panel** detiene las acciones del bot;
+el complemento CE conserva su propio control. Si quieres detener ambos, usa
+ambas paradas. Cerrar normalmente la ventana CE solicita también la restauración.
+No fuerces el cierre de CE mientras haya una restauración pendiente.
+
+El control de velocidad usa una reserva **Speed** por PID; el trabajador de
+ataques conserva su reserva **Bot**. El automático ocupa solo Speed, por lo que
+puede coexistir con ese trabajador. Las pruebas manuales CE y la prueba nativa
+de escala del panel reservan ambas: se rechazan mientras otro controlador de
+velocidad esté activo. No se permite un segundo automático para ese PID.
+
+Si llega al límite de 60 s o restaura por un cambio gráfico, conserva 1× durante
+el resto de ese combate y exige observar el mapa antes de volver a aplicar un
+factor. No reinicia otro plazo de 60 s dentro de la misma batalla. Una lectura
+indeterminada, otro personaje, otra instancia o un cambio de proceso detienen
+el automático, con restauración del cambio propio cuando es posible. Si falla
+la restauración, retiene la reserva y deja el botón disponible; no repite el
+envío automáticamente. Si aparece **Restauración pendiente**, detén también
+el bot y usa **Restaurar 1× / parar** en CE. El PID nuevo nunca recibe una
+orden de limpieza ajena.
+
+La tabla sigue dependiendo de CE instalado y abierto. Sus controles están en
+la ventana CE; el ejecutable del panel no incorpora los hooks de CE ni inicia
+una aceleración por abrirse. La selección de proceso de CE queda bloqueada
+mientras esté abierto el control para evitar cambiar de instancia accidentalmente.
+La cooperación entre velocidad y ataques se ha probado con simulaciones y mutex
+reales de Windows, **sin una prueba combinada en el juego todavía**.
+
+## Pruebas manuales de un solo combate
 
 1. Detén el bot y cualquier otra prueba del PID elegido. Deja Auto Battle y
    HuntingMode.txt desactivados. Entra manualmente en un combate.
@@ -79,8 +135,8 @@ motivo anterior. El contador de la ventana muestra segundos transcurridos y el
 límite del modo elegido. El registro solo se redibuja cuando cambia, para poder
 seleccionar y copiar su texto.
 
-Cada prueba requiere pulsar el botón. No se activa automáticamente en el próximo
-combate y no se conecta al ejecutor de turnos del panel. El modo de salida
+Las dos pruebas manuales requieren pulsar el botón para cada ensayo y mantener
+el bot detenido. No se activan automáticamente en el próximo combate. El modo de salida
 mantiene un máximo de 60 s por ensayo y no se vuelve a activar por sí solo.
 Esta fase sirve para
 comprobar el efecto antes de integrarlo. La prueba nativa anterior del panel,
@@ -94,7 +150,8 @@ la ruta de combate, estado de Auto Battle y contexto normal. Este MD5 correspond
 al cliente de SHA-256
 `BC87A0CC5826AA7FB5E4FF10B6B7C1A349962BD8B146AD28EC3FFA9453FE04E6`.
 Usa PID y tiempo de creación, conserva un handle de la instancia original y
-reserva el mismo mutex por PID que usa el panel. Dos lecturas separadas al menos
+reserva el control de velocidad por PID. Las pruebas manuales reservan además el
+control de ataques del panel. Dos lecturas separadas al menos
 200 ms deben reconocer el mismo combate antes de cambiar temporizadores.
 
 El plazo usa el reloj de **CE**, independiente del reloj modificado del cliente.

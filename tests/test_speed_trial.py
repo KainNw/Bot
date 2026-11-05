@@ -81,6 +81,7 @@ def trial_env(turn_frame, monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr("atlantica_bot.speed_trial.BotLease", lambda _: nullcontext())
+    monkeypatch.setattr("atlantica_bot.speed_trial.SpeedLease", lambda _: nullcontext())
     monkeypatch.setattr(
         "atlantica_bot.speed_trial.Cancellation",
         lambda _: nullcontext(SimpleNamespace(name="Local\\AtlanticaPanel.Cancel.100.test")),
@@ -445,3 +446,71 @@ def test_repeated_trial_resets_previous_samples_and_results(trial_env, monkeypat
     assert experiment.report["observations"][0]["elapsed_ms"] == 0
     experiment.restore()
     assert commands == [False, True, False, True]
+
+
+def test_active_ce_speed_owner_blocks_native_trial_before_reading_or_sending(
+    trial_env, monkeypatch
+):
+    session, window, _ = trial_env
+
+    class BusySpeed:
+        def __enter__(self):
+            raise DiagnosticError("Otro controlador de velocidad")
+
+        def __exit__(self, *args):
+            pytest.fail("The blocked controller never acquired ownership")
+
+    monkeypatch.setattr(speed_trial, "SpeedLease", lambda pid: BusySpeed())
+    monkeypatch.setattr(
+        speed_trial, "prepare_speed_plan", lambda _: pytest.fail("Reserve speed before reading")
+    )
+    experiment = SpeedExperiment(session, window)
+    with pytest.raises(DiagnosticError, match="Otro controlador"):
+        experiment.start()
+    assert not experiment.active and experiment.lease is None
+
+
+def test_busy_attack_worker_releases_new_speed_reservation(trial_env, monkeypatch):
+    session, window, _ = trial_env
+    events = []
+
+    class SpeedReservation:
+        def __enter__(self):
+            events.append("speed acquired")
+
+        def __exit__(self, *args):
+            events.append("speed released")
+
+    class BusyBot:
+        def __enter__(self):
+            raise DiagnosticError("Bot activo")
+
+        def __exit__(self, *args):
+            pytest.fail("The bot lease was not acquired")
+
+    monkeypatch.setattr(speed_trial, "SpeedLease", lambda pid: SpeedReservation())
+    monkeypatch.setattr(speed_trial, "BotLease", lambda pid: BusyBot())
+    experiment = SpeedExperiment(session, window)
+    with pytest.raises(DiagnosticError, match="Bot activo"):
+        experiment.start()
+    assert events == ["speed acquired", "speed released"]
+    assert experiment.lease is None and not experiment.active
+
+
+def test_direct_native_speed_request_cannot_bypass_ce_owner(trial_env, monkeypatch):
+    session, window, _ = trial_env
+    plan, _ = prepare_speed_plan(session)
+
+    class BusySpeed:
+        def __enter__(self):
+            raise DiagnosticError("Velocidad reservada por CE")
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(speed_trial, "SpeedLease", lambda pid: BusySpeed())
+    monkeypatch.setattr(
+        speed_trial.subprocess, "run", lambda *a, **k: pytest.fail("Do not send a speed command")
+    )
+    with pytest.raises(DiagnosticError, match="reservada por CE"):
+        request_speed(session, window, plan, restore=False)

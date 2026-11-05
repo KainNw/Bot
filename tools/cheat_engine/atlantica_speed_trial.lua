@@ -1,11 +1,12 @@
 -- Atlantica: bounded manual Cheat Engine timer experiment.
 -- Requires 64-bit Cheat Engine on Windows; the game itself is 32-bit.
--- Loading this file only opens the form. Only its Test button changes timers.
-local M = {version = "0.17.2", rates = {1.25, 1.5, 2, 3, 4}, MAP = "__map__",
+-- Loading only opens the form. Automatic mode must be explicitly armed.
+local M = {version = "0.18.0", rates = {1.25, 1.5, 2, 3, 4}, MAP = "__map__",
   GRAPHICS_OTHER = "__graphics_other__",
-  modeOrder = {"timed", "battle_end"}, modes = {
+  modeOrder = {"timed", "battle_end", "automatic"}, modes = {
     timed = {seconds = 10, label = "10 segundos"},
-    battle_end = {seconds = 60, label = "Hasta salir del combate (máx. 60 s)"}
+    battle_end = {seconds = 60, label = "Hasta salir del combate (máx. 60 s)"},
+    automatic = {seconds = 60, label = "Automático en cada combate (máx. 60 s)"}
   }}
 
 local function equalRate(a, b)
@@ -118,7 +119,7 @@ function M.newTrial(api)
     for _, value in ipairs(M.rates) do if rate == value then allowed = true end end
     if not allowed then error("Elige una de las velocidades de prueba.") end
     mode = mode or "timed"
-    if not M.modes[mode] then error("Elige un modo de prueba válido.") end
+    if not M.modes[mode] or mode == "automatic" then error("Elige un modo de prueba válido.") end
     t.busy = true
     local ok, err = pcall(function()
       t.binding = api.bind()
@@ -235,6 +236,172 @@ function M.newTrial(api)
   return t
 end
 
+-- Hold a speed-only lease across encounters. Each encounter reuses the same
+-- verified manual controller; ordinary attacks keep their independent Bot lease.
+function M.newAutomatic(api)
+  local t = M.newTrial(api)
+  t.automatic, t.running, t.mode = true, false, "automatic"
+  local child, forwarded, needMap, stopRequested
+
+  local function forward()
+    if not child then return end
+    local first = math.max(1, #child.history - (child.historyRevision - (forwarded or 0)) + 1)
+    for i = first, #child.history do
+      t.history[#t.history + 1] = child.history[i]
+      t.historyRevision = t.historyRevision + 1
+      if #t.history > 100 then table.remove(t.history, 1) end
+    end
+    forwarded = child.historyRevision
+    t.ownsChange = child.ownsChange
+    t.startedAt, t.endedAt, t.duration = child.startedAt, child.endedAt, child.duration
+    if child.lastRestoration then t.lastRestoration = child.lastRestoration end
+    t.message = child.message
+  end
+
+  local function stopNow(reason)
+    t.running = false
+    if child and (child.binding or child.ownsChange or child.busy) then
+      if not child.restore(reason, "manual") then
+        forward()
+        t.phase = "restore_failed"
+        return false
+      end
+      forward()
+    end
+    t.release()
+    child, stopRequested, t.ownsChange, t.phase = nil, nil, false, "idle"
+    t.note("Automático desactivado. " .. reason .. ".")
+    return true
+  end
+
+  local function guardedStop(reason)
+    local ok, result = pcall(stopNow, reason)
+    if not ok then
+      t.running, t.phase = false, "restore_failed"
+      t.note("Limpieza pendiente: " .. tostring(result) .. ". Pulsa Restaurar 1×.")
+      return false
+    end
+    return result
+  end
+
+  function t.restore(reason)
+    stopRequested = stopRequested or reason
+    if t.busy then
+      if child and child.busy then child.restore(reason, "manual") end
+      return false
+    end
+    t.busy = true
+    local result = guardedStop(stopRequested)
+    t.busy = false
+    return result
+  end
+
+  function t.start(rate)
+    if t.busy or t.binding then error("Detén el automático anterior antes de activarlo.") end
+    local allowed = false
+    for _, value in ipairs(M.rates) do if value == rate then allowed = true end end
+    if not allowed then error("Elige una de las velocidades de prueba.") end
+    t.busy = true
+    local ok, err = pcall(function()
+      t.binding = api.bind("automatic")
+      if not equalRate(api.reportedRate(), 1) then
+        error("CE ya informa otra velocidad. Vuelve a 1× antes de activar el automático.")
+      end
+      local token, detail = api.observe(t.binding)
+      t.actorIdentity = detail and detail.actor_identity
+      t.rate, t.mode, t.duration = rate, "automatic", 60
+      t.startedAt, t.endedAt, t.running = nil, nil, true
+      needMap = token == M.GRAPHICS_OTHER
+      child, forwarded = nil, 0
+      t.phase = needMap and "waiting_map" or "waiting_battle"
+      t.note("Automático activado para PID " .. t.binding.pid .. ", creación " ..
+        t.binding.created .. "; factor=" .. rate .. "×; máximo 60 s por combate. " ..
+        "Esperando un combate válido; puede usarse junto al bot de ataques.")
+    end)
+    if not ok then
+      guardedStop(tostring(err))
+      t.busy = false
+      return false
+    end
+    if stopRequested and t.phase ~= "restore_failed" then guardedStop(stopRequested) end
+    t.busy = false
+    return t.running
+  end
+
+  function t.tick()
+    if t.busy or not t.running then return end
+    t.busy = true
+    local ok, err = pcall(function()
+      if child then
+        child.tick()
+        forward()
+        if child.phase == "restore_failed" then
+          t.running, t.phase = false, "restore_failed"
+          return
+        end
+        if child.phase ~= "idle" then t.phase = child.phase; return end
+        local result = child.lastRestoration
+        if result and (result.process_exited or
+          (result.cause ~= "battle_exit" and result.cause ~= "graphics_context_changed" and
+           result.cause ~= "time_limit")) then
+          stopRequested = stopRequested or "Estado del cliente cambió; revisa el registro"
+          return
+        end
+        -- A verified map boundary permits another encounter even when the
+        -- client recycles the very same context pointer/token.
+        needMap = not (result and result.cause == "battle_exit")
+        child, forwarded = nil, 0
+        t.phase = needMap and "waiting_map" or "waiting_battle"
+        t.note(needMap and
+          "Automático sigue activado a 1×; espera el mapa antes de otro combate." or
+          "Mapa confirmado a 1×; automático espera el siguiente combate.")
+        return
+      end
+      local token, detail = api.observe(t.binding)
+      if t.actorIdentity and (not detail or detail.actor_identity ~= t.actorIdentity) then
+        error("El personaje de la instancia cambió.")
+      end
+      if not equalRate(api.reportedRate(), 1) then
+        error("CE informa una tasa ajena al automático; no se sobrescribió.")
+      end
+      if token == M.MAP then
+        if needMap then t.note("Mapa confirmado a 1×; esperando el siguiente combate.") end
+        needMap, t.phase = false, "waiting_battle"
+        return
+      end
+      if token == M.GRAPHICS_OTHER or needMap then
+        needMap, t.phase = true, "waiting_map"
+        return
+      end
+      -- The outer adapter owns the handles. A child may restore its rate, but
+      -- must not release this lease while the automatic controller is armed.
+      local shared = setmetatable({bind = function() return t.binding end,
+        release = function() end}, {__index = api})
+      child, forwarded = M.newTrial(shared), 0
+      needMap = true
+      local started = child.start(t.rate, "battle_end")
+      forward()
+      if not started then
+        if child.phase == "restore_failed" then t.running, t.phase = false, "restore_failed"; return end
+        if not equalRate(api.reportedRate(), 1) then error("La tasa de CE cambió.") end
+        child, t.phase = nil, "waiting_map"
+        t.note("Inicio de velocidad rechazado; esperando el mapa antes de otro combate.")
+        return
+      end
+      t.phase = "arming"
+    end)
+    if not ok then stopRequested = stopRequested or tostring(err) end
+    if stopRequested and t.phase ~= "restore_failed" then guardedStop(stopRequested) end
+    t.busy = false
+  end
+
+  function t.close()
+    if not t.binding and not t.busy then return true end
+    return t.restore("Ventana cerrada")
+  end
+  return t
+end
+
 function M.newCEAdapter()
   assert(cheatEngineIs64Bit(), "Abre Cheat Engine de 64 bits en Windows.")
   local buffer = createMemoryStream()
@@ -279,9 +446,13 @@ function M.newCEAdapter()
   local api = {now = getTickCount, reportedRate = speedhack_getSpeed}
   function api.release(b)
     if b.mutex then win("ReleaseMutex", b.mutex); win("CloseHandle", b.mutex); b.mutex = nil end
+    if b.speed_mutex then
+      win("ReleaseMutex", b.speed_mutex); win("CloseHandle", b.speed_mutex); b.speed_mutex = nil
+    end
     if b.handle then win("CloseHandle", b.handle); b.handle = nil end
   end
-  function api.bind()
+  function api.bind(leaseMode)
+    assert(leaseMode == nil or leaseMode == "automatic", "Modo de reserva no reconocido.")
     local b = {pid = getOpenedProcessID()}
     assert(type(b.pid) == "number" and b.pid > 0, "Selecciona el PID del juego en CE.")
     local ok, err = pcall(function()
@@ -307,15 +478,20 @@ function M.newCEAdapter()
       local hex = {}
       for _, byte in ipairs(anchor or {}) do hex[#hex + 1] = string.format("%02x", byte) end
       assert(table.concat(hex) == expected, "La ruta de combate cargada no coincide.")
-      local mutex = win("CreateMutexW", 0, 0,
-        {type = 4, value = "Local\\AtlanticaPanel.Bot." .. b.pid})
-      assert(mutex ~= 0, "No se pudo reservar el PID.")
-      local result = win("WaitForSingleObject", mutex, 0)
-      if result ~= 0 and result ~= 0x80 then
-        win("CloseHandle", mutex)
-        error("Detén el bot y las otras pruebas de ese PID antes de continuar.")
+      local function reserve(kind)
+        local mutex = win("CreateMutexW", 0, 0,
+          {type = 4, value = "Local\\AtlanticaPanel." .. kind .. "." .. b.pid})
+        assert(mutex ~= 0, "No se pudo reservar el PID.")
+        local result = win("WaitForSingleObject", mutex, 0)
+        if result ~= 0 and result ~= 0x80 then
+          win("CloseHandle", mutex)
+          error(kind == "Speed" and "Otro controlador de velocidad ya usa ese PID." or
+            "Detén el bot antes de iniciar una prueba manual de velocidad.")
+        end
+        return mutex
       end
-      b.mutex = mutex
+      b.speed_mutex = reserve("Speed")
+      if leaseMode ~= "automatic" then b.mutex = reserve("Bot") end
       identity(b)
     end)
     if not ok then api.release(b); error(err) end
@@ -346,6 +522,7 @@ function M.newCEAdapter()
         "El contexto gráfico no tiene un valor reconocido.")
       local key = {owner, world, actor, index, contextB, d.graphics_context_index,
         read32(actor + 0x204), read32(actor + 0x208), read32(actor + 0x20c)}
+      d.actor_identity = table.concat({key[7], key[8], key[9]}, ":")
       -- The labelled map/battle/map captures on this exact build verified these
       -- local context fields. Do not treat read errors or an arbitrary new scene
       -- as a successful return to the map.
@@ -435,7 +612,8 @@ function M.open()
     return control
   end
   label("PID seleccionado en CE: " .. getOpenedProcessID() ..
-    ". Bot detenido y Auto Battle apagado. Entra en combate antes de probar.", 12, 44)
+    ". Auto Battle apagado. Pruebas manuales: bot detenido. " ..
+    "Automático: puede funcionar junto al bot de ataques.", 12, 44)
   label("Cambia temporizadores de ese proceso, incluidas esperas de red. " ..
     "La prueba solicita 1× al terminar; no garantiza que el servidor acepte el ritmo.", 60, 44)
   local rates, modes = createComboBox(form), createComboBox(form)
@@ -450,7 +628,8 @@ function M.open()
   start.Left, start.Top, start.Width, start.Caption = 16, 150, 310, "Probar 10 segundos"
   stop.Left, stop.Top, stop.Width, stop.Caption = 342, 150, 310, "Restaurar 1× / parar"
   modes.OnChange = function()
-    start.Caption = modes.ItemIndex == 1 and "Probar hasta salir del combate" or "Probar 10 segundos"
+    start.Caption = ({"Probar 10 segundos", "Probar hasta salir del combate",
+      "Activar en cada combate"})[modes.ItemIndex + 1]
   end
   local status = label(trial.message, 193, 64)
   local clock = label("Sin prueba activa.", 260, 26)
@@ -467,14 +646,16 @@ function M.open()
     "No cierres CE a la fuerza durante la prueba.", 472, 36)
   local logRevision = -1
   local phases = {idle = "sin prueba activa", arming = "comprobando", applying = "aplicando",
-    active = "activa", restoring = "restaurando 1×", restore_failed = "restauración pendiente"}
+    active = "activa", restoring = "restaurando 1×", restore_failed = "restauración pendiente",
+    waiting_battle = "esperando combate", waiting_map = "esperando el mapa"}
   local function refresh()
     start.Enabled = trial.phase == "idle" and not trial.busy and trial.binding == nil
     rates.Enabled = start.Enabled
     modes.Enabled = start.Enabled
     status.Caption = trial.message
     if trial.startedAt then
-      local prefix = trial.phase == "idle" and "Última prueba: " or "Transcurrido: "
+      local counting = trial.phase == "active" or trial.phase == "arming" or trial.phase == "applying"
+      local prefix = counting and "Transcurrido: " or "Última prueba: "
       clock.Caption = prefix .. string.format("%.1f s / límite %d s. Estado: %s.",
         trial.elapsed(), trial.duration, phases[trial.phase] or trial.phase)
     else
@@ -488,8 +669,17 @@ function M.open()
     end
   end
   start.OnClick = function()
+    local mode = M.modeOrder[modes.ItemIndex + 1]
+    local automatic = mode == "automatic"
+    if not not trial.automatic ~= automatic then
+      local nextTrial = automatic and M.newAutomatic(api) or M.newTrial(api)
+      for _, name in ipairs({"history", "historyRevision", "lastRestoration",
+        "startedAt", "endedAt", "duration"}) do nextTrial[name] = trial[name] end
+      trial = nextTrial
+      _G.AtlanticaTimerTrial.trial = trial
+    end
     local ok, err = pcall(trial.start, M.rates[rates.ItemIndex + 1],
-      M.modeOrder[modes.ItemIndex + 1])
+      mode)
     if not ok then trial.note(tostring(err)) end
     refresh()
   end

@@ -133,6 +133,7 @@ jobs:
           path: |
             dist/AtlanticaPanel.exe
             dist/SHA256.txt
+            dist/Atlantica-SpeedTrial-CE/*
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4

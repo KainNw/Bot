@@ -382,9 +382,13 @@ class FakeCE:
         self.alive = {self.pid}
         self.local, self.calls, self.rate_calls = {}, [], []
         self.lease_available = True
+        self.speed_available = True
         self.mutex_owned = False
+        self.speed_mutex_owned = False
         self.rate = 1
         self.now = 0
+        self.apply_callback = None
+        self.fail_restore = False
         self.marker = False
         self.disk_hash = "a5267787d5dc3f1699a3500d04129020"
         self.anchor = CONTEXT_ANCHOR
@@ -483,15 +487,23 @@ class FakeCE:
         if name == "GetProcessId":
             return self.handles[args[0]][0]
         if name == "WaitForSingleObject":
+            if args[0] == 0xAAB:
+                return 0 if self.speed_available else 0x102
             if args[0] == 0xAAA:
                 return 0 if self.lease_available else 0x102
             return 0x102 if self.handles[args[0]][0] in self.alive else 0
         if name == "CreateMutexW":
             assert args[2]["type"] == 4
+            if args[2]["value"] == f"Local\\AtlanticaPanel.Speed.{self.pid}":
+                self.speed_mutex_owned = self.speed_available
+                return 0xAAB
             assert args[2]["value"] == f"Local\\AtlanticaPanel.Bot.{self.pid}"
             self.mutex_owned = self.lease_available
             return 0xAAA
         if name == "ReleaseMutex":
+            if args[0] == 0xAAB:
+                self.speed_mutex_owned = False
+                return 1
             self.mutex_owned = False
             return 1
         if name == "CloseHandle":
@@ -508,7 +520,11 @@ class FakeCE:
 
     def set_rate(self, rate):
         self.rate_calls.append((self.pid, self.handles[self.ce_handle][1], rate))
+        if rate == 1 and self.fail_restore:
+            raise RuntimeError("restore unavailable")
         self.rate = rate
+        if rate != 1 and self.apply_callback:
+            self.apply_callback()
 
     def open_process(self, pid):
         self.pid = pid

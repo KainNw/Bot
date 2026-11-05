@@ -6,7 +6,7 @@ import threading
 import pytest
 
 from atlantica_bot.errors import DiagnosticError
-from atlantica_bot.ipc import BotLease, Cancellation
+from atlantica_bot.ipc import BotLease, Cancellation, SpeedLease
 from atlantica_bot.windows import DWORD, HANDLE, _bind
 
 
@@ -49,3 +49,28 @@ def test_cancelled_run_cannot_cancel_a_later_run_after_its_handle_closes():
     finally:
         current.cancel()
         current.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Necesita mutex reales de Windows.")
+@pytest.mark.parametrize(
+    "held,allowed,blocked",
+    [(BotLease, SpeedLease, BotLease), (SpeedLease, BotLease, SpeedLease)],
+)
+def test_speed_and_attack_owners_coexist_but_same_kind_cannot_compete(held, allowed, blocked):
+    results = []
+
+    def contender():
+        with allowed(os.getpid()):
+            results.append("independent owner allowed")
+        try:
+            with blocked(os.getpid()):
+                results.append("unexpected second owner")
+        except DiagnosticError:
+            results.append("same owner kind blocked")
+
+    with held(os.getpid()):
+        thread = threading.Thread(target=contender)
+        thread.start()
+        thread.join(2)
+        assert not thread.is_alive()
+    assert results == ["independent owner allowed", "same owner kind blocked"]

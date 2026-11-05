@@ -49,6 +49,9 @@ class Cancellation:
 class BotLease:
     """A thread-owned, recursive Windows mutex; held for a whole bot run or one trial."""
 
+    namespace = "Bot"
+    owner_description = "otro bot o prueba"
+
     def __init__(self, pid: int):
         self.pid = pid
         self._handle = None
@@ -61,13 +64,15 @@ class BotLease:
         wait = _bind(kernel, "WaitForSingleObject", [HANDLE, DWORD], DWORD)
         self._release = _bind(kernel, "ReleaseMutex", [HANDLE], BOOL)
         self._close = _bind(kernel, "CloseHandle", [HANDLE], BOOL)
-        handle = create(None, False, f"Local\\AtlanticaPanel.Bot.{self.pid}")
+        handle = create(None, False, f"Local\\AtlanticaPanel.{self.namespace}.{self.pid}")
         if not handle:
             _fail("Reservar el cliente para el bot")
         result = wait(handle, 0)
         if result not in (0, 0x80):
             self._close(handle)
-            raise DiagnosticError(f"El PID {self.pid} ya está bajo control de otro bot o prueba.")
+            raise DiagnosticError(
+                f"El PID {self.pid} ya está bajo control de {self.owner_description}."
+            )
         self._handle = handle
         return self
 
@@ -76,3 +81,10 @@ class BotLease:
             self._release(self._handle)
             self._close(self._handle)
             self._handle = None
+
+
+class SpeedLease(BotLease):
+    """Exclusive speed controller, independent of the ordinary attack worker."""
+
+    namespace = "Speed"
+    owner_description = "otro controlador de velocidad"
