@@ -37,6 +37,10 @@ REJECTED = {
         "una vez para usar el speed del panel."
     ),
     49: "No se pudieron preparar los relojes. Reinicia el cliente antes de probar de nuevo.",
+    50: (
+        "Otra versión del panel dejó relojes cargados. "
+        "Reinicia ese cliente para actualizar el Speed."
+    ),
 }
 
 

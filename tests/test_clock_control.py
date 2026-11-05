@@ -243,7 +243,7 @@ def test_incomplete_response_keeps_cleanup_reserved(clock):
     assert control.attempted
 
 
-@pytest.mark.parametrize("code", [9, 13, 14, 46, 47, 48, 49])
+@pytest.mark.parametrize("code", [9, 13, 14, 46, 47, 48, 49, 50])
 def test_explicit_start_rejection_does_not_send_cleanup_or_drop_pid(clock, code):
     control, state = clock
     state.malformed = lambda data: data.update(status=code)

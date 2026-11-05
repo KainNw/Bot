@@ -5,7 +5,7 @@
 #include <cwchar>
 #include <tlhelp32.h>
 
-extern "C" { volatile LONG AtlanticaClockHooksInstalled = 0; }
+extern "C" { __declspec(dllexport) volatile LONG AtlanticaClockHooksInstalled = 0; }
 namespace {
 #ifdef ATLANTICA_CLOCK_TEST_LIMIT
 constexpr ULONGLONG kBattleLimit = ATLANTICA_CLOCK_TEST_LIMIT;
@@ -99,13 +99,23 @@ void Restore(uint32_t reason, bool disarm) {
         if (control.cancellation) { CloseHandle(control.cancellation); control.cancellation = nullptr; }
     } else control.need_map = reason != ReturnedMap;
 }
-bool ExistingCE() {
+uint32_t ExistingClock() {
     const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
-    if (snapshot == INVALID_HANDLE_VALUE) return true;
+    if (snapshot == INVALID_HANDLE_VALUE) return ClockUnavailable;
+    HMODULE current = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(&ClockExecute), &current)) { CloseHandle(snapshot); return ClockUnavailable; }
     MODULEENTRY32W entry = {}; entry.dwSize = sizeof entry;
-    bool found = false;
+    uint32_t found = 0;
     if (Module32FirstW(snapshot, &entry)) do {
-        if (GetProcAddress(entry.hModule, "InitializeSpeedhack")) { found = true; break; }
+        if (GetProcAddress(entry.hModule, "InitializeSpeedhack")) { found = ClockExternal; break; }
+        if (entry.hModule != current) {
+            auto marker = GetProcAddress(entry.hModule, "AtlanticaClockHooksInstalled");
+            if (!marker) marker = GetProcAddress(entry.hModule, "_AtlanticaClockHooksInstalled");
+            if (marker && Read<LONG>(reinterpret_cast<uintptr_t>(marker)) != 0) {
+                found = ClockOldPanel; break;
+            }
+        }
     } while (Module32NextW(snapshot, &entry));
     CloseHandle(snapshot); return found;
 }
@@ -183,7 +193,8 @@ uint32_t ClockExecute(SharedCommand* cmd, HANDLE cancellation, HWND window) {
     if (control.armed) { Fill(cmd); return ClockBusy; }
     if (!Allowed(Float(cmd->clock_rate_bits)) || !cancellation || WaitForSingleObject(cancellation, 0) != WAIT_TIMEOUT
         || !cmd->clock_owner_pid || cmd->clock_owner_pid == GetCurrentProcessId()) return ClockRejected;
-    if (ExistingCE()) return ClockExternal;
+    const auto existing = ExistingClock();
+    if (existing) return existing;
     Frame frame;
     if (!StableFrame(&frame, true)) return ClockRejected;
     const auto owner = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, cmd->clock_owner_pid);

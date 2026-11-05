@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import struct
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from .errors import BeforeSendChanged, DiagnosticError, SceneChanged, WindowUnav
 from .hunting import control_hunting
 from .ipc import BotLease, Cancellation
 from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
+from .native_cache import stable_bridge
 from .navigation import ApproachSettings
 from .session import GameSession
 from .world import Candidate, GridPosition, NativePursuit, NavigationState
@@ -62,7 +64,10 @@ RESULTS = {
 def bridge_path() -> Path:
     if getattr(sys, "frozen", False):
         root = Path(sys._MEIPASS)
-        return root / "native" / "AtlanticaBridge.exe"
+        directory = os.environ.get("LOCALAPPDATA")
+        if not directory:
+            raise DiagnosticError("Windows no publica la carpeta del puente del panel.")
+        return stable_bridge(root / "native", Path(directory) / "AtlanticaPanel" / "native")
     return (
         Path(__file__).resolve().parents[2] / "build" / "native" / "Release" / "AtlanticaBridge.exe"
     )

@@ -26,6 +26,11 @@ para evitar reutilizar un PID. Cada panel reserva el control de velocidad de su
 PID. No actives CE sobre una instancia que ya haya usado el Speed nativo: para
 cambiar de sistema hay que reiniciar ese cliente.
 
+Puedes cerrar y abrir la misma compilación del panel sin cambiar la ruta de sus
+componentes nativos. Si actualizas a una compilación diferente mientras ese
+cliente conserva los relojes de la anterior, el panel pide reiniciar ese juego
+antes de activar el Speed nuevo.
+
 El controlador solicita **1×** al parar, al cerrar el panel, al perder su proceso
 propietario o ante una lectura inválida. Un cambio gráfico o de preparación del
 combate devuelve 1× y espera el mapa antes de volver a acelerar. También tiene

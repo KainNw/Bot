@@ -28,7 +28,8 @@ enum Result : uint32_t {
     BattleLootQueued = 36, BattleLootNotEligible = 37,
     SpeedApplied = 38, SpeedRestored = 39, SpeedChanged = 40, SpeedRejected = 41,
     SpeedRetired = 42, ClockArmed = 43, ClockStopped = 44, ClockReported = 45,
-    ClockBusy = 46, ClockRejected = 47, ClockExternal = 48, ClockUnavailable = 49
+    ClockBusy = 46, ClockRejected = 47, ClockExternal = 48, ClockUnavailable = 49,
+    ClockOldPanel = 50
 };
 struct SharedCommand {
     uint32_t magic, version, pid, nonce_lo, nonce_hi, operation, slot;

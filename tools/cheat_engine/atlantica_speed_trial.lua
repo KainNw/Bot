@@ -500,7 +500,8 @@ function M.newCEAdapter()
       identity(b)
       assert(not targetIs64Bit(), "El cliente admitido es de 32 bits.")
       local nativeClock = type(getAddressSafe) == "function"
-        and getAddressSafe("AtlanticaHook.AtlanticaClockHooksInstalled")
+        and (getAddressSafe("AtlanticaHook.AtlanticaClockHooksInstalled")
+          or getAddressSafe("AtlanticaHook._AtlanticaClockHooksInstalled"))
       assert(not nativeClock or readInteger(nativeClock) == 0,
         "Este cliente ya usa los relojes del panel. No combines CE; reinicia el juego para cambiar.")
       local executable
