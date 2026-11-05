@@ -2171,7 +2171,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         )
         for tab in panel.tabs.tabs():
             panel.tabs.select(tab)
-            panel.root.update_idletasks()
+            panel.root.update()
             assert panel.bot_start_button.winfo_ismapped()
             assert panel.bot_stop_button.winfo_ismapped()
         original_geometry = panel.root.geometry()

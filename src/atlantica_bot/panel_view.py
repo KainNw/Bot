@@ -2,7 +2,7 @@
 
 from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
 from .profiles import WORLD_ATTACK_LABELS
-from .ui_theme import apply_theme, card, page_heading
+from .ui_theme import apply_theme, card, page_heading, scrollable
 
 
 def build_panel(p) -> None:
@@ -76,7 +76,9 @@ def build_panel(p) -> None:
 def _control(p) -> None:
     from tkinter import ttk
 
-    columns = ttk.Frame(p.control_tab, style="Page.TFrame")
+    scroll, content = scrollable(p.control_tab)
+    scroll.pack(fill="both", expand=True)
+    columns = ttk.Frame(content, style="Page.TFrame")
     columns.pack(fill="x")
     columns.columnconfigure(0, weight=3, uniform="control")
     columns.columnconfigure(1, weight=2, uniform="control")
@@ -122,18 +124,18 @@ def _control(p) -> None:
         body, text="Ejecutar turnos del perfil", variable=p.turns_enabled
     )
     p.turns_check.pack(anchor="w", pady=(12, 4))
-    ttk.Label(body, textvariable=p.profile_status, style="Caption.TLabel", wraplength=310).pack(
+    ttk.Label(body, textvariable=p.profile_status, style="Caption.TLabel", wraplength=280).pack(
         anchor="w"
     )
 
-    session, body = card(p.control_tab, "Estado de la sesión")
+    session, body = card(content, "Estado de la sesión")
     session.pack(fill="both", expand=True, pady=(14, 0))
     ttk.Label(body, textvariable=p.status, style="Accent.TLabel").pack(anchor="w")
-    ttk.Label(body, textvariable=p.execution_status, wraplength=880).pack(anchor="w", pady=(6, 0))
-    ttk.Label(body, textvariable=p.bot_status, style="Muted.TLabel", wraplength=880).pack(
+    ttk.Label(body, textvariable=p.execution_status, wraplength=780).pack(anchor="w", pady=(6, 0))
+    ttk.Label(body, textvariable=p.bot_status, style="Muted.TLabel", wraplength=780).pack(
         anchor="w", pady=(6, 0)
     )
-    ttk.Label(body, textvariable=p.detail, style="Caption.TLabel", wraplength=880).pack(
+    ttk.Label(body, textvariable=p.detail, style="Caption.TLabel", wraplength=780).pack(
         anchor="w", pady=(6, 0)
     )
 
@@ -144,7 +146,8 @@ def _hunting(p) -> None:
     page_heading(
         p.hunt_tab, "Caza y botín", "Ajusta la búsqueda, el ritmo y las opciones del perfil."
     )
-    columns = ttk.Frame(p.hunt_tab, style="Page.TFrame")
+    scroll, content = scrollable(p.hunt_tab)
+    columns = ttk.Frame(content, style="Page.TFrame")
     for column in (0, 1):
         columns.columnconfigure(column, weight=1, uniform="hunt")
     hunting, body = card(columns, "Búsqueda y ataque")
@@ -170,7 +173,7 @@ def _hunting(p) -> None:
     ttk.Label(
         body,
         text="De 5 a 500 casillas. Se usan los mobs cargados por el juego.",
-        wraplength=390,
+        wraplength=370,
         style="Caption.TLabel",
     ).pack(anchor="w", pady=(4, 10))
     row = ttk.Frame(body)
@@ -182,14 +185,14 @@ def _hunting(p) -> None:
     ttk.Label(
         body,
         text="De 0 a 60 s. La magia del primer turno conserva su rapidez.",
-        wraplength=390,
+        wraplength=370,
         style="Caption.TLabel",
     ).pack(anchor="w", pady=(6, 8))
     ttk.Label(
         body,
         text="Desde mi posición solicita combate sin ordenar acercamiento. "
         "La distancia aceptada depende del servidor.",
-        wraplength=390,
+        wraplength=370,
         style="Muted.TLabel",
     ).pack(anchor="w")
 
@@ -212,14 +215,14 @@ def _hunting(p) -> None:
     )
     p.battle_speed_list.pack(side="left", padx=8)
     ttk.Label(row, text="×").pack(side="left")
-    ttk.Label(body, textvariable=p.battle_speed_status, style="Accent.TLabel", wraplength=390).pack(
+    ttk.Label(body, textvariable=p.battle_speed_status, style="Accent.TLabel", wraplength=370).pack(
         anchor="w", pady=(8, 4)
     )
     ttk.Label(
         body,
         text="Vuelve a 1× al salir del combate o parar el bot.",
         style="Caption.TLabel",
-        wraplength=390,
+        wraplength=370,
     ).pack(anchor="w")
     loot, body = card(extras, "Botín y bonus")
     loot.pack(fill="both", expand=True, pady=(14, 0))
@@ -232,7 +235,7 @@ def _hunting(p) -> None:
         text="Deja 1 s al NeoACA y después busca el botín restante. "
         "La recogida del bonus es experimental.",
         style="Caption.TLabel",
-        wraplength=390,
+        wraplength=370,
     ).pack(anchor="w", pady=(8, 0))
     save = ttk.Frame(p.hunt_tab, style="Page.TFrame")
     save.pack(side="bottom", fill="x", pady=(14, 0))
@@ -244,6 +247,7 @@ def _hunting(p) -> None:
         save, text="Iniciar bot también guarda estas opciones.", style="PageHint.TLabel"
     ).pack(side="left", padx=12)
 
+    scroll.pack(fill="both", expand=True)
     columns.pack(fill="both", expand=True)
 
 
@@ -251,7 +255,9 @@ def _diagnostics(p) -> None:
     from tkinter import ttk
 
     page_heading(p.diagnostics_tab, "Diagnóstico", "Consultas, capturas y pruebas individuales.")
-    diagnostics, body = card(p.diagnostics_tab, "Lecturas y capturas")
+    scroll, content = scrollable(p.diagnostics_tab)
+    scroll.pack(fill="both", expand=True)
+    diagnostics, body = card(content, "Lecturas y capturas")
     diagnostics.pack(fill="x")
     row = ttk.Frame(body)
     row.pack(fill="x")
@@ -278,17 +284,17 @@ def _diagnostics(p) -> None:
     )
     p.calibration_button.pack(side="left", padx=(0, 8))
     ttk.Button(row, text="Capturar bonus", command=p.capture_bonus).pack(side="left")
-    ttk.Label(body, textvariable=p.detector_status, style="Caption.TLabel", wraplength=870).pack(
+    ttk.Label(body, textvariable=p.detector_status, style="Caption.TLabel", wraplength=780).pack(
         anchor="w", pady=(12, 0)
     )
-    tools, body = card(p.diagnostics_tab, "Herramientas adicionales")
+    tools, body = card(content, "Herramientas adicionales")
     tools.pack(fill="both", expand=True, pady=(14, 0))
     row = ttk.Frame(body)
     row.pack(fill="x")
     p.browse_button = ttk.Button(row, text="Seleccionar carpeta", command=p.browse)
     p.browse_button.pack(side="left", padx=(0, 8))
     ttk.Button(row, text="Prueba de velocidad nativa", command=p.open_speed_trial).pack(side="left")
-    ttk.Label(body, textvariable=p.folder, style="Caption.TLabel", wraplength=870).pack(
+    ttk.Label(body, textvariable=p.folder, style="Caption.TLabel", wraplength=780).pack(
         anchor="w", pady=(10, 6)
     )
     p.more_button = ttk.Button(body, text="Mostrar controles avanzados", command=p.toggle_advanced)
@@ -308,7 +314,7 @@ def _diagnostics(p) -> None:
         row, text="Copiar prueba", command=p.copy_trial, state="disabled"
     )
     p.copy_trial_button.pack(side="left")
-    ttk.Label(p.advanced, textvariable=p.scope_status, style="Caption.TLabel", wraplength=870).pack(
+    ttk.Label(p.advanced, textvariable=p.scope_status, style="Caption.TLabel", wraplength=780).pack(
         anchor="w", pady=(8, 0)
     )
     ttk.Label(p.advanced, textvariable=p.request, style="Caption.TLabel").pack(anchor="w", pady=4)

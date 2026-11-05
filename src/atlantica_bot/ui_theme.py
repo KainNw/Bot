@@ -197,3 +197,79 @@ def page_heading(parent, title: str, subtitle: str):
     ttk.Label(heading, text=subtitle, style="PageHint.TLabel", wraplength=880).pack(
         anchor="w", pady=(4, 0)
     )
+
+
+def scrollable(parent):
+    """Keep settings reachable in small windows without scrolling the action bar."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    outer = ttk.Frame(parent, style="Page.TFrame")
+    canvas = tk.Canvas(
+        outer, background=BACKGROUND, highlightthickness=0, borderwidth=0, yscrollincrement=24
+    )
+    scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side="left", fill="both", expand=True)
+    body = ttk.Frame(canvas, style="Page.TFrame")
+    item = canvas.create_window((0, 0), window=body, anchor="nw")
+    pending = [False]
+
+    def resize():
+        pending[0] = False
+        try:
+            width, height = canvas.winfo_width(), canvas.winfo_height()
+            content_height = max(height, body.winfo_reqheight())
+            canvas.itemconfigure(item, width=width, height=content_height)
+            canvas.configure(scrollregion=(0, 0, width, content_height))
+            if content_height > height + 1:
+                if not scrollbar.winfo_manager():
+                    scrollbar.pack(side="right", fill="y", padx=(8, 0))
+            else:
+                scrollbar.pack_forget()
+                canvas.yview_moveto(0)
+        except tk.TclError:
+            pass  # The window may have closed before this idle redraw.
+
+    def schedule(_event=None):
+        if not pending[0]:
+            pending[0] = True
+            outer.after_idle(resize)
+
+    def contains(widget):
+        while widget is not None:
+            if widget == body or widget == canvas or widget == scrollbar:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
+
+    def wheel(event):
+        if not canvas.winfo_ismapped() or not contains(event.widget):
+            return None
+        if event.widget.winfo_class() in ("TCombobox", "TSpinbox", "Treeview", "Text"):
+            return None
+        delta = getattr(event, "delta", 0)
+        direction = -1 if getattr(event, "num", None) == 4 or delta > 0 else 1
+        canvas.yview_scroll(direction * max(1, abs(delta) // 120), "units")
+        return "break"
+
+    def focus(event):
+        if not canvas.winfo_ismapped() or not contains(event.widget):
+            return
+        top = event.widget.winfo_rooty() - body.winfo_rooty()
+        bottom = top + event.widget.winfo_height()
+        visible = canvas.canvasy(0)
+        size = max(1, body.winfo_height())
+        if top < visible:
+            canvas.yview_moveto(max(0, top - 8) / size)
+        elif bottom > visible + canvas.winfo_height():
+            canvas.yview_moveto((bottom - canvas.winfo_height() + 8) / size)
+
+    body.bind("<Configure>", schedule)
+    canvas.bind("<Configure>", schedule)
+    window = outer.winfo_toplevel()
+    window.bind("<MouseWheel>", wheel, add="+")
+    window.bind("<Button-4>", wheel, add="+")
+    window.bind("<Button-5>", wheel, add="+")
+    window.bind("<FocusIn>", focus, add="+")
+    return outer, body
