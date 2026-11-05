@@ -2,6 +2,7 @@
 #include "clock_scaler.h"
 #include <atomic>
 #include <cstring>
+#include <cwchar>
 #include <tlhelp32.h>
 
 extern "C" { volatile LONG AtlanticaClockHooksInstalled = 0; }
@@ -199,7 +200,9 @@ uint32_t ClockExecute(SharedCommand* cmd, HANDLE cancellation, HWND window) {
         CloseHandle(signal); CloseHandle(owner); Fill(cmd); return ClockUnavailable;
     }
     InterlockedExchange(&AtlanticaClockHooksInstalled, 1);
-    if (!clock_scaler::Initialize(ClockPoll, &control.error)) {
+    DWORD clock_error = 0;
+    if (!clock_scaler::Initialize(ClockPoll, &clock_error)) {
+        control.error = clock_error;
         CloseHandle(signal); CloseHandle(owner); Fill(cmd); return ClockUnavailable;
     }
     control.owner_pid = cmd->clock_owner_pid; control.lo = cmd->clock_created_lo; control.hi = cmd->clock_created_hi;

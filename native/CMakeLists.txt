@@ -29,3 +29,5 @@ target_compile_definitions(ClockControllerSelfTest PRIVATE ATLANTICA_CLOCK_TEST_
 target_compile_options(ClockControllerSelfTest PRIVATE /W4 /WX /EHsc)
 target_link_libraries(ClockControllerSelfTest PRIVATE ClockScaler user32)
 add_test(NAME own_fixture_clock_lifecycle COMMAND ClockControllerSelfTest)
+set_tests_properties(own_window_hook_and_build_guard own_process_clock_scaling
+  own_fixture_clock_lifecycle PROPERTIES TIMEOUT 30)

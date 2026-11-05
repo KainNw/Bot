@@ -22,7 +22,7 @@ static DWORD Parent() {
 }
 static bool Owner(SharedCommand& command, DWORD pid) {
     const auto process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    FILETIME created, exit, kernel, user;
+    FILETIME created = {}, exit = {}, kernel = {}, user = {};
     const bool ok = process && GetProcessTimes(process, &created, &exit, &kernel, &user);
     if (ok) { command.clock_owner_pid = pid; command.clock_created_lo = created.dwLowDateTime; command.clock_created_hi = created.dwHighDateTime; }
     if (process) CloseHandle(process);

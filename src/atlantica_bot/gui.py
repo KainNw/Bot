@@ -867,7 +867,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 speed_rate = float(self.battle_speed_rate.get().strip().replace(",", "."))
             except ValueError as exc:
                 raise DiagnosticError(
-                    "Escribe una espera de 0 a 60 s y un radio entero de 5 a 500."
+                    "Escribe una espera de 0 a 60 s, un radio entero de 5 a 500 "
+                    "y elige un factor de Speed de la lista."
                 ) from exc
             updated = replace(
                 profile,

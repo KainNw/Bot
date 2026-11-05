@@ -83,10 +83,10 @@ DWORD WINAPI HookMM() {
 BOOL WINAPI HookQpc(LARGE_INTEGER* value) {
     if (inside) return original_qpc(value);
     Guard guard; PollOnce();
+    Lock held;
     LARGE_INTEGER real;
     const auto result = original_qpc(&real);
     if (!result || !value) return result;
-    Lock held;
     value->QuadPart = static_cast<LONGLONG>(Advance(qpc,
         static_cast<ULONGLONG>(real.QuadPart), original_tick64()));
     return result;
