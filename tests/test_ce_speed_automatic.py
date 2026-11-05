@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from test_ce_speed_trial import FakeCE, install_fake_gui
 
 
@@ -248,3 +249,99 @@ def test_gui_automatic_mode_runs_with_bot_and_stop_releases_speed():
     forms = install_fake_gui(ce, on_show)
     ce.module.open()
     assert forms[0].destroyed
+
+
+@pytest.mark.parametrize("not_ready", ["phase", "context", "turn"])
+def test_battle_entry_waits_at_one_until_context_and_turn_are_ready(not_ready):
+    ce = FakeCE()
+    map_state(ce)
+    auto = ce.module.newAutomatic(ce.api)
+    assert auto.start(3)
+    battle_state(ce)
+    if not_ready == "phase":
+        ce.memory[ce.manager + 0x234C] = 2
+    elif not_ready == "context":
+        ce.memory[ce.manager + 8] = 0
+    else:
+        ce.memory[ce.context + 0x6C74] = 0xFFFFFFFF
+    for _ in range(3):
+        ce.now += 100
+        auto.tick()
+    assert auto.running and rates(ce) == [] and auto.phase == "waiting_battle"
+    ce.memory[ce.manager + 0x234C] = 3
+    ce.memory[ce.manager + 8] = ce.context
+    ce.memory[ce.context + 0x6C74] = 1
+    auto.tick()
+    ce.now += 200
+    auto.tick()
+    assert rates(ce) == [3] and auto.phase == "active"
+    assert auto.close()
+
+
+def test_battle_losing_readiness_restores_and_waits_for_a_map_boundary():
+    ce = FakeCE()
+    auto = active_auto(ce)
+    ce.memory[ce.manager + 0x234C] = 2
+    auto.tick()
+    assert rates(ce) == [3, 1] and auto.lastRestoration.cause == "battle_not_ready"
+    ce.memory[ce.manager + 0x234C] = 3
+    auto.tick()
+    assert rates(ce) == [3, 1] and auto.phase == "waiting_map"
+    assert auto.close()
+
+
+def test_readiness_lost_before_initial_apply_does_not_skip_the_whole_encounter():
+    ce = FakeCE()
+    auto = ce.module.newAutomatic(ce.api)
+    assert auto.start(3)
+    auto.tick()
+    ce.memory[ce.context + 0x6C74] = 0xFFFFFFFF
+    ce.now += 200
+    auto.tick()
+    assert auto.running and rates(ce) == []
+    assert "Mapa confirmado" not in "\n".join(auto.history.values())
+    ce.memory[ce.context + 0x6C74] = 1
+    auto.tick()
+    ce.now += 200
+    auto.tick()
+    assert auto.phase == "active" and rates(ce) == [3]
+    assert auto.close()
+
+
+def test_character_change_between_idle_read_and_child_start_never_applies_speed():
+    ce = FakeCE()
+    base_observe = ce.api.observe
+    reads = 0
+
+    def changing_observe(plan):
+        nonlocal reads
+        result = base_observe(plan)
+        reads += 1
+        if reads == 2:
+            ce.memory[ce.actor + 0x204] += 1
+        return result
+
+    ce.api.observe = changing_observe
+    auto = ce.module.newAutomatic(ce.api)
+    assert auto.start(3)
+    auto.tick()
+    assert rates(ce) == [] and not auto.running and not ce.speed_mutex_owned
+
+
+def test_read_failure_inside_child_start_disables_without_a_speed_command():
+    ce = FakeCE()
+    base_observe = ce.api.observe
+    reads = 0
+
+    def changing_observe(plan):
+        nonlocal reads
+        reads += 1
+        if reads == 3:
+            ce.memory[0x1539CE18] = 2
+        return base_observe(plan)
+
+    ce.api.observe = changing_observe
+    auto = ce.module.newAutomatic(ce.api)
+    assert auto.start(3)
+    auto.tick()
+    assert rates(ce) == [] and not auto.running and not ce.speed_mutex_owned

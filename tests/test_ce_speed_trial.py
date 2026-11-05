@@ -563,15 +563,15 @@ def test_adapter_rejects_wrong_build_or_busy_pid_and_releases_resources(problem)
     assert all(handle < 0x900 for handle in ce.handles)
 
 
-@pytest.mark.parametrize("problem", ["context", "phase", "auto", "hunting", "marker", "instance"])
+@pytest.mark.parametrize("problem", ["context", "manager", "auto", "hunting", "marker", "instance"])
 def test_adapter_gates_battle_and_native_modes(problem):
     ce = FakeCE()
     b = ce.api.bind()
     if problem == "context":
         ce.memory[ce.actor + 0x318] = 0xFFFFFFFF
         ce.memory[ce.actor + 0x254] = 0
-    elif problem == "phase":
-        ce.memory[ce.manager + 0x234C] = 2
+    elif problem == "manager":
+        ce.memory[ce.manager] = 0
     elif problem == "auto":
         ce.memory[ce.owner + 0x16394] = 1
     elif problem == "hunting":

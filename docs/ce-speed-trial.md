@@ -30,6 +30,8 @@ del nuevo automático junto a las acciones del bot.
    de turnos. El bot puede iniciarse antes o después de armar CE. Cada entrada
    de combate conserva las comprobaciones de instancia, personaje, contexto y
    dos observaciones separadas al menos 200 ms antes de solicitar el factor.
+   Si el cliente ya publica el contexto, pero aún falta la fase de combate,
+   el objeto de contexto o un turno válido, espera a 1× hasta que estén listos.
 5. Al terminar, CE solicita 1× y espera el siguiente combate. Usa **Copiar
    registro** para revisar varias entradas, salidas y factores en una sola copia.
 

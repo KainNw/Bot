@@ -3,6 +3,7 @@
 -- Loading only opens the form. Automatic mode must be explicitly armed.
 local M = {version = "0.18.0", rates = {1.25, 1.5, 2, 3, 4}, MAP = "__map__",
   GRAPHICS_OTHER = "__graphics_other__",
+  NOT_READY = "__not_ready__",
   modeOrder = {"timed", "battle_end", "automatic"}, modes = {
     timed = {seconds = 10, label = "10 segundos"},
     battle_end = {seconds = 60, label = "Hasta salir del combate (máx. 60 s)"},
@@ -131,6 +132,7 @@ function M.newTrial(api)
       if battle == M.GRAPHICS_OTHER then
         error("El contexto gráfico cambió. Espera un momento y vuelve a probar.", 0)
       end
+      if battle == M.NOT_READY then error("El combate todavía no está listo. Espera el turno.", 0) end
       -- A rejected attempt must not erase the last completed trial or its cause.
       t.battle, t.mode, t.duration = battle, mode, M.modes[mode].seconds
       t.startedAt, t.endedAt, t.lastRestoration = nil, nil, nil
@@ -173,6 +175,10 @@ function M.newTrial(api)
           "graphics_context_changed")
         return
       end
+      if current == M.NOT_READY then
+        finishRestore("El combate dejó de estar listo; vuelta preventiva a 1×", "battle_not_ready")
+        return
+      end
       if current ~= t.battle then error("El combate cambió.") end
       if t.phase == "arming" then
         if api.now() - t.armedAt < 200 then return end
@@ -205,6 +211,11 @@ function M.newTrial(api)
         if current == M.GRAPHICS_OTHER then
           finishRestore("Cambio del contexto gráfico durante la aplicación; vuelta preventiva a 1×",
             "graphics_context_changed")
+          return
+        end
+        if current == M.NOT_READY then
+          finishRestore("El combate cambió durante la aplicación; vuelta preventiva a 1×",
+            "battle_not_ready")
           return
         end
         if current ~= t.battle then error("El combate cambió durante la aplicación.") end
@@ -343,18 +354,24 @@ function M.newAutomatic(api)
         local result = child.lastRestoration
         if result and (result.process_exited or
           (result.cause ~= "battle_exit" and result.cause ~= "graphics_context_changed" and
-           result.cause ~= "time_limit")) then
+           result.cause ~= "time_limit" and result.cause ~= "battle_not_ready")) then
           stopRequested = stopRequested or "Estado del cliente cambió; revisa el registro"
           return
         end
         -- A verified map boundary permits another encounter even when the
         -- client recycles the very same context pointer/token.
-        needMap = not (result and result.cause == "battle_exit")
+        local d = api.lastObservation
+        needMap = not ((result and result.cause == "battle_exit") or
+          (not result and d and (d.classification == "map" or d.classification == "not_ready")))
         child, forwarded = nil, 0
         t.phase = needMap and "waiting_map" or "waiting_battle"
-        t.note(needMap and
-          "Automático sigue activado a 1×; espera el mapa antes de otro combate." or
-          "Mapa confirmado a 1×; automático espera el siguiente combate.")
+        if not result and d and d.classification == "not_ready" then
+          t.note("El turno aún no está listo; esperando a 1× antes de aplicar velocidad.")
+        else
+          t.note(needMap and
+            "Automático sigue activado a 1×; espera el mapa antes de otro combate." or
+            "Mapa confirmado a 1×; automático espera el siguiente combate.")
+        end
         return
       end
       local token, detail = api.observe(t.binding)
@@ -369,14 +386,25 @@ function M.newAutomatic(api)
         needMap, t.phase = false, "waiting_battle"
         return
       end
+      if token == M.NOT_READY then
+        t.phase = needMap and "waiting_map" or "waiting_battle"
+        return
+      end
       if token == M.GRAPHICS_OTHER or needMap then
         needMap, t.phase = true, "waiting_map"
         return
       end
       -- The outer adapter owns the handles. A child may restore its rate, but
       -- must not release this lease while the automatic controller is armed.
+      local function observeOwned(plan)
+        local value, frame = api.observe(plan)
+        if t.actorIdentity and (not frame or frame.actor_identity ~= t.actorIdentity) then
+          error("El personaje cambió antes de aplicar velocidad.")
+        end
+        return value, frame
+      end
       local shared = setmetatable({bind = function() return t.binding end,
-        release = function() end}, {__index = api})
+        release = function() end, observe = observeOwned}, {__index = api})
       child, forwarded = M.newTrial(shared), 0
       needMap = true
       local started = child.start(t.rate, "battle_end")
@@ -384,8 +412,16 @@ function M.newAutomatic(api)
       if not started then
         if child.phase == "restore_failed" then t.running, t.phase = false, "restore_failed"; return end
         if not equalRate(api.reportedRate(), 1) then error("La tasa de CE cambió.") end
-        child, t.phase = nil, "waiting_map"
-        t.note("Inicio de velocidad rechazado; esperando el mapa antes de otro combate.")
+        local d = api.lastObservation
+        if not d or (d.classification ~= "not_ready" and d.classification ~= "map" and
+                     d.classification ~= "graphics_other") then
+          stopRequested = stopRequested or "No se pudo verificar el inicio de velocidad"
+          return
+        end
+        needMap = not (d and (d.classification == "not_ready" or d.classification == "map"))
+        child, t.phase = nil, needMap and "waiting_map" or "waiting_battle"
+        t.note(needMap and "Inicio de velocidad rechazado; esperando el mapa antes de otro combate." or
+          "Esperando a que el combate publique un turno válido antes de aplicar velocidad.")
         return
       end
       t.phase = "arming"
@@ -534,12 +570,19 @@ function M.newCEAdapter()
         "La prueba requiere un combate normal activo.")
       local manager = pointer(owner + 0x91c)
       d.battle_phase = read32(manager + 0x234c)
-      assert(read32(manager) == 0x042d8aa4 and d.battle_phase == 3,
-        "El gestor todavía no está en combate.")
-      local context = pointer(manager + 8 + index * 4)
-      assert(read32(context + 0x6c74) ~= 0xffffffff,
-        "El combate todavía no está listo.")
-      key[#key + 1], key[#key + 2] = manager, context
+      assert(read32(manager) == 0x042d8aa4, "El gestor no coincide con el cliente verificado.")
+      key[#key + 1], key[#key + 2] = manager, d.battle_phase
+      local function notReady()
+        d.classification = "not_ready"
+        return {token = M.NOT_READY, signature = table.concat(key, ":"), detail = d}
+      end
+      if d.battle_phase ~= 3 then return notReady() end
+      local context = read32(manager + 8 + index * 4)
+      key[#key + 1] = context
+      if context == 0 then return notReady() end
+      assert(context >= 0x10000 and context <= 0xffff0000, "Puntero transitorio del combate.")
+      d.turn_number = read32(context + 0x6c74)
+      if d.turn_number == 0xffffffff then return notReady() end
       if d.graphics_context_index == 0 then
         -- The user's two captures retained local context 0/-1 and phase 3
         -- while selecting graphics context 0. Restore promptly, but do not
@@ -565,6 +608,7 @@ function M.newCEAdapter()
       local token = api.observe(b)
       assert(token ~= M.MAP, "La instancia ya volvió al mapa; no se aplicó velocidad.")
       assert(token ~= M.GRAPHICS_OTHER, "El contexto gráfico cambió; no se aplicó velocidad.")
+      assert(token ~= M.NOT_READY, "El combate todavía no está listo; no se aplicó velocidad.")
     end
     -- CE owns injection/hooking; no guessed offsets or private DLLs are used.
     speedhack_setSpeed(rate)
