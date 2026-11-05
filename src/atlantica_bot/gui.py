@@ -17,10 +17,10 @@ from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
 from .errors import DiagnosticError, SceneChanged, WindowUnavailable
 from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
-from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
 from .native_action import try_attack, try_battle_action
 from .navigation import ApproachSettings, calibrated_radius
 from .overview import OverviewWindow
+from .panel_view import build_panel
 from .profiles import (
     ACTION_LABELS,
     TARGET_LABELS,
@@ -33,6 +33,7 @@ from .profiles import (
 from .session import GameSession, LiveState
 from .speed_trial import SpeedExperiment, prepare_speed_plan
 from .turns import roster_rows
+from .ui_theme import page_heading
 from .world import observe_scene, scan_world
 
 
@@ -93,272 +94,24 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.status = tk.StringVar(value="Cliente: sin conexión")
             self.detail = tk.StringVar(value="El panel abre sin activar la caza.")
             self.scope_status = tk.StringVar()
-            self.tabs = ttk.Notebook(self.root)
-            self.tabs.pack(fill="both", expand=True)
-            frame = ttk.Frame(self.tabs, padding=18)
-            self.tabs.add(frame, text="Control")
-            self.team_tab = ttk.Frame(self.tabs, padding=18)
-            self.tabs.add(self.team_tab, text="Mercenarios")
-            self.hunt_tab = ttk.Frame(self.tabs, padding=18)
-            self.tabs.add(self.hunt_tab, text="Caza y botín")
-            self.build_team_tab()
-            ttk.Label(frame, text="Control de caza", font=("Segoe UI", 18)).pack(anchor="w")
-            ttk.Label(
-                frame,
-                text="Iniciar bot busca mobs con Auto Battle apagado.",
-            ).pack(anchor="w", pady=4)
-            ttk.Label(frame, textvariable=self.folder, wraplength=680).pack(anchor="w", pady=8)
-            row = ttk.Frame(frame)
-            row.pack(fill="x", pady=4)
-            self.window_list = ttk.Combobox(
-                row, textvariable=self.window_choice, state="readonly", width=65
-            )
-            self.window_list.pack(side="left", fill="x", expand=True)
-            self.window_list.bind("<<ComboboxSelected>>", self.choose_window)
-            self.list_button = ttk.Button(row, text="Actualizar lista", command=self.list_windows)
-            self.list_button.pack(side="left", padx=8)
-            self.pick_button = ttk.Button(row, text="Elegir ventana", command=self.pick_window)
-            self.pick_button.pack(side="left")
-            row = ttk.Frame(frame)
-            row.pack(fill="x", pady=4)
-            self.browse_button = ttk.Button(row, text="Seleccionar carpeta", command=self.browse)
-            self.browse_button.pack(side="left")
-            ttk.Label(row, text="PID opcional:").pack(side="left", padx=(12, 4))
-            self.pid_entry = ttk.Entry(row, textvariable=self.pid, width=9)
-            self.pid_entry.pack(side="left")
-            self.connect_button = ttk.Button(row, text="Conectar", command=self.connect)
-            self.connect_button.pack(side="left", padx=8)
-            ttk.Label(
-                frame,
-                textvariable=self.execution_status,
-                font=("Segoe UI", 10, "bold"),
-                foreground="#235884",
-                wraplength=760,
-            ).pack(anchor="w", pady=(8, 0))
-            row = ttk.Frame(frame)
-            row.pack(fill="x", pady=10)
-            self.bot_start_button = ttk.Button(
-                row, text="Iniciar bot", command=self.start_bot, state="disabled"
-            )
-            self.bot_start_button.pack(side="left")
-            self.bot_stop_button = ttk.Button(
-                row, text="Parar bot", command=self.stop_bot, state="disabled"
-            )
-            self.bot_stop_button.pack(side="left", padx=10)
-            self.bot_copy_button = ttk.Button(
-                row, text="Copiar estado del bot", command=self.copy_bot, state="disabled"
-            )
-            self.bot_copy_button.pack(side="left")
-            ttk.Label(
-                frame, textvariable=self.bot_status, font=("Segoe UI", 12, "bold"), wraplength=760
-            ).pack(anchor="w", pady=4)
-            row = ttk.Frame(frame)
-            row.pack(fill="x", pady=4)
-            ttk.Label(row, text="Perfil:").pack(side="left")
-            self.profile_list = ttk.Combobox(
-                row,
-                textvariable=self.profile_number,
-                values=("1", "2", "3"),
-                state="readonly",
-                width=4,
-            )
-            self.profile_list.pack(side="left", padx=8)
-            self.profile_list.bind("<<ComboboxSelected>>", self.load_profile)
-            self.profile_button = ttk.Button(
-                row, text="Configurar mercenarios", command=self.edit_profile
-            )
-            self.profile_button.pack(side="left")
-            ttk.Button(row, text="Vista general", command=self.show_overview).pack(
-                side="left", padx=8
-            )
-            ttk.Label(frame, textvariable=self.profile_status, wraplength=760).pack(anchor="w")
-            self.turns_check = ttk.Checkbutton(
-                frame,
-                text="Ejecutar turnos según el perfil (experimental)",
-                variable=self.turns_enabled,
-            )
-            self.turns_check.pack(anchor="w", pady=4)
-            row = ttk.Frame(self.hunt_tab)
-            row.pack(fill="x", pady=6)
-            ttk.Label(row, text="Modo de ataque al mob:").pack(side="left", padx=(0, 8))
-            self.attack_mode_list = ttk.Combobox(
-                row,
-                textvariable=self.world_attack_mode,
-                values=tuple(WORLD_ATTACK_LABELS.values()),
-                state="readonly",
-                width=43,
-            )
-            self.attack_mode_list.pack(side="left")
-            row = ttk.Frame(self.hunt_tab)
-            row.pack(fill="x", pady=6)
-            ttk.Label(row, text="Radio de búsqueda (casillas):").pack(side="left", padx=(12, 4))
-            self.radius_entry = ttk.Spinbox(
-                row,
-                from_=MIN_SEARCH_RADIUS,
-                to=MAX_SEARCH_RADIUS,
-                textvariable=self.search_radius,
-                width=5,
-            )
-            self.radius_entry.pack(side="left")
-            self.radius_calibrate_button = ttk.Button(
-                row, text="Calibrar radio", command=self.calibrate_radius
-            )
-            self.radius_calibrate_button.pack(side="left", padx=8)
-            ttk.Label(
-                self.hunt_tab,
-                text="Radio de 5 a 500 casillas desde el punto de inicio. "
-                "Desde mi posición: elige el más cercano y solicita combate "
-                "sin ordenar acercamiento. El servidor debe aceptar la distancia. "
-                "Perseguir y atacar conserva el recorrido nativo. "
-                "Solo se detectan mobs cargados por el juego.",
-                wraplength=760,
-            ).pack(anchor="w")
-            row = ttk.Frame(self.hunt_tab)
-            row.pack(fill="x", pady=(18, 6))
-            ttk.Label(row, text="Espera antes de atacar al mob (segundos):").pack(side="left")
-            self.delay_entry = ttk.Combobox(
-                row, textvariable=self.attack_delay, values=("0", "1", "3"), width=7
-            )
-            self.delay_entry.pack(side="left", padx=8)
-            ttk.Label(
-                self.hunt_tab,
-                text="Elige 0, 1, 3 o escribe un valor de 0 a 60. "
-                "La espera se aplica antes de la persecución; "
-                "la magia del primer turno conserva su rapidez.",
-                wraplength=760,
-            ).pack(anchor="w")
-            speed_row = ttk.Frame(self.hunt_tab)
-            speed_row.pack(fill="x", pady=(12, 4))
-            self.battle_speed_check = ttk.Checkbutton(
-                speed_row,
-                text="Speed solo en combate (experimental)",
-                variable=self.battle_speed_enabled,
-            )
-            self.battle_speed_check.pack(side="left")
-            self.battle_speed_list = ttk.Combobox(
-                speed_row,
-                textvariable=self.battle_speed_rate,
-                values=("1.25", "1.5", "2", "3", "4"),
-                state="readonly",
-                width=7,
-            )
-            self.battle_speed_list.pack(side="left", padx=8)
-            ttk.Label(speed_row, text="×").pack(side="left")
-            ttk.Label(self.hunt_tab, textvariable=self.battle_speed_status).pack(anchor="w")
-            self.loot_check = ttk.Checkbutton(
-                self.hunt_tab,
-                text="Recoger bonus / botín restante al derrotar a todos los mobs (experimental)",
-                variable=self.collect_loot,
-            )
-            self.loot_check.pack(anchor="w", pady=(18, 6))
-            ttk.Label(
-                self.hunt_tab,
-                text="Deja 1 s al NeoACA y luego busca botín en enemigos derrotados. "
-                "Comprueba que el bonus aparezca en tu inventario al probar esta opción.",
-                wraplength=760,
-            ).pack(anchor="w")
-            self.save_hunt_button = ttk.Button(
-                self.hunt_tab, text="Guardar opciones del perfil", command=self.save_hunt_options
-            )
-            self.save_hunt_button.pack(anchor="w", pady=18)
-            ttk.Label(
-                self.hunt_tab,
-                text="Estas opciones se guardan por perfil. Iniciar bot también las guarda.",
-                wraplength=760,
-            ).pack(anchor="w")
-            read_row = ttk.Frame(frame)
-            read_row.pack(fill="x", pady=6)
-            self.advanced = ttk.Frame(frame)
-            self.more_button = ttk.Button(
-                frame,
-                text="Más controles: caza nativa y prueba individual",
-                command=self.toggle_advanced,
-            )
-            self.more_button.pack(anchor="w", pady=4)
-            row = ttk.Frame(self.advanced)
-            row.pack(fill="x", pady=6)
-            self.start_button = ttk.Button(
-                row, text="Activar caza nativa", command=self.start, state="disabled"
-            )
-            self.start_button.pack(side="left", padx=(0, 10))
-            self.stop_button = ttk.Button(
-                row, text="Parar caza nativa", command=self.stop, state="disabled"
-            )
-            self.stop_button.pack(side="left")
-            self.capture_button = ttk.Button(
-                read_row, text="Exportar diagnóstico", command=self.export, state="disabled"
-            )
-            self.capture_button.pack(side="left", padx=10)
-            self.combat_capture_button = ttk.Button(
-                read_row,
-                text="Exportar combate",
-                command=lambda: self.export(combat=True),
-                state="disabled",
-            )
-            self.combat_capture_button.pack(side="left", padx=(0, 10))
-            self.targets_button = ttk.Button(
-                read_row, text="Ver objetivos", command=self.show_targets, state="disabled"
-            )
-            self.targets_button.pack(side="left")
-            self.calibration_button = ttk.Button(
-                read_row,
-                text="Calibrar combate",
-                command=self.calibrate_combat,
-                state="disabled",
-            )
-            self.calibration_button.pack(side="left", padx=10)
-            diagnostic_row = ttk.Frame(self.hunt_tab)
-            diagnostic_row.pack(fill="x", pady=(4, 8))
-            ttk.Button(
-                diagnostic_row, text="Capturar bonus (memoria)", command=self.capture_bonus
-            ).pack(side="left")
-            ttk.Button(
-                diagnostic_row,
-                text="Prueba de velocidad (experimental)",
-                command=self.open_speed_trial,
-            ).pack(side="left", padx=10)
-            member_row = ttk.Frame(frame)
-            member_row.pack(fill="x", pady=4)
-            self.members_button = ttk.Button(
-                member_row, text="Ver mercenarios", command=self.show_members, state="disabled"
-            )
-            self.members_button.pack(side="left", padx=10)
-            ttk.Label(member_row, text="Consulta los nueve puestos durante el combate.").pack(
-                side="left"
-            )
-            ttk.Label(frame, textvariable=self.detector_status, wraplength=760).pack(anchor="w")
-            row = ttk.Frame(self.advanced)
-            row.pack(fill="x", pady=4)
-            self.trial_button = ttk.Button(
-                row,
-                text="Probar un ataque cercano (experimental)",
-                command=self.attack_once,
-                state="disabled",
-            )
-            self.trial_button.pack(side="left")
-            self.copy_trial_button = ttk.Button(
-                row, text="Copiar prueba", command=self.copy_trial, state="disabled"
-            )
-            self.copy_trial_button.pack(side="left", padx=8)
-            ttk.Label(self.advanced, textvariable=self.scope_status, wraplength=760).pack(
-                anchor="w"
-            )
-            ttk.Label(self.advanced, textvariable=self.request).pack(anchor="w", pady=4)
-            ttk.Label(frame, textvariable=self.status, font=("Segoe UI", 12, "bold")).pack(
-                anchor="w", pady=4
-            )
-            ttk.Label(frame, textvariable=self.detail, wraplength=680).pack(anchor="w", pady=8)
-            ttk.Label(
-                frame,
-                text="Caminar manualmente pausa la búsqueda y la reanuda al quedar quieto.\n"
-                "Activa Ejecutar turnos para aplicar el perfil durante el combate.",
-                wraplength=680,
-            ).pack(anchor="w", pady=10)
+            self.main_alias = tk.StringVar()
+            self.header_name = tk.StringVar(value="Main sin identificar")
+            self.header_context = tk.StringVar(value="Sin conexión")
+            self.run_phase = tk.StringVar(value="Bot detenido")
+            self.run_summary = tk.StringVar(value="Speed apagado")
+            self.main_aliases: dict[tuple[int, int], str] = {}
+            self.identity_key: tuple[int, int] | None = None
+            build_panel(self)
             self.root.protocol("WM_DELETE_WINDOW", self.close)
             self.pid.trace_add("write", self.pid_changed)
             self.turns_enabled.trace_add("write", self.update_execution_mode)
             self.collect_loot.trace_add("write", self.update_execution_mode)
+            self.main_alias.trace_add("write", self.alias_changed)
+            self.status.trace_add("write", self.sync_identity)
+            self.bot_status.trace_add("write", self.sync_identity)
+            self.profile_number.trace_add("write", self.sync_identity)
             self.load_profile()
+            self.sync_identity()
             if not smoke_test:
                 self.root.after(100, self.list_windows)
             self.root.after(750, self.poll)
@@ -367,18 +120,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.root.after(1000, self.poll_team)
 
         def build_team_tab(self) -> None:
-            ttk.Label(self.team_tab, text="Equipo y órdenes", font=("Segoe UI", 18)).pack(
-                anchor="w"
-            )
-            ttk.Label(
+            page_heading(
                 self.team_tab,
-                text="En combate indica los miembros publicados por el juego. "
-                "Usar bot indica tu selección en el perfil.",
-                wraplength=900,
-            ).pack(anchor="w", pady=6)
-            ttk.Label(self.team_tab, textvariable=self.team_status, wraplength=1000).pack(
-                anchor="w", pady=6
+                "Main y mercenarios",
+                "Equipo presente, prioridad y acciones del perfil para los nueve puestos.",
             )
+            body = ttk.Frame(self.team_tab, padding=16)
+            body.pack(fill="both", expand=True)
+            ttk.Label(
+                body, textvariable=self.team_status, style="Muted.TLabel", wraplength=880
+            ).pack(anchor="w", pady=6)
             columns = (
                 "number",
                 "name",
@@ -391,7 +142,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 "target",
                 "order",
             )
-            self.team_tree = ttk.Treeview(self.team_tab, columns=columns, show="headings", height=9)
+            table = ttk.Frame(body)
+            self.team_tree = ttk.Treeview(table, columns=columns, show="headings", height=9)
+            self.team_tree.tag_configure("main", foreground="#f1cd83")
+            self.team_tree.tag_configure("alternate", background="#1b2b42")
             for key, label, width in (
                 ("number", "Miembro", 110),
                 ("name", "Nombre del perfil", 135),
@@ -406,27 +160,29 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ):
                 self.team_tree.heading(key, text=label)
                 self.team_tree.column(key, width=width, minwidth=50)
-            self.team_tree.pack(fill="both", expand=True, pady=8)
-            scrollbar = ttk.Scrollbar(
-                self.team_tab, orient="horizontal", command=self.team_tree.xview
-            )
-            scrollbar.pack(fill="x")
+            self.team_tree.pack(side="left", fill="both", expand=True)
+            vertical = ttk.Scrollbar(table, orient="vertical", command=self.team_tree.yview)
+            vertical.pack(side="right", fill="y")
+            self.team_tree.configure(yscrollcommand=vertical.set)
+            scrollbar = ttk.Scrollbar(body, orient="horizontal", command=self.team_tree.xview)
             self.team_tree.configure(xscrollcommand=scrollbar.set)
-            buttons = ttk.Frame(self.team_tab)
-            buttons.pack(fill="x", pady=8)
+            buttons = ttk.Frame(body)
+            buttons.pack(side="bottom", fill="x", pady=(12, 0))
             ttk.Button(buttons, text="Actualizar equipo", command=self.refresh_team).pack(
                 side="left"
             )
-            ttk.Button(
-                buttons, text="Usar/omitir seleccionado en bot", command=self.toggle_team_member
-            ).pack(side="left", padx=8)
             ttk.Button(buttons, text="Configurar mercenarios", command=self.edit_profile).pack(
-                side="left"
+                side="left", padx=8
+            )
+            ttk.Button(buttons, text="Vista general", command=self.show_overview).pack(side="left")
+            ttk.Button(buttons, text="Usar/omitir", command=self.toggle_team_member).pack(
+                side="left", padx=8
             )
             ttk.Button(buttons, text="Prueba individual", command=self.show_members).pack(
                 side="left", padx=8
             )
-            ttk.Button(buttons, text="Vista general", command=self.show_overview).pack(side="left")
+            scrollbar.pack(side="bottom", fill="x", pady=(8, 0))
+            table.pack(fill="both", expand=True, pady=(8, 0))
             self.paint_team(
                 roster_rows(BotProfile.default(1), None),
                 "Conecta con el cliente para leer la batalla.",
@@ -460,11 +216,79 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 if self.team_tree.exists(item):
                     self.team_tree.item(item, values=values)
                 else:
-                    self.team_tree.insert("", "end", iid=item, values=values)
+                    tag = (
+                        "main" if row["slot"] == 1 else "alternate" if row["slot"] % 2 == 0 else ""
+                    )
+                    self.team_tree.insert("", "end", iid=item, values=values, tags=(tag,))
             if self.overview is not None and self.overview.alive:
                 self.overview.paint(
                     rows, message, pid=self.session.process.pid if self.session else None
                 )
+
+        def alias_changed(self, *_) -> None:
+            if self.identity_key is not None:
+                self.main_aliases[self.identity_key] = " ".join(self.main_alias.get().split())[:48]
+            self.render_identity()
+
+        def sync_identity(self, *_) -> None:
+            key = (self.session.process.pid, self.session.creation_time) if self.session else None
+            if key != self.identity_key:
+                self.identity_key = key
+                self.main_alias.set(self.main_aliases.get(key, ""))
+            self.alias_entry.configure(state="normal" if key else "disabled")
+            self.render_identity()
+
+        def render_identity(self) -> None:
+            alias = " ".join(self.main_alias.get().split())[:48]
+            name = alias or "Main sin identificar"
+            self.header_name.set(name if len(name) <= 26 else name[:25] + "…")
+            if self.session is not None:
+                pid = self.session.process.pid
+                self.header_context.set(f"PID {pid}  ·  Perfil {self.profile_number.get()}")
+                self.header_badge.configure(style="Connected.TLabel")
+                self.root.title(f"{name} — PID {pid} — Atlantica {__version__}")
+            else:
+                self.header_context.set("Sin conexión")
+                self.header_badge.configure(style="Disconnected.TLabel")
+                self.root.title(f"Atlantica — Panel del bot {__version__}")
+            worker = self.bot_worker
+            phase = self.bot_report.get("phase") if worker else "stopped"
+            labels = {
+                "stopped": "Bot detenido",
+                "battle": "En combate",
+                "searching": "Buscando mobs",
+                "manual_movement": "Movimiento manual",
+                "attack_delay": "Esperando para atacar",
+                "waiting_battle": "Esperando combate",
+                "native_pursuit": "Persiguiendo mob",
+            }
+            stopping = worker is not None and worker.stop_event.is_set()
+            self.run_phase.set("Deteniendo bot…" if stopping else labels.get(phase, "Bot activo"))
+            self.run_badge.configure(
+                style="Stopping.Run.TLabel"
+                if stopping
+                else "Run.TLabel"
+                if worker
+                else "Idle.Run.TLabel"
+            )
+            report = self.bot_report
+            if (
+                self.session is None
+                or report.get("pid") != self.session.process.pid
+                or report.get("detector", {}).get("instance_creation_time")
+                != self.session.creation_time
+            ):
+                report = {}
+            speed = report.get("speed", {})
+            rate = speed.get("current_rate")
+            speed_label = (
+                f"Speed {rate:g}×"
+                if speed.get("enabled") and isinstance(rate, (int, float))
+                else "Speed apagado"
+            )
+            self.run_summary.set(f"{report.get('battles_observed', 0)} combates  ·  {speed_label}")
+            if self.overview is not None and self.overview.alive:
+                self.overview.set_main_name(alias)
 
         def show_overview(self) -> None:
             if self.overview is not None and self.overview.alive:
@@ -508,6 +332,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 stop=self.bot_worker is not None and not self.closing,
                 editable=editable,
             )
+            self.overview.set_main_name(self.main_alias.get())
             report = self.bot_report
             if (
                 self.session is None
@@ -636,8 +461,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def toggle_advanced(self) -> None:
             if self.advanced.winfo_manager():
                 self.advanced.pack_forget()
+                self.more_button.configure(text="Mostrar controles avanzados")
             else:
                 self.advanced.pack(fill="x", pady=6, after=self.more_button)
+                self.more_button.configure(text="Ocultar controles avanzados")
 
         def lock_target_controls(self) -> None:
             active = (
@@ -2340,7 +2167,29 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             "Control",
             "Mercenarios",
             "Caza y botín",
+            "Diagnóstico",
         )
+        for tab in panel.tabs.tabs():
+            panel.tabs.select(tab)
+            panel.root.update_idletasks()
+            assert panel.bot_start_button.winfo_ismapped()
+            assert panel.bot_stop_button.winfo_ismapped()
+        original_geometry = panel.root.geometry()
+        panel.root.geometry("920x650")
+        for tab in panel.tabs.tabs():
+            panel.tabs.select(tab)
+            panel.root.update_idletasks()
+            for button in (panel.bot_start_button, panel.bot_stop_button, panel.bot_copy_button):
+                assert button.winfo_rooty() + button.winfo_height() <= (
+                    panel.root.winfo_rooty() + panel.root.winfo_height()
+                )
+        panel.tabs.select(panel.hunt_tab)
+        panel.root.update_idletasks()
+        assert panel.save_hunt_button.winfo_ismapped()
+        assert panel.save_hunt_button.winfo_rooty() + panel.save_hunt_button.winfo_height() <= (
+            panel.hunt_tab.winfo_rooty() + panel.hunt_tab.winfo_height()
+        )
+        panel.root.geometry(original_geometry)
         panel.tabs.select(panel.team_tab)
         assert len(panel.team_tree.get_children()) == 9
         assert panel.team_tree.item("merc_1", "values")[0] == "Main (1)"
@@ -2428,6 +2277,22 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         )
         panel.pid.set("1")
         bound_session = panel.session
+        panel.sync_identity()
+        panel.main_alias.set("Main Uno")
+        assert "Main Uno" in panel.root.title() and "PID 1" in panel.root.title()
+        assert "Main Uno" in overview.window.title()
+        panel.session = SimpleNamespace(process=SimpleNamespace(pid=2), creation_time=2)
+        panel.sync_identity()
+        assert panel.main_alias.get() == "" and "PID 2" in panel.root.title()
+        panel.main_alias.set("Main Dos")
+        panel.session = bound_session
+        panel.sync_identity()
+        assert panel.main_alias.get() == "Main Uno"
+        panel.session = SimpleNamespace(process=SimpleNamespace(pid=1), creation_time=3)
+        panel.sync_identity()
+        assert panel.main_alias.get() == ""
+        panel.session = bound_session
+        panel.sync_identity()
         panel.poll()
         assert panel.session is bound_session and panel.pid.get() == "1"
         assert "PID 1" in panel.status.get()

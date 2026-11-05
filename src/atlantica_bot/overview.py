@@ -4,15 +4,8 @@ from collections.abc import Callable
 
 from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
 from .profiles import WORLD_ATTACK_LABELS, member_label
-
-BACKGROUND = "#25272d"
-SURFACE = "#30333b"
-TEXT = "#f1f2f5"
-GOLD = "#ffd166"
-MUTED = "#a8afbc"
-GREEN = "#91e0a8"
-RED = "#ff8585"
-BLUE = "#8fcaff"
+from .ui_theme import ACCENT as BLUE
+from .ui_theme import BACKGROUND, GOLD, GREEN, MUTED, RED, SURFACE, TEXT
 
 
 class OverviewWindow:
@@ -43,6 +36,7 @@ class OverviewWindow:
 
         self._tcl_error = tk.TclError
         self._pid: int | None = None
+        self._main_alias = ""
         self._execute_orders = execute_turns.get()
         self.window = tk.Toplevel(parent)
         self.window.title("Atlantica — Vista general")
@@ -53,9 +47,10 @@ class OverviewWindow:
         outer.pack(fill="both", expand=True)
         heading = tk.Frame(outer, background=BACKGROUND)
         heading.pack(fill="x", pady=(0, 10))
+        self.main_title = tk.StringVar(value="Main y mercenarios")
         tk.Label(
             heading,
-            text="Main y mercenarios",
+            textvariable=self.main_title,
             background=BACKGROUND,
             foreground=GOLD,
             font=("Segoe UI", 15, "bold"),
@@ -281,8 +276,8 @@ class OverviewWindow:
             return False
 
     def paint(self, rows: list[dict], message: str, *, pid: int | None) -> None:
-        self.window.title(f"Atlantica — Vista general{f' — PID {pid}' if pid else ''}")
         self._pid = pid
+        self._update_title()
         self.set_turn_mode(self._execute_orders)
         self.message.set(message)
         by_slot = {row["slot"]: row for row in rows}
@@ -319,6 +314,19 @@ class OverviewWindow:
             for key, label in self.order_cells[slot].items():
                 value = member_label(slot) if key == "member" else row.get(key, "—")
                 label.configure(text=value)
+
+    def set_main_name(self, alias: str) -> None:
+        alias = " ".join(alias.split())[:48]
+        if alias == self._main_alias:
+            return
+        self._main_alias = alias
+        self.main_title.set(alias or "Main y mercenarios")
+        self._update_title()
+
+    def _update_title(self) -> None:
+        name = f"{self._main_alias} — " if self._main_alias else ""
+        pid = f" — PID {self._pid}" if self._pid else ""
+        self.window.title(f"{name}Atlantica — Vista general{pid}")
 
     def set_turn_mode(self, automatic: bool) -> None:
         self._execute_orders = automatic

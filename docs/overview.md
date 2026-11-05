@@ -1,4 +1,8 @@
-# Vista general 0.12.1
+# Vista general
+
+En 0.20.0 comparte el tema oscuro del panel principal. El alias editable del Main
+aparece en su cabecera y en el título de la ventana, junto al PID. Consulta la
+[distribución del panel y el alias por ventana](panel-interface.md).
 
 Desde 0.13.0 también incluye **Caza y botín** para guardar la espera antes de atacar,
 el radio calibrable y la recogida restante. Comparte sus valores con el panel principal;

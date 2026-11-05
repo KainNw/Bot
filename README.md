@@ -1,24 +1,22 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.19.0** integra **Speed solo en combate**
-en la pestaña **Caza y botín**, con factores **1,25×, 1,5×, 2×, 3× y 4×**.
-Se activa con **Iniciar bot**, vuelve a **1×** en el mapa y se cancela con
-**Parar bot** o al cerrar el panel. La opción se guarda por perfil y viene
-apagada por defecto. El paquete **AtlanticaPanel-Windows** incluye el ejecutable
-con el controlador nativo y su licencia; no requiere Cheat Engine.
+con Auto Battle apagado. La versión **0.20.0** organiza la interfaz con un tema
+oscuro y cuatro pestañas: **Control**, **Mercenarios**, **Caza y botín** y
+**Diagnóstico**. **Iniciar bot**, **Parar bot** y **Copiar estado** permanecen
+visibles al cambiar de pestaña.
 
-**Si usaste CE, cierra CE y reinicia ese cliente una vez antes de usar el Speed
-del panel.** No se combinan los dos sistemas de relojes. El estado muestra la
-tasa informada por el controlador de ese PID. Hay un límite de 60 segundos reales
-por combate y restauración ante pérdida del panel o lecturas inválidas.
-Consulta [las instrucciones del Speed integrado](docs/panel-speed.md).
+En **Control**, el campo **Nombre del Main (alias de esta ventana)** permite
+poner un nombre manual a la conexión. Se muestra en la cabecera, junto al PID,
+en el título de Windows y en la vista general. Cada instancia conserva su alias
+mientras el panel esté abierto. Consulta [la interfaz](docs/panel-interface.md).
 
-Las pruebas anteriores con CE confirmaron aceleración y vuelta a 1× en combates
-concretos. La integración nativa tiene pruebas en procesos propios de Windows;
-su comportamiento debe comprobarse también en el cliente real. Cambia relojes
-del proceso y no garantiza el ritmo aceptado por el servidor. La tabla CE se
-conserva como [alternativa separada](docs/ce-speed-trial.md).
+Conserva el **Speed integrado** de 0.19.0: factores **1,25×, 1,5×, 2×, 3× y 4×**
+y vuelta a **1×** en el mapa o al parar. El usuario confirmó la aceleración y la
+recuperación de la velocidad normal al terminar su prueba de combate. En la
+pestaña **Caza y botín**, se configura desde **Speed en combate → Activar Speed**.
+Consulta [las instrucciones](docs/panel-speed.md). El paquete
+**AtlanticaPanel-Windows** incluye el ejecutable y la licencia nativa.
 
 Conserva 0.16.5, que extiende la captura de animaciones
 con cuatro métodos candidatos de una tabla estática contrastada con el último

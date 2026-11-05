@@ -6,7 +6,7 @@ tener que abrir Cheat Engine. Es una función experimental, desactivada por defe
 1. Si usaste CE con ese cliente, cierra CE y reinicia el juego una vez. Restaurar
    1× en CE deja su DLL cargada: el panel rechaza combinar ambos sistemas.
 2. Abre `AtlanticaPanel.exe`, actualiza la lista y conecta el PID del juego.
-3. En **Caza y botín**, marca **Speed solo en combate (experimental)** y elige
+3. En **Caza y botín**, dentro de **Speed en combate**, marca **Activar Speed** y elige
    **1,25×, 1,5×, 2×, 3× o 4×**. Puedes comenzar con 1,25×.
 4. Pulsa **Iniciar bot**. Al reconocer un combate normal listo, el controlador
    aplica el factor elegido. Al volver al mapa, restaura **1×** y queda esperando
@@ -38,10 +38,13 @@ un límite de **60 segundos reales por combate**; no reaplica el factor durante
 ese mismo encuentro. Si falta la confirmación de una parada, el panel conserva
 la reserva y consulta el estado sin reenviar comandos de parada automáticamente.
 
+El usuario confirmó con 0.19.0 la aceleración durante el combate y la vuelta a
+velocidad normal al terminar. Esa validación corresponde a la prueba realizada.
+
 Este sistema cambia relojes del proceso, incluidos temporizadores que puede usar
 la red. No acelera el servidor ni garantiza que este acepte el ritmo. Las pruebas
 anteriores de CE confirmaron aceleración y vuelta a 1× en combates concretos;
-el controlador integrado requiere comprobar ese comportamiento en el cliente.
+el resultado no demuestra estabilidad prolongada con todos los combates.
 
 ## Verificación del controlador
 
