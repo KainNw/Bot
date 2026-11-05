@@ -5,13 +5,15 @@ import queue
 import threading
 import time
 from collections import deque
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 
 from .battle import BattleFrame, read_battle_frame
 from .clients import ClientWindow
+from .clock_control import NativeClock
 from .combat import CombatDetector
 from .errors import BeforeSendChanged, DiagnosticError, SceneChanged, WindowUnavailable
-from .ipc import BotLease, Cancellation
+from .ipc import BotLease, Cancellation, SpeedLease
 from .native_action import (
     stop_movement,
     stop_native_pursuit,
@@ -61,6 +63,9 @@ class HuntEngine:
     native_attack: bool = False
     execute_turns: bool = False
     combat: dict = field(default_factory=lambda: {"enabled": False})
+    speed: dict = field(
+        default_factory=lambda: {"enabled": False, "current_rate": 1.0, "message": "Desactivado"}
+    )
     running: bool = True
     phase: str = "waiting_map"
     message: str = "Esperando mapa."
@@ -1178,6 +1183,7 @@ class HuntEngine:
             ],
             "profile": self.profile.summary(),
             "combat": dict(self.combat),
+            "speed": dict(self.speed),
             "battle_entry": dict(self.battle_entry),
             "last_read_error": dict(self.last_read_error),
             "manual_control": {
@@ -1248,6 +1254,7 @@ class HuntWorker:
         self.events: queue.Queue[dict] = queue.Queue(maxsize=20)
         self.stop_event = threading.Event()
         self.cancellation: Cancellation | None = None
+        self.clock: NativeClock | None = None
         self.stop_attempted = False
         self.native_stop_attempted = False
         self.next_transport_sample = 0
@@ -1305,15 +1312,49 @@ class HuntWorker:
 
     def _run(self) -> None:
         try:
-            with BotLease(self.window.pid), Cancellation(self.window.pid) as signal:
+            with ExitStack() as leases:
+                if self.engine.profile.battle_speed_enabled:
+                    try:
+                        leases.enter_context(SpeedLease(self.window.pid))
+                    except (DiagnosticError, OSError) as exc:
+                        self.engine.stop(str(exc), reconnect=False)
+                        return
+                leases.enter_context(BotLease(self.window.pid))
+                signal = leases.enter_context(Cancellation(self.window.pid))
                 self.cancellation = signal
                 try:
                     if self.stop_event.is_set():
                         signal.cancel()
+                    if self.engine.profile.battle_speed_enabled and not self.stop_event.is_set():
+                        try:
+                            self.clock = NativeClock(
+                                self.session,
+                                self.window,
+                                signal,
+                                self.engine.profile.battle_speed_rate,
+                            )
+                            self.clock.start()
+                            self.engine.speed = dict(self.clock.report)
+                        except (DiagnosticError, OSError) as exc:
+                            if self.clock is not None:
+                                self.engine.speed = dict(self.clock.report)
+                            self.engine.stop(str(exc), reconnect=False)
                     consecutive_changes = 0
                     changes_since = None
                     while not self.stop_event.is_set() and self.engine.running:
                         try:
+                            if self.clock is not None:
+                                try:
+                                    self.engine.speed = dict(self.clock.read())
+                                except (DiagnosticError, OSError) as exc:
+                                    self.engine.stop(str(exc), reconnect=False)
+                                    break
+                                if not self.engine.speed.get("armed"):
+                                    self.engine.stop(
+                                        "Speed desactivado: "
+                                        + self.engine.speed.get("message", "revisa el estado")
+                                    )
+                                    break
                             self._iteration()
                             if changes_since is not None:
                                 self.engine.last_read_error.update(
@@ -1366,6 +1407,7 @@ class HuntWorker:
                     try:
                         signal.cancel()
                     finally:
+                        self._stop_clock()
                         self._stop_route(cleanup=True)
                         self._stop_pursuit(cleanup=True)
         except (DiagnosticError, OSError) as exc:
@@ -1379,6 +1421,27 @@ class HuntWorker:
                 self.turns.running = False
                 self.engine.combat = self.turns.summary()
             self._publish()
+
+    def _stop_clock(self) -> None:
+        clock = self.clock
+        if clock is None:
+            return
+        try:
+            clock.stop()
+        except (DiagnosticError, OSError) as exc:
+            # Cancellation is already signalled. Native API callbacks also watch
+            # it, independently of this worker or the game's UI message loop.
+            self.engine.message = "Bot detenido; restauración de velocidad pendiente: " + str(exc)
+            while clock.attempted:
+                self.engine.speed = {**clock.report, "cleanup_pending": True}
+                self.engine.speed["message"] = "Restauración pendiente; esperando confirmación"
+                self._publish()
+                threading.Event().wait(0.5)
+                try:
+                    clock.confirm_stopped()
+                except (DiagnosticError, OSError):
+                    continue
+        self.engine.speed = dict(clock.report)
 
     def _iteration(self) -> None:
         pursuing = self.engine.pursuit is not None

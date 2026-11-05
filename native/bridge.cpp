@@ -63,7 +63,8 @@ static const char* WindowUnavailableReason(HWND window, DWORD pid, DWORD expecte
 }
 static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* response = nullptr, bool quiet = false, DWORD expected_thread = 0) {
     DWORD tid = 0;
-    if (const auto reason = WindowUnavailableReason(window, pid, expected_thread, tid, command.operation == SpeedRestore)) {
+    if (const auto reason = WindowUnavailableReason(window, pid, expected_thread, tid,
+        command.operation == SpeedRestore || command.operation == ClockStop || command.operation == ClockStatus)) {
         if (!quiet) std::cout << "{\"pid\":" << pid
             << ",\"error\":\"window_unavailable\",\"reason\":\"" << reason
             << "\",\"command_sent\":false}" << std::endl;
@@ -94,7 +95,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 10; command.pid = pid;
+        command.magic = kMagic; command.version = 11; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -192,6 +193,17 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
                 std::cout << ",\"map_owned_restore\":" << shared->speed_map_owned_restore;
                 std::cout << "}";
             } else std::cout << "null";
+            std::cout << ",\"clock\":";
+            if (command.operation == ClockStart || command.operation == ClockStop || command.operation == ClockStatus) {
+            std::cout << "{\"rate_bits\":" << shared->clock_rate_bits
+                << ",\"owner_pid\":" << shared->clock_owner_pid
+                << ",\"created_lo\":" << shared->clock_created_lo << ",\"created_hi\":" << shared->clock_created_hi
+                << ",\"armed\":" << shared->clock_armed << ",\"current_bits\":" << shared->clock_current_bits
+                << ",\"reason\":" << shared->clock_reason << ",\"apply_count\":" << shared->clock_apply_count
+                << ",\"restore_count\":" << shared->clock_restore_count << ",\"error\":" << shared->clock_error
+                << ",\"view\":" << shared->clock_view << ",\"address\":" << shared->clock_info_address
+                << ",\"token_lo\":" << shared->clock_token_lo << ",\"token_hi\":" << shared->clock_token_hi << "}";
+            } else std::cout << "null";
             std::cout << "}" << std::endl;
             }
         } else {
@@ -280,6 +292,15 @@ static int SelfTest() {
     EnableWindow(test.window, TRUE);
     ShowWindow(test.window, SW_RESTORE);
     ShowWindow(test.window, SW_HIDE);
+    SharedCommand clock_start_response = {}, clock_stop_response = {}, clock_status_response = {};
+    cancelled.operation = ClockStart;
+    const int clock_start_code = cancellation ? Run(test.window, pid, cancelled, &clock_start_response, true) : 32;
+    cancelled.operation = ClockStop;
+    ShowWindow(test.window, SW_MINIMIZE); EnableWindow(test.window, FALSE);
+    const int clock_stop_code = cancellation ? Run(test.window, pid, cancelled, &clock_stop_response, true) : 32;
+    cancelled.operation = ClockStatus;
+    const int clock_status_code = cancellation ? Run(test.window, pid, cancelled, &clock_status_response, true) : 32;
+    EnableWindow(test.window, TRUE); ShowWindow(test.window, SW_RESTORE); ShowWindow(test.window, SW_HIDE);
     if (cancellation) CloseHandle(cancellation);
     const int missing_code = Run(test.window, GetCurrentProcessId(), cancelled, &missing_response, true);
     SharedCommand empty_channel = {}, empty_response = {};
@@ -303,6 +324,9 @@ static int SelfTest() {
         && !stationary_code && stationary_response.result == Cancelled
         && !speed_code && speed_response.result == Cancelled
         && !speed_restore_code && speed_restore_response.result == Cancelled
+        && !clock_start_code && clock_start_response.result == Cancelled
+        && !clock_stop_code && clock_stop_response.result == Unsupported
+        && !clock_status_code && clock_status_response.result == Unsupported
         && !missing_code && missing_response.result == CancellationUnavailable
         && !empty_code && empty_response.result == CancellationUnavailable ? 0 : 31);
     if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result
@@ -315,20 +339,24 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wcscmp(argv[1], L"--self-test") == 0) return SelfTest();
     try {
         DWORD pid = 0, expected_thread = 0; uint64_t created = 0, hwnd = 0; SharedCommand command = {};
-        bool operation = false; unsigned goal_fields = 0, position_fields = 0, battle_fields = 0, magic_fields = 0, speed_fields = 0;
+        bool operation = false; unsigned goal_fields = 0, position_fields = 0, battle_fields = 0,
+            magic_fields = 0, speed_fields = 0, clock_fields = 0;
         for (int i = 1; i < argc; ++i) {
             std::wstring key(argv[i]);
             if (key == L"--attack" || key == L"--probe" || key == L"--approach" || key == L"--stop-move"
                 || key == L"--native-attack" || key == L"--stop-native" || key == L"--battle-basic"
                 || key == L"--battle-select" || key == L"--battle-magic" || key == L"--battle-loot"
-                || key == L"--stationary-attack" || key == L"--speed-apply" || key == L"--speed-restore") {
+                || key == L"--stationary-attack" || key == L"--speed-apply" || key == L"--speed-restore"
+                || key == L"--clock-start" || key == L"--clock-stop" || key == L"--clock-status") {
                 if (operation) return 2;
                 command.operation = key == L"--attack" ? Attack : key == L"--probe" ? Probe
                     : key == L"--approach" ? Approach : key == L"--stop-move" ? StopMovement
                     : key == L"--native-attack" ? NativeAttack : key == L"--stop-native" ? StopNativePursuit
                     : key == L"--battle-basic" ? BattleBasic : key == L"--battle-select" ? BattleSelect
                     : key == L"--battle-magic" ? BattleMagic : key == L"--battle-loot" ? BattleLoot
-                    : key == L"--speed-apply" ? SpeedApply : key == L"--speed-restore" ? SpeedRestore : StationaryAttack;
+                    : key == L"--speed-apply" ? SpeedApply : key == L"--speed-restore" ? SpeedRestore
+                    : key == L"--clock-start" ? ClockStart : key == L"--clock-stop" ? ClockStop
+                    : key == L"--clock-status" ? ClockStatus : StationaryAttack;
                 operation = true; continue;
             }
             if (i + 1 >= argc) return 2;
@@ -353,12 +381,26 @@ int wmain(int argc, wchar_t** argv) {
                 continue;
             }
             auto value = Number(argv[++i]);
+            if (key == L"--clock-owner-created") {
+                if (clock_fields & 4u || !value) return 2;
+                command.clock_created_lo = static_cast<uint32_t>(value);
+                command.clock_created_hi = static_cast<uint32_t>(value >> 32);
+                clock_fields |= 4u; continue;
+            }
             if (key == L"--created") created = value;
             else if (key == L"--window") { if (value > UINT32_MAX) return 2; hwnd = value; }
             else {
                 if (value > UINT32_MAX) return 2;
                 const auto small = static_cast<uint32_t>(value);
                 if (key == L"--pid") pid = small;
+                else if (key == L"--clock-rate-bits") {
+                    if (clock_fields & 1u) return 2;
+                    command.clock_rate_bits = small; clock_fields |= 1u;
+                }
+                else if (key == L"--clock-owner-pid") {
+                    if (clock_fields & 2u || !small) return 2;
+                    command.clock_owner_pid = small; clock_fields |= 2u;
+                }
                 else if (key == L"--thread") expected_thread = small;
                 else if (key == L"--slot") command.slot = small;
                 else if (key == L"--kind") command.identity[0] = small;
@@ -410,11 +452,16 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (!pid || !hwnd || !created || !expected_thread || !operation) return 2;
         const bool speed_operation = command.operation == SpeedApply || command.operation == SpeedRestore;
+        const bool clock_operation = command.operation == ClockStart || command.operation == ClockStop || command.operation == ClockStatus;
+        if (clock_operation) {
+            if (clock_fields != 7u || speed_fields || battle_fields || magic_fields || goal_fields || position_fields)
+                return 2;
+        } else if (clock_fields) return 2;
         if (command.operation == StopMovement) {
             if (!command.route_player || !command.x || !command.y) return 2;
         } else if (command.operation == StopNativePursuit) {
             if (!command.route_player) return 2;
-        } else if (command.operation == BattleSelect || speed_operation) {
+        } else if (command.operation == BattleSelect || speed_operation || clock_operation) {
             if (command.slot) return 2;
         } else if (command.slot < (command.operation == BattleMagic ? 1u : 2u) || command.slot >= 450) return 2;
         if (command.operation >= BattleBasic && command.operation <= BattleLoot) {

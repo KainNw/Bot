@@ -5,12 +5,12 @@
 
 constexpr uint32_t kMagic = 0x414F5031;
 constexpr uint32_t kMaxSearchRadius = 500;
-constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.10";
+constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.11";
 enum Operation : uint32_t {
     Probe = 0, Attack = 1, Approach = 2, StopMovement = 3,
     NativeAttack = 4, StopNativePursuit = 5, BattleBasic = 6,
     BattleSelect = 7, BattleMagic = 8, BattleLoot = 9, StationaryAttack = 10,
-    SpeedApply = 11, SpeedRestore = 12
+    SpeedApply = 11, SpeedRestore = 12, ClockStart = 13, ClockStop = 14, ClockStatus = 15
 };
 enum Result : uint32_t {
     Verified = 0, Queued = 1, Blocked = 2, OutOfRange = 3, InvalidScene = 4,
@@ -27,7 +27,8 @@ enum Result : uint32_t {
     BattleMagicNotEligible = 34, BattleMagicUnsupported = 35,
     BattleLootQueued = 36, BattleLootNotEligible = 37,
     SpeedApplied = 38, SpeedRestored = 39, SpeedChanged = 40, SpeedRejected = 41,
-    SpeedRetired = 42
+    SpeedRetired = 42, ClockArmed = 43, ClockStopped = 44, ClockReported = 45,
+    ClockBusy = 46, ClockRejected = 47, ClockExternal = 48, ClockUnavailable = 49
 };
 struct SharedCommand {
     uint32_t magic, version, pid, nonce_lo, nonce_hi, operation, slot;
@@ -52,8 +53,18 @@ struct SharedCommand {
     float speed_after_manager, speed_after_graphics;
     float speed_map_before, speed_map_after;
     uint32_t speed_map_owned_restore;
+    uint32_t clock_rate_bits, clock_owner_pid, clock_created_lo, clock_created_hi;
+    uint32_t clock_armed, clock_current_bits, clock_reason, clock_apply_count;
+    uint32_t clock_restore_count, clock_error, clock_view;
+    uint32_t clock_info_address, clock_token_lo, clock_token_hi;
 };
-static_assert(sizeof(SharedCommand) == 476, "IPC layout must match the x86 helper and hook");
+static_assert(sizeof(SharedCommand) == 532, "IPC layout must match the x86 helper and hook");
+struct ClockTelemetry {
+    uint32_t magic, version, pid, owner_pid, created_lo, created_hi, token_lo, token_hi;
+    volatile LONG sequence;
+    uint32_t armed, current_bits, configured_bits, reason, apply_count, restore_count, error, view;
+};
+static_assert(sizeof(ClockTelemetry) == 68, "Clock telemetry layout must match its Python reader");
 inline void MappingName(wchar_t (&name)[128], DWORD pid, DWORD lo, DWORD hi) {
     swprintf_s(name, L"Local\\AtlanticaPanel.%lu.%08lX.%08lX", pid, lo, hi);
 }

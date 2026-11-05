@@ -1,7 +1,7 @@
 -- Atlantica: bounded manual Cheat Engine timer experiment.
 -- Requires 64-bit Cheat Engine on Windows; the game itself is 32-bit.
 -- Loading only opens the form. Automatic mode must be explicitly armed.
-local M = {version = "0.18.0", rates = {1.25, 1.5, 2, 3, 4}, MAP = "__map__",
+local M = {version = "0.19.0", rates = {1.25, 1.5, 2, 3, 4}, MAP = "__map__",
   GRAPHICS_OTHER = "__graphics_other__",
   NOT_READY = "__not_ready__",
   modeOrder = {"timed", "battle_end", "automatic"}, modes = {
@@ -499,6 +499,10 @@ function M.newCEAdapter()
       b.created = creation(b.handle)
       identity(b)
       assert(not targetIs64Bit(), "El cliente admitido es de 32 bits.")
+      local nativeClock = type(getAddressSafe) == "function"
+        and getAddressSafe("AtlanticaHook.AtlanticaClockHooksInstalled")
+      assert(not nativeClock or readInteger(nativeClock) == 0,
+        "Este cliente ya usa los relojes del panel. No combines CE; reinicia el juego para cambiar.")
       local executable
       for _, module in ipairs(enumModules(b.pid) or {}) do
         if module.Name:lower() == "atlantica.exe" and module.Address == 0x400000

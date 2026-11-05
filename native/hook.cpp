@@ -1,4 +1,5 @@
 #include "protocol.h"
+#include "clock_control.h"
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -509,7 +510,15 @@ static uint32_t InvokeSpeed(SharedCommand* cmd, HANDLE cancellation) {
     if (cmd->speed_after_manager == rate && field && cmd->speed_after_graphics == rate) return SpeedRestored;
     return SpeedRetired;
 }
-static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
+static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation, HWND window) {
+    if (cmd->operation == ClockStart || cmd->operation == ClockStop || cmd->operation == ClockStatus) {
+        if (cmd->operation == ClockStart && IsCancelled(cancellation)) return Cancelled;
+        if (!Supported()) return Unsupported;
+        if (cmd->operation == ClockStart && !HexAnchor(0x00431769,
+            "8b811803000085c07d0432c0eb258b8904020000ff742404518b0d0c29a904"
+            "8b891c0900008b4c8108e808cb0c003c010f95c0c20400")) return Unsupported;
+        return ClockExecute(cmd, cancellation, window);
+    }
     if (IsCancelled(cancellation)) return Cancelled;
     if (!Supported()) return Unsupported;
     if (cmd->operation == SpeedApply || cmd->operation == SpeedRestore)
@@ -670,7 +679,7 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation) {
     }
     return result;
 }
-static void GuardedInvoke(SharedCommand* cmd) {
+static void GuardedInvoke(SharedCommand* cmd, HWND window) {
     HANDLE cancellation = nullptr;
     __try {
         if (cmd->operation != Probe && !cmd->cancel_name[0]) {
@@ -681,7 +690,7 @@ static void GuardedInvoke(SharedCommand* cmd) {
             cancellation = OpenEventW(SYNCHRONIZE, FALSE, cmd->cancel_name);
             if (!cancellation) { cmd->result = CancellationUnavailable; return; }
         }
-        cmd->result = Invoke(cmd, cancellation);
+        cmd->result = Invoke(cmd, cancellation, window);
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         cmd->exception = GetExceptionCode();
         cmd->result = ClientException;
@@ -701,11 +710,11 @@ extern "C" LRESULT CALLBACK AtlanticaHookProc(int code, WPARAM removed, LPARAM d
                 if (mapping) {
                     auto cmd = static_cast<SharedCommand*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedCommand)));
                     if (cmd) {
-                        if (cmd->magic == kMagic && cmd->version == 10 && cmd->pid == pid
+                        if (cmd->magic == kMagic && cmd->version == 11 && cmd->pid == pid
                             && cmd->nonce_lo == msg->wParam && cmd->nonce_hi == static_cast<DWORD>(msg->lParam)
                             && InterlockedCompareExchange(&cmd->state, 2, 1) == 1) {
                             cmd->thread_id = GetCurrentThreadId();
-                            GuardedInvoke(cmd);
+                            GuardedInvoke(cmd, msg->hwnd);
                             InterlockedExchange(&cmd->state, 3);
                         }
                         UnmapViewOfFile(cmd);

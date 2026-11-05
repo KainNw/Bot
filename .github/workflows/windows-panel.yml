@@ -101,6 +101,23 @@ jobs:
             }
           }
           exit 0
+      - name: Verify panel clock command parsing on a non-game process
+        shell: pwsh
+        run: |
+          $probeInstance = Get-Process -Id $PID
+          foreach ($probeOperation in @('--clock-start', '--clock-stop', '--clock-status')) {
+            $probeArguments = @(
+              $probeOperation, '--pid', "$PID", '--created', "$($probeInstance.StartTime.ToFileTimeUtc())",
+              '--window', '1', '--thread', '1', '--clock-owner-pid', "$PID",
+              '--clock-owner-created', "$($probeInstance.StartTime.ToFileTimeUtc())",
+              '--clock-rate-bits', '1077936128'
+            )
+            & build/native/Release/AtlanticaBridge.exe @probeArguments
+            if ($LASTEXITCODE -ne 4) {
+              throw "Clock parser returned $LASTEXITCODE; expected process/build rejection 4."
+            }
+          }
+          exit 0
       - name: Build executable
         run: >-
           uv run --frozen --group build pyinstaller
@@ -127,13 +144,16 @@ jobs:
           "$($panelDigest.Hash)  AtlanticaPanel.exe" | Set-Content dist/SHA256.txt -Encoding ascii
       - name: Package separate Cheat Engine timer trial
         run: uv run --frozen --group build python tools/package_ce_speed.py
+      - name: Include native library license
+        shell: pwsh
+        run: Copy-Item native/third_party/minhook/LICENSE.txt dist/THIRD-PARTY-NOTICES.txt
       - uses: actions/upload-artifact@v4
         with:
           name: AtlanticaPanel-Windows
           path: |
             dist/AtlanticaPanel.exe
             dist/SHA256.txt
-            dist/Atlantica-SpeedTrial-CE/*
+            dist/THIRD-PARTY-NOTICES.txt
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4

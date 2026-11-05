@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .errors import DiagnosticError
-from .limits import MAX_ATTACK_DELAY_SECONDS, MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
+from .limits import MAX_ATTACK_DELAY_SECONDS, MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS, SPEED_RATES
 
 ACTION_LABELS = {
     "basic": "Ataque básico",
@@ -56,6 +56,8 @@ class BotProfile:
     search_radius: int = 60
     collect_remaining_loot: bool = False
     world_attack_mode: str = "native"
+    battle_speed_enabled: bool = False
+    battle_speed_rate: float = 1.25
 
     def validate(self) -> None:
         if type(self.number) is not int or self.number not in (1, 2, 3):
@@ -75,6 +77,12 @@ class BotProfile:
             raise DiagnosticError("El radio de búsqueda debe estar entre 5 y 500 casillas.")
         if type(self.collect_remaining_loot) is not bool:
             raise DiagnosticError("Revisa la opción de recogida de botín restante.")
+        if (
+            type(self.battle_speed_enabled) is not bool
+            or type(self.battle_speed_rate) not in (int, float)
+            or self.battle_speed_rate not in SPEED_RATES
+        ):
+            raise DiagnosticError("Elige una velocidad de combate admitida: 1,25, 1,5, 2, 3 o 4×.")
         if (
             type(self.world_attack_mode) is not str
             or self.world_attack_mode not in WORLD_ATTACK_LABELS
@@ -105,7 +113,7 @@ class BotProfile:
 
     def summary(self) -> dict:
         return {
-            "schema_version": 5,
+            "schema_version": 6,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "magic_first_turn_only": self.magic_first_turn_only,
@@ -113,6 +121,8 @@ class BotProfile:
             "search_radius": self.search_radius,
             "collect_remaining_loot": self.collect_remaining_loot,
             "world_attack_mode": self.world_attack_mode,
+            "battle_speed_enabled": self.battle_speed_enabled,
+            "battle_speed_rate": self.battle_speed_rate,
             "turn_execution_available": True,
         }
 
@@ -151,7 +161,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2, 3, 4, 5)
+                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -175,6 +185,8 @@ class ProfileStore:
                 payload["search_radius"] if payload["schema_version"] >= 4 else 60,
                 payload["collect_remaining_loot"] if payload["schema_version"] >= 4 else False,
                 payload["world_attack_mode"] if payload["schema_version"] >= 5 else "native",
+                payload["battle_speed_enabled"] if payload["schema_version"] >= 6 else False,
+                payload["battle_speed_rate"] if payload["schema_version"] >= 6 else 1.25,
             )
             profile.validate()
             return profile

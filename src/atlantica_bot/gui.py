@@ -82,6 +82,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.search_radius = tk.StringVar(value="60")
             self.attack_delay = tk.StringVar(value="0")
             self.collect_loot = tk.BooleanVar(value=False)
+            self.battle_speed_enabled = tk.BooleanVar(value=False)
+            self.battle_speed_rate = tk.StringVar(value="1.25")
+            self.battle_speed_status = tk.StringVar(value="Speed desactivado")
             self.bot_status = tk.StringVar(value="Bot detenido.")
             self.execution_status = tk.StringVar()
             self.pid = tk.StringVar()
@@ -217,6 +220,24 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 row, textvariable=self.attack_delay, values=("0", "1", "3"), width=7
             )
             self.delay_entry.pack(side="left", padx=8)
+            speed_row = ttk.Frame(self.hunt_tab)
+            speed_row.pack(fill="x", pady=(12, 4))
+            self.battle_speed_check = ttk.Checkbutton(
+                speed_row,
+                text="Speed solo en combate (experimental)",
+                variable=self.battle_speed_enabled,
+            )
+            self.battle_speed_check.pack(side="left")
+            self.battle_speed_list = ttk.Combobox(
+                speed_row,
+                textvariable=self.battle_speed_rate,
+                values=("1.25", "1.5", "2", "3", "4"),
+                state="readonly",
+                width=7,
+            )
+            self.battle_speed_list.pack(side="left", padx=8)
+            ttk.Label(speed_row, text="×").pack(side="left")
+            ttk.Label(self.hunt_tab, textvariable=self.battle_speed_status).pack(anchor="w")
             ttk.Label(
                 self.hunt_tab,
                 text="Elige 0, 1, 3 o escribe un valor de 0 a 60. "
@@ -629,6 +650,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.window_list.configure(state="disabled" if active else "readonly")
             self.profile_list.configure(state="disabled" if active else "readonly")
             self.attack_mode_list.configure(state="disabled" if active else "readonly")
+            self.battle_speed_list.configure(state="disabled" if active else "readonly")
             for button in (
                 self.list_button,
                 self.pick_button,
@@ -641,6 +663,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.radius_calibrate_button,
                 self.delay_entry,
                 self.loot_check,
+                self.battle_speed_check,
                 self.save_hunt_button,
             ):
                 button.configure(state="disabled" if active else "normal")
@@ -771,6 +794,17 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     self.lock_target_controls()
                 if self.bot_report:
                     info = self.bot_report
+                    speed = info.get("speed", {})
+                    current_rate = speed.get("current_rate")
+                    self.battle_speed_status.set(
+                        "Speed: "
+                        + (
+                            f"{current_rate:g}× · "
+                            if isinstance(current_rate, (int, float))
+                            else ""
+                        )
+                        + speed.get("message", "Desactivado")
+                    )
                     message = info["message"]
                     if worker.alive and worker.stop_event.is_set():
                         message = "Deteniendo; puede completarse la solicitud en curso."
@@ -802,6 +836,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.attack_delay.set(f"{self.profile.attack_delay_seconds:g}")
                 self.search_radius.set(str(self.profile.search_radius))
                 self.collect_loot.set(self.profile.collect_remaining_loot)
+                self.battle_speed_enabled.set(self.profile.battle_speed_enabled)
+                self.battle_speed_rate.set(f"{self.profile.battle_speed_rate:g}")
                 self.world_attack_mode.set(WORLD_ATTACK_LABELS[self.profile.world_attack_mode])
                 count = sum(merc.enabled for merc in self.profile.mercenaries)
                 magic_count = sum(
@@ -828,6 +864,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             try:
                 delay = float(self.attack_delay.get().strip().replace(",", "."))
                 radius = int(self.search_radius.get())
+                speed_rate = float(self.battle_speed_rate.get().strip().replace(",", "."))
             except ValueError as exc:
                 raise DiagnosticError(
                     "Escribe una espera de 0 a 60 s y un radio entero de 5 a 500."
@@ -837,6 +874,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 attack_delay_seconds=delay,
                 search_radius=radius,
                 collect_remaining_loot=self.collect_loot.get(),
+                battle_speed_enabled=self.battle_speed_enabled.get(),
+                battle_speed_rate=speed_rate,
                 world_attack_mode=next(
                     (
                         key
@@ -2323,10 +2362,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.attack_delay.set("1,5")
         panel.search_radius.set("350")
         panel.collect_loot.set(True)
+        assert not panel.battle_speed_enabled.get()
+        panel.battle_speed_enabled.set(True)
+        panel.battle_speed_rate.set("3")
         panel.world_attack_mode.set(WORLD_ATTACK_LABELS["stationary"])
         configured = panel.configured_profile(BotProfile.default(1))
         assert configured.attack_delay_seconds == 1.5 and configured.search_radius == 350
         assert configured.collect_remaining_loot
+        assert configured.battle_speed_enabled and configured.battle_speed_rate == 3.0
         assert configured.world_attack_mode == "stationary"
         assert overview.attack_mode_list.get() == WORLD_ATTACK_LABELS["stationary"]
         assert overview.hunt_controls[0].get() == "1,5"

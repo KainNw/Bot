@@ -25,7 +25,7 @@ def main() -> None:
         files.extend(sorted((root / directory).rglob("*.py")))
     files.extend(sorted((root / "tools" / "cheat_engine").glob("*.lua")))
     files.extend(sorted((root / "docs").rglob("*.md")))
-    files.extend(sorted((root / "native").glob("*")))
+    files.extend(sorted(path for path in (root / "native").rglob("*") if path.is_file()))
     files.extend(sorted((root / ".github" / "workflows").glob("*.yml")))
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:

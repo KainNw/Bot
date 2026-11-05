@@ -1,3 +1,4 @@
 LIBRARY AtlanticaHook
 EXPORTS
     AtlanticaHookProc=_AtlanticaHookProc@12
+    AtlanticaClockHooksInstalled=_AtlanticaClockHooksInstalled DATA
