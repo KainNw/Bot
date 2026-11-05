@@ -20,6 +20,7 @@ def page(address, code):
 
 def environment(monkeypatch, code, pages=None):
     monkeypatch.setattr(trace, "ANCHORS", {trace.ROOT: code[:1]})
+    monkeypatch.setattr(trace, "STATIC_METHOD_EXPECTED", {})
     blocks = [("captured-root", trace.ROOT & ~0xFFF, page(trace.ROOT, code))]
     calls = []
 
@@ -234,3 +235,65 @@ def test_reference_budget_does_not_keep_enqueuing_callees(monkeypatch):
     report = trace.capture_animation_dependencies(session, blocks)
     assert len(report["references"]) == 1 and len(report["nodes"]) == 2
     assert calls == [first & ~0xFFF] and "references" in report["limits_reached"]
+
+
+@pytest.fixture
+def static_methods_env(monkeypatch):
+    expected = dict(trace.STATIC_METHOD_EXPECTED)
+    table = bytearray(trace.PAGE_SIZE)
+    for offset, target in expected.items():
+        struct.pack_into("<I", table, trace.STATIC_METHOD_TABLE % trace.PAGE_SIZE + offset, target)
+    pages = {trace.STATIC_METHOD_TABLE & ~0xFFF: bytes(table)}
+    session, blocks, calls = environment(monkeypatch, b"\xc3", pages)
+    monkeypatch.setattr(trace, "STATIC_METHOD_EXPECTED", expected)
+    for start in {target & ~0xFFF for target in expected.values()}:
+        data = bytearray(b"\xcc" * trace.PAGE_SIZE)
+        for target in expected.values():
+            if target & ~0xFFF == start:
+                data[target % trace.PAGE_SIZE] = 0xC3
+        blocks.append(("existing-methods", start, bytes(data)))
+    return session, blocks, calls, pages, table
+
+
+def test_verified_static_table_adds_candidate_roots_without_a_runtime_receiver(static_methods_env):
+    session, blocks, calls, _, _ = static_methods_env
+    report = trace.capture_animation_dependencies(session, blocks)
+    methods = report["static_methods"]
+    assert methods["status"] == "matched" and not methods["runtime_receiver_verified"]
+    assert len(methods["entries"]) == 5 and len(report["nodes"]) == 5
+    assert {n["static_table_offset"] for n in report["nodes"] if "static_table_offset" in n} == {
+        0x4C,
+        0x50,
+        0xA4,
+        0xA8,
+    }
+    assert calls == [trace.STATIC_METHOD_TABLE & ~0xFFF]
+    assert not report["new_code_pages"] and not report["executes_client_functions"]
+
+
+def test_changed_static_table_never_turns_its_values_into_code_roots(static_methods_env):
+    session, blocks, calls, pages, table = static_methods_env
+    struct.pack_into("<I", table, trace.STATIC_METHOD_TABLE % trace.PAGE_SIZE + 0xA8, 0x60000000)
+    pages[trace.STATIC_METHOD_TABLE & ~0xFFF] = bytes(table)
+    report = trace.capture_animation_dependencies(session, blocks)
+    assert report["static_methods"]["status"] == "changed"
+    assert len(report["nodes"]) == 1 and report["nodes"][0]["address"] == f"{trace.ROOT:08X}"
+    assert calls == [trace.STATIC_METHOD_TABLE & ~0xFFF]
+
+
+def test_unavailable_static_table_keeps_the_original_graph_usable(static_methods_env):
+    session, blocks, calls, pages, _ = static_methods_env
+    pages.clear()
+    report = trace.capture_animation_dependencies(session, blocks)
+    assert report["status"] == "captured" and len(report["nodes"]) == 1
+    assert report["static_methods"]["status"] == "unavailable"
+    assert calls == [trace.STATIC_METHOD_TABLE & ~0xFFF]
+    assert report["unavailable_pages"]
+
+
+def test_static_roots_respect_the_shared_node_budget(static_methods_env, monkeypatch):
+    session, blocks, _, _, _ = static_methods_env
+    monkeypatch.setattr(trace, "MAX_NODES", 2)
+    report = trace.capture_animation_dependencies(session, blocks)
+    assert len(report["nodes"]) == 2 and "nodes" in report["limits_reached"]
+    assert report["nodes"][0]["static_table_offset"] == 0xA4

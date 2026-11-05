@@ -206,7 +206,12 @@ def test_combat_export_contains_fixed_code_dependencies_readonly_tables_and_cont
 def test_export_includes_bounded_animation_dependencies_and_labels_static_data(
     session, tmp_path, monkeypatch
 ):
-    from atlantica_bot.animation_code import ANCHORS, ROOT
+    from atlantica_bot.animation_code import (
+        ANCHORS,
+        ROOT,
+        STATIC_METHOD_EXPECTED,
+        STATIC_METHOD_TABLE,
+    )
 
     session.creation_time = 777
     monkeypatch.setattr("atlantica_bot.capture.observe_scene", lambda _: battle_observation())
@@ -224,9 +229,17 @@ def test_export_includes_bounded_animation_dependencies_and_labels_static_data(
     update[ROOT - 0xA19000 + 16 : ROOT - 0xA19000 + 16 + len(body)] = body
     child_page = bytearray(b"\xcc" * 4096)
     child_page[child % 4096] = 0xC3
+    table = bytearray(4096)
+    state_page = bytearray(b"\xcc" * 4096)
+    for offset, target in STATIC_METHOD_EXPECTED.items():
+        struct.pack_into("<I", table, STATIC_METHOD_TABLE % 4096 + offset, target)
+        target_page = child_page if target & ~0xFFF == 0xA52000 else state_page
+        target_page[target % 4096] = 0xC3
     extra = {
         (0xA19000, 0x3000): bytes(update),
         (0xA52000, 4096): bytes(child_page),
+        (0xA1E000, 4096): bytes(state_page),
+        (0x43E2000, 4096): bytes(table),
         (static, 4096): b"labels\0" + bytes(4089),
     }
     original = session.system.read_memory
@@ -243,12 +256,15 @@ def test_export_includes_bounded_animation_dependencies_and_labels_static_data(
         assert archive.testzip() is None
         manifest = json.loads(archive.read("manifest.json"))
         graph = manifest["animation_dependencies"]
-        assert graph["status"] == "captured" and len(graph["nodes"]) == 2
-        assert graph["new_code_pages"] == ["00A52000"] and graph["new_data_pages"] == ["043E1000"]
+        assert graph["status"] == "captured" and len(graph["nodes"]) == 6
+        assert graph["static_methods"]["status"] == "matched"
+        assert set(graph["new_code_pages"]) == {"00A52000", "00A1E000"}
+        assert set(graph["new_data_pages"]) == {"043E1000", "043E2000"}
         blocks = {block["address"]: block for block in manifest["blocks"]}
         assert blocks["043E1000"]["kind"] == "readonly_constants"
         assert blocks["00A52000"]["kind"] == "code"
-        for address in ("043E1000", "00A52000"):
+        assert blocks["043E2000"]["kind"] == "readonly_constants"
+        for address in ("043E1000", "043E2000", "00A52000", "00A1E000"):
             block = blocks[address]
             assert hashlib.sha256(archive.read(block["file"])).hexdigest() == block["sha256"]
 

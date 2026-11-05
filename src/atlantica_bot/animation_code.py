@@ -12,7 +12,7 @@ ROOT = 0x00A1A82E
 MAX_DEPTH = 4
 MAX_NODES = 64
 MAX_CODE_PAGES = 48
-MAX_DATA_PAGES = 8
+MAX_DATA_PAGES = 16
 MAX_INSTRUCTIONS = 256
 MAX_REFERENCES = 1024
 ANCHORS = {
@@ -22,6 +22,15 @@ ANCHORS = {
 }
 # Repeated timing/logging helpers surrounding the captured update dispatcher.
 COMMON_HELPERS = frozenset((0x009B2200, 0x009B28A0, 0x009B2930))
+STATIC_METHOD_TABLE = 0x043E2C34
+STATIC_METHOD_EXPECTED = {
+    0x4C: 0x00A1E68F,
+    0x50: 0x00A1E540,
+    0xA4: 0x00A52DCC,
+    0xA8: 0x00A52939,
+    0xAC: 0x00A52AA9,
+}
+STATIC_METHOD_ROOTS = (0xA4, 0xA8, 0x4C, 0x50)
 
 
 def decoder_probe() -> bool:
@@ -45,6 +54,12 @@ def capture_animation_dependencies(session: GameSession, blocks: list) -> dict:
         "readonly_range": [f"{a:08X}" for a in DATA_RANGE],
         "excluded_common_helpers": [f"{a:08X}" for a in sorted(COMMON_HELPERS)],
         "candidate_code_may_be_protected": True,
+        "static_methods": {
+            "table": f"{STATIC_METHOD_TABLE:08X}",
+            "status": "unavailable",
+            "entries": [],
+            "runtime_receiver_verified": False,
+        },
         "limits": {
             "depth": MAX_DEPTH,
             "nodes": MAX_NODES,
@@ -164,9 +179,49 @@ def capture_animation_dependencies(session: GameSession, blocks: list) -> dict:
         queued.add(target)
         pending.append((target, depth + 1))
 
+    # This table was captured in 0.16.4. Match every known entry before adding
+    # candidate virtual methods; never guess a receiver or follow a heap pointer.
+    if STATIC_METHOD_EXPECTED:
+        methods = report["static_methods"]
+        try:
+            page(STATIC_METHOD_TABLE, data=True)
+            for offset, expected in STATIC_METHOD_EXPECTED.items():
+                raw = existing(STATIC_METHOD_TABLE + offset, 4)
+                actual = int.from_bytes(raw, "little") if raw is not None else None
+                methods["entries"].append(
+                    {
+                        "offset": offset,
+                        "expected": f"{expected:08X}",
+                        "actual": f"{actual:08X}" if actual is not None else None,
+                    }
+                )
+            if any(row["actual"] != row["expected"] for row in methods["entries"]):
+                methods["status"] = "changed"
+            else:
+                methods["status"] = "matched"
+                roots = []
+                for offset in STATIC_METHOD_ROOTS:
+                    target = STATIC_METHOD_EXPECTED[offset]
+                    if target in queued or not ENGINE_RANGE[0] <= target < ENGINE_RANGE[1]:
+                        continue
+                    if len(queued) >= MAX_NODES:
+                        limit("nodes")
+                        break
+                    queued.add(target)
+                    roots.append((target, 0))
+                pending.extendleft(reversed(roots))
+        except (DiagnosticError, OSError) as exc:
+            methods["error"] = str(exc)
+    else:
+        report["static_methods"]["status"] = "disabled"
+
     while pending:
         entry, depth = pending.popleft()
         node = {"address": f"{entry:08X}", "depth": depth, "instructions": 0, "status": "decoded"}
+        if depth == 0 and entry != ROOT:
+            node["static_table_offset"] = next(
+                offset for offset, target in STATIC_METHOD_EXPECTED.items() if target == entry
+            )
         report["nodes"].append(node)
         paths, visited = deque((entry,)), set()
         while paths and len(visited) < MAX_INSTRUCTIONS:

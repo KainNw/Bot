@@ -1,7 +1,15 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.16.4** añade una captura acotada de las
+con Auto Battle apagado. La versión **0.16.5** extiende la captura de animaciones
+con cuatro métodos candidatos de una tabla estática contrastada con el último
+ZIP. Valida cinco entradas antes de usarlas como raíces de análisis; no deduce
+el tipo de un objeto vivo ni ejecuta métodos virtuales. Esto permite seguir las
+llamadas que reciben el tiempo de animación. Conserva los límites del recorrido
+y admite hasta 16 páginas nuevas de datos estáticos, con un máximo conjunto de
+256 KiB adicionales. Consulta [la investigación](docs/battle-speed.md).
+
+Conserva 0.16.4, que añade una captura acotada de las
 dependencias de actualización gráfica: sigue llamadas directas del código ya
 verificado, recoge sus páginas y datos estáticos referidos y registra las
 llamadas indirectas que no puede resolver. Solo lee; no ejecuta las instrucciones

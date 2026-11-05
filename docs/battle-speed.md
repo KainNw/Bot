@@ -290,3 +290,50 @@ carga durante el arranque automatizado con bytes fijos, sin acceder al juego.
 Al usar los fuentes sin instalar esa dependencia, la exportación fija continúa
 y registra `decoder_unavailable`. Esta fase necesita una nueva exportación de
 combate con 0.16.4; no necesita otra prueba de escala.
+
+## Captura 021811: tabla de métodos del personaje y tiempo de animación
+
+El ZIP de 0.16.4 del 5 de noviembre pertenece a otra instancia, PID 10852,
+creación `134383363734202228`, de la misma compilación admitida. Se verificaron
+CRC, tamaños y SHA-256 de sus 57 bloques, 1 044 736 bytes. El grafo contiene 28
+entradas, nueve páginas nuevas de código y siete de datos, sin páginas
+inaccesibles. Registra límites de profundidad e instrucciones, sin certificar
+cobertura completa. El gestor sigue en 1,40 en ambas muestras.
+
+Los datos estáticos identifican `N3DCCharManager::ManagedFullUpdate` y las fases
+`PreUpdate`, `Update` y `PostUpdate`, además de clases Gamebryo/NiAnimation.
+La delegación `00A527C0 → 00A1AB93 → 00A72619` pertenece a
+`N3DCChar::GetCommandManager`: procesa órdenes temporizadas y no se presenta
+como un multiplicador de animaciones por su argumento float.
+
+La actualización por `00A5282F` llama al método virtual `+A4`; `00A52876` llama
+a `+A8`. La tabla estática `043E2C34`, contenida en la captura, publica:
+
+| Desplazamiento | Destino observado |
+| --- | --- |
+| `4C` | `00A1E68F` |
+| `50` | `00A1E540` |
+| `A4` | `00A52DCC` |
+| `A8` | `00A52939` |
+| `AC` | `00A52AA9` |
+
+`00A52DCC` pasa un float del contexto de actualización `+0C` a `00AAC680`
+con el receptor obtenido de `personaje+6C → +0C`. `00A52939` delega también
+en `00A76C74`. Esos destinos no están en el ZIP. Las etiquetas de NiAnimation
+no bastan para asignar semánticas o campos de velocidad a código que falta.
+Tampoco se deduce que todos los personajes vivos utilicen esta tabla base.
+
+0.16.5 añade cuatro raíces candidatas de esa tabla (`A4`, `A8`, `4C`, `50`) al
+grafo de solo lectura. Antes lee su página dentro de la sección estática admitida
+y exige coincidencia exacta de las cinco entradas. Una tabla distinta o
+inaccesible se registra y no aporta raíces; el recorrido directo anterior sigue
+disponible. Las raíces comparten el presupuesto de nodos y código, y el informe
+conserva `runtime_receiver_verified=false`. No sigue objetos del montón para
+resolver llamadas ni ejecuta estas funciones.
+
+Los límites siguen en 64 entradas, cuatro saltos, 256 instrucciones por entrada
+y 48 intentos de página de código. El presupuesto de datos estáticos pasa a 16
+páginas, con un máximo total de 256 KiB nuevos. La exportación mantiene las
+comprobaciones de instancia y contexto. Se necesita **Exportar combate** con
+0.16.5 para obtener las nuevas dependencias. La prueba de escala sigue siendo
+opcional y no es necesaria para esta exportación; no se activa un SpeedHack.
