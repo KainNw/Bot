@@ -1,7 +1,11 @@
--- Atlantica: manual, ten-second Cheat Engine timer experiment.
+-- Atlantica: bounded manual Cheat Engine timer experiment.
 -- Requires 64-bit Cheat Engine on Windows; the game itself is 32-bit.
 -- Loading this file only opens the form. Only its Test button changes timers.
-local M = {version = "0.17.0", rates = {1.25, 1.5, 2, 3, 4}}
+local M = {version = "0.17.1", rates = {1.25, 1.5, 2, 3, 4}, MAP = "__map__",
+  modeOrder = {"timed", "battle_end"}, modes = {
+    timed = {seconds = 10, label = "10 segundos"},
+    battle_end = {seconds = 60, label = "Hasta salir del combate (máx. 60 s)"}
+  }}
 
 local function equalRate(a, b)
   return type(a) == "number" and math.abs(a - b) < 0.0001
@@ -10,26 +14,50 @@ end
 -- The controller also runs against a fake adapter in the regression tests.
 function M.newTrial(api)
   local t = {phase = "idle", message = "Sin cambios de velocidad.", binding = nil,
-    ownsChange = false, history = {}, reportedRate = nil, busy = false, stopRequested = nil}
+    ownsChange = false, history = {}, reportedRate = nil, busy = false, stopRequested = nil,
+    historyRevision = 0, mode = "timed", duration = 10}
 
   function t.note(message)
     t.message = message
     t.history[#t.history + 1] = tostring(api.now()) .. " ms | " .. message
+    t.historyRevision = t.historyRevision + 1
     if #t.history > 100 then table.remove(t.history, 1) end
+  end
+
+  function t.elapsed()
+    if not t.startedAt then return 0 end
+    return math.max(0, ((t.endedAt or api.now()) - t.startedAt) / 1000)
+  end
+
+  local function observation()
+    local token, detail = api.observe(t.binding)
+    t.lastObservation = detail
+    return token
+  end
+
+  local function describeState()
+    local d = api.lastObservation or t.lastObservation
+    if not d then return end
+    t.note("Última lectura: estado=" .. tostring(d.classification) ..
+      ", escena=" .. tostring(d.scene_code) .. ", contextos=" ..
+      tostring(d.context_a) .. "/" .. tostring(d.context_b) ..
+      ", fase=" .. tostring(d.battle_phase) .. ", gráfico=" .. tostring(d.graphics_context_index))
   end
 
   function t.release()
     if t.binding then api.release(t.binding); t.binding = nil end
   end
 
-  local function restoreNow(reason)
+  local function restoreNow(reason, cause)
     if not t.ownsChange then
       t.release()
       t.phase = "idle"
-      t.note(reason .. "; no había cambio de temporizadores pendiente.")
+      t.note(reason .. "; no había cambio de temporizadores pendiente." ..
+        (t.lastRestoration and " Última causa: " .. t.lastRestoration.reason .. "." or ""))
       return true
     end
     t.phase = "restoring"
+    describeState()
     local ok, result = pcall(function()
       if not api.returnToOriginal(t.binding) then return "exited" end
       api.setRate(t.binding, 1)
@@ -44,14 +72,20 @@ function M.newTrial(api)
     end
     t.ownsChange = false
     t.phase = "idle"
+    t.endedAt = api.now()
+    t.lastRestoration = {cause = cause or "other", reason = reason,
+      at = t.endedAt, seconds = t.elapsed(),
+      pid = t.binding.pid, mode = t.mode, rate = t.rate, reported_rate = t.reportedRate,
+      process_exited = result == "exited", observation = api.lastObservation or t.lastObservation}
     t.release()
-    t.note(reason .. (result == "exited" and "; la instancia terminó." or
+    t.note(reason .. string.format(" (%.2f s)", t.elapsed()) ..
+      (result == "exited" and "; la instancia terminó." or
       "; CE informa 1×. Comprueba el juego; esto no mide la animación."))
     return true
   end
 
-  local function finishRestore(reason)
-    local ok, result = pcall(restoreNow, reason)
+  local function finishRestore(reason, cause)
+    local ok, result = pcall(restoreNow, reason, cause)
     if not ok then
       t.phase = "restore_failed"
       t.note("Limpieza pendiente: " .. tostring(result))
@@ -60,44 +94,55 @@ function M.newTrial(api)
     return result
   end
 
-  function t.restore(reason)
+  function t.restore(reason, cause)
+    cause = cause or "manual"
+    local receivedSeconds = t.startedAt and math.max(0, (api.now() - t.startedAt) / 1000) or 0
+    t.note(reason .. string.format(" recibida a %.2f s; estado=%s.", receivedSeconds, t.phase))
     -- CE may pump GUI messages while injecting/loading symbols. A timer,
     -- close event, or Stop click must not start another nested speed request.
-    if t.busy then t.stopRequested = reason; return false end
+    if t.busy then
+      if not t.stopRequested then t.stopRequested = {reason = reason, cause = cause} end
+      return false
+    end
     t.busy = true
-    local result = finishRestore(reason)
+    local result = finishRestore(reason, cause)
     t.stopRequested, t.busy = nil, false
     return result
   end
 
-  function t.start(rate)
+  function t.start(rate, mode)
     if t.busy then error("CE todavía está procesando la prueba.") end
     if t.binding or t.ownsChange then error("Termina o restaura la prueba anterior.") end
     local allowed = false
     for _, value in ipairs(M.rates) do if rate == value then allowed = true end end
     if not allowed then error("Elige una de las velocidades de prueba.") end
+    mode = mode or "timed"
+    if not M.modes[mode] then error("Elige un modo de prueba válido.") end
+    t.mode, t.duration = mode, M.modes[mode].seconds
+    t.startedAt, t.endedAt, t.lastObservation, t.lastRestoration = nil, nil, nil, nil
     t.busy = true
     local ok, err = pcall(function()
       t.binding = api.bind()
       if not equalRate(api.reportedRate(), 1) then
         error("CE ya informa otra velocidad. Vuelve a 1× antes de probar.")
       end
-      t.battle = api.observe(t.binding)
+      t.battle = observation()
+      if t.battle == M.MAP then error("Entra en un combate antes de iniciar la prueba.") end
       t.rate, t.armedAt = rate, api.now()
       t.phase = "arming"
       t.note("PID " .. t.binding.pid .. ", creación " .. t.binding.created ..
-        ": comprobando combate antes de aplicar " .. rate .. "×.")
+        ": comprobando combate antes de aplicar " .. rate .. "×; modo=" .. mode .. ".")
     end)
     if not ok then
-      finishRestore(tostring(err))
+      finishRestore(tostring(err), "start_rejected")
       t.stopRequested, t.busy = nil, false
       return false
     end
     t.busy = false
     if t.stopRequested then
-      local reason = t.stopRequested
+      local request = t.stopRequested
       t.stopRequested = nil
-      t.restore(reason)
+      t.restore(request.reason, request.cause)
       return false
     end
     return true
@@ -108,36 +153,68 @@ function M.newTrial(api)
     if t.phase ~= "arming" and t.phase ~= "active" then return end
     t.busy = true
     local ok, err = pcall(function()
-      local current = api.observe(t.binding)
+      local current = observation()
+      if t.stopRequested then
+        finishRestore(t.stopRequested.reason, t.stopRequested.cause)
+        return
+      end
+      if current == M.MAP then
+        finishRestore("Salida del combate detectada", "battle_exit")
+        return
+      end
       if current ~= t.battle then error("El combate cambió.") end
       if t.phase == "arming" then
         if api.now() - t.armedAt < 200 then return end
         if not equalRate(api.reportedRate(), 1) then error("La velocidad de CE cambió.") end
         -- Retain ownership even if CE fails after partially installing its hooks.
         t.ownsChange = true
-        t.deadline = api.now() + 10000
+        t.startedAt = api.now()
+        t.deadline = t.startedAt + t.duration * 1000
         t.phase = "applying"
         api.setRate(t.binding, t.rate)
         t.reportedRate = api.reportedRate()
         if not equalRate(t.reportedRate, t.rate) then error("CE no informa el factor solicitado.") end
-        if api.now() >= t.deadline then finishRestore("Plazo cumplido durante la carga de CE"); return end
-        if api.observe(t.binding) ~= t.battle then error("El combate cambió durante la aplicación.") end
+        if t.stopRequested then
+          finishRestore(t.stopRequested.reason, t.stopRequested.cause)
+          return
+        end
+        if api.now() >= t.deadline then
+          finishRestore("Plazo cumplido durante la carga de CE", "initialization_timeout")
+          return
+        end
+        current = observation()
+        if t.stopRequested then
+          finishRestore(t.stopRequested.reason, t.stopRequested.cause)
+          return
+        end
+        if current == M.MAP then
+          finishRestore("Salida del combate detectada durante la aplicación", "battle_exit")
+          return
+        end
+        if current ~= t.battle then error("El combate cambió durante la aplicación.") end
         t.phase = "active"
         t.note("CE informa " .. t.rate .. "× en PID " .. t.binding.pid ..
-          ". Ejecuta una magia manual; prueba de hasta 10 s.")
+          ". Ejecuta una magia manual; " .. M.modes[t.mode].label .. ".")
       elseif api.now() >= t.deadline then
-        finishRestore("Plazo de 10 s cumplido")
+        finishRestore(t.mode == "timed" and "Plazo de 10 s cumplido" or
+          "Límite de 60 s cumplido sin confirmar salida del combate", "time_limit")
       elseif not equalRate(api.reportedRate(), t.rate) then
         error("La velocidad de CE cambió durante la prueba.")
       end
     end)
-    if not ok then finishRestore(tostring(err)) end
-    if t.stopRequested and t.binding then finishRestore(t.stopRequested) end
+    if not ok then
+      if t.stopRequested then finishRestore(t.stopRequested.reason, t.stopRequested.cause)
+      else finishRestore(tostring(err), "observation_or_context_changed") end
+    end
+    if t.stopRequested and t.binding and t.phase ~= "restore_failed" then
+      finishRestore(t.stopRequested.reason, t.stopRequested.cause)
+    end
     t.stopRequested, t.busy = nil, false
   end
 
   function t.close()
-    return t.restore("Prueba cerrada")
+    if not t.binding and not t.ownsChange and not t.busy then return true end
+    return t.restore("Prueba cerrada", "window_closed")
   end
 
   return t
@@ -233,8 +310,11 @@ function M.newCEAdapter()
     identity(b)
     assert(not fileExists(b.marker), "Desactiva HuntingMode.txt antes de probar.")
     local function snapshot()
+      local d = {classification = "unknown"}
+      api.lastObservation = d
       local owner = pointer(0x04a9290c)
-      assert(read32(owner + 0xb98) == 2, "Escena no disponible.")
+      d.scene_code = read32(owner + 0xb98)
+      assert(d.scene_code == 2, "Escena no disponible.")
       local auto = readBytes(owner + 0x16394, 1)
       local hunting = readBytes(0x04e52c5a, 1)
       assert(auto == 0 and hunting == 0, "Apaga Auto Battle y la caza nativa.")
@@ -243,26 +323,46 @@ function M.newCEAdapter()
       assert(read32(actor + 0x200) == 1 and read32(actor + 0x2c) == world,
         "El personaje local cambió.")
       local index = read32(actor + 0x318)
-      assert(index < 128 and read32(actor + 0x254) == 0xffffffff,
+      local contextB = read32(actor + 0x254)
+      d.context_a = index == 0xffffffff and -1 or index
+      d.context_b = contextB == 0xffffffff and -1 or contextB
+      d.graphics_context_index = read32(0x1539ce18)
+      local key = {owner, world, actor, index, contextB, d.graphics_context_index,
+        read32(actor + 0x204), read32(actor + 0x208), read32(actor + 0x20c)}
+      -- The labelled map/battle/map captures on this exact build verified these
+      -- local context fields. Do not treat read errors or an arbitrary new scene
+      -- as a successful return to the map.
+      if index == 0xffffffff and contextB == 0xffffffff then
+        d.classification = "map"
+        return {token = M.MAP, signature = table.concat(key, ":"), detail = d}
+      end
+      assert(index < 128 and contextB == 0xffffffff,
         "La prueba requiere un combate normal activo.")
       local manager = pointer(owner + 0x91c)
-      assert(read32(manager) == 0x042d8aa4 and read32(manager + 0x234c) == 3,
+      d.battle_phase = read32(manager + 0x234c)
+      assert(read32(manager) == 0x042d8aa4 and d.battle_phase == 3,
         "El gestor todavía no está en combate.")
       local context = pointer(manager + 8 + index * 4)
-      assert(read32(context + 0x6c74) ~= 0xffffffff and read32(0x1539ce18) == 1,
+      assert(read32(context + 0x6c74) ~= 0xffffffff and d.graphics_context_index == 1,
         "El combate todavía no está listo.")
-      local key = {owner, world, actor, manager, context, index,
-        read32(actor + 0x204), read32(actor + 0x208), read32(actor + 0x20c)}
-      return table.concat(key, ":")
+      key[#key + 1], key[#key + 2] = manager, context
+      d.classification = "battle"
+      local token = table.concat(key, ":")
+      return {token = token, signature = token, detail = d}
     end
     local before, after = snapshot(), snapshot()
-    assert(before == after, "Los objetos del combate cambiaron durante la lectura.")
+    if before.signature ~= after.signature then
+      api.lastObservation.classification = "unknown"
+      error("Los objetos del combate cambiaron durante la lectura.")
+    end
     identity(b)
-    return after
+    return after.token, after.detail
   end
   function api.setRate(b, rate)
     identity(b)
-    if rate ~= 1 then api.observe(b) end
+    if rate ~= 1 then
+      assert(api.observe(b) ~= M.MAP, "La instancia ya volvió al mapa; no se aplicó velocidad.")
+    end
     -- CE owns injection/hooking; no guessed offsets or private DLLs are used.
     speedhack_setSpeed(rate)
     identity(b)
@@ -300,11 +400,11 @@ function M.open()
   local trial = M.newTrial(api)
   local form = createForm(false)
   form.Caption = "Atlantica — prueba CE " .. M.version
-  form.Width, form.Height = 620, 420
+  form.Width, form.Height = 700, 560
   form.Position = "poScreenCenter"
   local function label(text, y, height)
     local control = createLabel(form)
-    control.Left, control.Top, control.Width, control.Height = 16, y, 580, height
+    control.Left, control.Top, control.Width, control.Height = 16, y, 660, height
     control.AutoSize, control.WordWrap, control.Caption = false, true, text
     return control
   end
@@ -312,31 +412,57 @@ function M.open()
     ". Bot detenido y Auto Battle apagado. Entra en combate antes de probar.", 12, 44)
   label("Cambia temporizadores de ese proceso, incluidas esperas de red. " ..
     "La prueba solicita 1× al terminar; no garantiza que el servidor acepte el ritmo.", 60, 44)
-  local rates = createComboBox(form)
-  rates.Left, rates.Top, rates.Width, rates.Style = 16, 112, 130, "csDropDownList"
+  local rates, modes = createComboBox(form), createComboBox(form)
+  rates.Name, modes.Name = "TrialRate", "TrialMode"
+  rates.Left, rates.Top, rates.Width, rates.Style = 16, 112, 100, "csDropDownList"
   for _, rate in ipairs(M.rates) do rates.Items.add(tostring(rate) .. "×") end
   rates.ItemIndex = 0
+  modes.Left, modes.Top, modes.Width, modes.Style = 130, 112, 400, "csDropDownList"
+  for _, mode in ipairs(M.modeOrder) do modes.Items.add(M.modes[mode].label) end
+  modes.ItemIndex = 0
   local start, stop = createButton(form), createButton(form)
-  start.Left, start.Top, start.Width, start.Caption = 160, 110, 190, "Probar 10 segundos"
-  stop.Left, stop.Top, stop.Width, stop.Caption = 365, 110, 220, "Restaurar 1× / parar"
-  local status = label(trial.message, 152, 62)
+  start.Left, start.Top, start.Width, start.Caption = 16, 150, 310, "Probar 10 segundos"
+  stop.Left, stop.Top, stop.Width, stop.Caption = 342, 150, 310, "Restaurar 1× / parar"
+  modes.OnChange = function()
+    start.Caption = modes.ItemIndex == 1 and "Probar hasta salir del combate" or "Probar 10 segundos"
+  end
+  local status = label(trial.message, 193, 64)
+  local clock = label("Sin prueba activa.", 260, 26)
   local log = createMemo(form)
-  log.Left, log.Top, log.Width, log.Height = 16, 218, 580, 138
+  log.Left, log.Top, log.Width, log.Height = 16, 294, 660, 128
   log.ReadOnly, log.ScrollBars = true, "ssVertical"
+  local copy = createButton(form)
+  copy.Left, copy.Top, copy.Width, copy.Caption = 16, 432, 220, "Copiar registro"
+  copy.OnClick = function()
+    writeToClipboard("Atlantica — prueba CE " .. M.version .. "\r\n" ..
+      table.concat(trial.history, "\r\n"))
+  end
   label("El factor informado por CE no confirma el efecto visual. " ..
-    "No cierres CE a la fuerza durante la prueba. Puedes copiar este registro.", 364, 38)
+    "No cierres CE a la fuerza durante la prueba.", 472, 36)
+  local logRevision = -1
+  local phases = {idle = "sin prueba activa", arming = "comprobando", applying = "aplicando",
+    active = "activa", restoring = "restaurando 1×", restore_failed = "restauración pendiente"}
   local function refresh()
     start.Enabled = trial.phase == "idle" and not trial.busy and trial.binding == nil
     rates.Enabled = start.Enabled
+    modes.Enabled = start.Enabled
     status.Caption = trial.message
-    if trial.phase == "active" then
-      status.Caption = status.Caption .. " Restan " ..
-        math.max(0, math.ceil((trial.deadline - api.now()) / 1000)) .. " s."
+    if trial.startedAt then
+      clock.Caption = string.format("Transcurrido: %.1f s / límite %d s. Estado: %s.",
+        trial.elapsed(), trial.duration, phases[trial.phase] or trial.phase)
+    else
+      clock.Caption = "Estado: " .. (phases[trial.phase] or trial.phase) .. "."
     end
-    log.Lines.Text = table.concat(trial.history, "\r\n")
+    -- Replacing Lines.Text on every timer tick used to discard the selection
+    -- while the user tried Ctrl+A/C. Only update when a record changes.
+    if logRevision ~= trial.historyRevision then
+      log.Lines.Text = table.concat(trial.history, "\r\n")
+      logRevision = trial.historyRevision
+    end
   end
   start.OnClick = function()
-    local ok, err = pcall(trial.start, M.rates[rates.ItemIndex + 1])
+    local ok, err = pcall(trial.start, M.rates[rates.ItemIndex + 1],
+      M.modeOrder[modes.ItemIndex + 1])
     if not ok then trial.note(tostring(err)) end
     refresh()
   end

@@ -31,12 +31,15 @@ def controller():
         fail_restore=False,
         apply_duration=0,
         apply_callback=None,
+        observe_callback=None,
         calls=[],
         releases=0,
     )
     binding = lua.table_from({"pid": 123, "created": "0123456789ABCDEF"})
 
     def observe(_binding):
+        if state.observe_callback:
+            state.observe_callback()
         if state.observation_error:
             raise RuntimeError(state.observation_error)
         return state.battle
@@ -224,6 +227,122 @@ def test_nested_close_during_initialization_defers_restore_until_request_returns
     assert trial.phase == "idle" and state.releases == 1
 
 
+def test_battle_end_mode_waits_past_ten_seconds_then_restores_on_map(controller):
+    trial, state = controller
+    assert trial.start(1.5, "battle_end")
+    state.now = 200
+    trial.tick()
+    state.now = 25000
+    trial.tick()
+    assert state.calls == [(123, 1.5)] and trial.phase == "active"
+    state.battle = "__map__"
+    state.now = 26000
+    trial.tick()
+    assert state.calls == [(123, 1.5), (123, 1)]
+    assert trial.lastRestoration.cause == "battle_exit"
+    assert trial.lastRestoration.seconds == pytest.approx(25.8)
+    assert "Salida del combate detectada" in trial.message
+
+
+def test_battle_end_mode_has_sixty_second_cap_without_claiming_battle_exit(controller):
+    trial, state = controller
+    assert trial.start(1.25, "battle_end")
+    state.now = 200
+    trial.tick()
+    state.now = 60199
+    trial.tick()
+    assert trial.phase == "active"
+    state.now = 60200
+    trial.tick()
+    assert state.calls == [(123, 1.25), (123, 1)]
+    assert trial.lastRestoration.cause == "time_limit"
+    assert "sin confirmar salida del combate" in trial.message
+
+
+def test_timed_mode_can_detect_map_before_deadline(controller):
+    trial, state = controller
+    activate(trial, state)
+    state.battle = "__map__"
+    state.now = 3000
+    trial.tick()
+    assert trial.lastRestoration.cause == "battle_exit"
+    assert state.calls[-1] == (123, 1)
+
+
+def test_cannot_start_speed_from_map(controller):
+    trial, state = controller
+    state.battle = "__map__"
+    assert not trial.start(1.5, "battle_end")
+    assert state.calls == [] and state.releases == 1
+    assert "Entra en un combate" in trial.message
+
+
+def test_rejects_unknown_mode_without_binding(controller):
+    trial, state = controller
+    with pytest.raises(LuaError, match="modo de prueba"):
+        trial.start(1.5, "forever")
+    assert trial.binding is None and state.calls == []
+
+
+def test_read_error_does_not_count_as_battle_exit(controller):
+    trial, state = controller
+    activate(trial, state)
+    state.observation_error = "read failed"
+    trial.tick()
+    assert state.calls[-1] == (123, 1)
+    assert trial.lastRestoration.cause == "observation_or_context_changed"
+
+
+def test_manual_request_received_during_read_takes_priority_over_deadline(controller):
+    trial, state = controller
+    activate(trial, state)
+
+    def stop_during_read():
+        assert not trial.restore("Parada manual")
+        state.now = 10201
+
+    state.now = 10000
+    state.observe_callback = stop_during_read
+    trial.tick()
+    assert state.calls == [(123, 1.25), (123, 1)]
+    assert trial.lastRestoration.cause == "manual"
+    history = "\n".join(trial.history.values())
+    assert "recibida a 9.80 s" in history
+    assert "Plazo de 10 s cumplido" not in history
+
+
+def test_later_restore_button_preserves_original_cause_and_stopped_elapsed(controller):
+    trial, state = controller
+    activate(trial, state)
+    state.now = 10200
+    trial.tick()
+    assert trial.lastRestoration.cause == "time_limit"
+    state.now = 20000
+    assert trial.restore("Parada manual")
+    assert trial.lastRestoration.cause == "time_limit" and trial.elapsed() == 10
+    assert "Última causa: Plazo de 10 s cumplido" in trial.message
+    assert "recibida a 19.80 s" in "\n".join(trial.history.values())
+
+
+def test_manual_request_during_post_apply_read_is_not_attributed_to_map_exit(controller):
+    trial, state = controller
+    assert trial.start(1.25, "battle_end")
+    reads = 0
+
+    def stop_during_post_apply_read():
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            assert not trial.restore("Parada manual")
+            state.battle = "__map__"
+
+    state.observe_callback = stop_during_post_apply_read
+    state.now = 200
+    trial.tick()
+    assert trial.lastRestoration.cause == "manual"
+    assert state.calls == [(123, 1.25), (123, 1)]
+
+
 class FakeCE:
     """Mock the documented CE/Win32 boundary; never open a real process."""
 
@@ -401,12 +520,13 @@ def test_adapter_rejects_wrong_build_or_busy_pid_and_releases_resources(problem)
     assert all(handle < 0x900 for handle in ce.handles)
 
 
-@pytest.mark.parametrize("problem", ["map", "phase", "auto", "hunting", "marker", "instance"])
+@pytest.mark.parametrize("problem", ["context", "phase", "auto", "hunting", "marker", "instance"])
 def test_adapter_gates_battle_and_native_modes(problem):
     ce = FakeCE()
     b = ce.api.bind()
-    if problem == "map":
+    if problem == "context":
         ce.memory[ce.actor + 0x318] = 0xFFFFFFFF
+        ce.memory[ce.actor + 0x254] = 0
     elif problem == "phase":
         ce.memory[ce.manager + 0x234C] = 2
     elif problem == "auto":
@@ -419,6 +539,43 @@ def test_adapter_gates_battle_and_native_modes(problem):
         ce.handles[ce.ce_handle] = (ce.pid, ce.created + 1)
     with pytest.raises(LuaError):
         ce.api.observe(b)
+    assert ce.rate_calls == []
+    ce.api.release(b)
+
+
+def test_adapter_recognizes_map_without_following_retired_battle_manager():
+    ce = FakeCE()
+    b = ce.api.bind()
+    ce.memory[ce.actor + 0x318] = 0xFFFFFFFF
+    ce.memory[0x1539CE18] = 0
+    del ce.memory[ce.owner + 0x91C]
+    token, detail = ce.api.observe(b)
+    assert token == ce.module.MAP
+    assert (detail.context_a, detail.context_b, detail.graphics_context_index) == (-1, -1, 0)
+    with pytest.raises(LuaError, match="ya volvió al mapa"):
+        ce.api.setRate(b, 1.25)
+    assert ce.rate_calls == []
+    ce.api.release(b)
+
+
+def test_adapter_rejects_mixed_map_battle_read_as_unconfirmed():
+    ce = FakeCE()
+    b = ce.api.bind()
+    count = 0
+
+    def changing_read(address):
+        nonlocal count
+        value = ce.memory[address]
+        if address == ce.actor + 0x318:
+            count += 1
+            if count == 1:
+                ce.memory[address] = 0xFFFFFFFF
+        return value
+
+    ce.lua.globals().readInteger = changing_read
+    with pytest.raises(LuaError, match="cambiaron durante la lectura"):
+        ce.api.observe(b)
+    assert ce.api.lastObservation.classification == "unknown"
     assert ce.rate_calls == []
     ce.api.release(b)
 
@@ -527,6 +684,43 @@ def test_gui_buttons_timer_and_normal_close_release_trial():
         assert form.OnClose() == 1
         assert ce.rate_calls[-1] == (123, ce.created, 1)
         assert not ce.mutex_owned
+
+    forms = install_fake_gui(ce, on_show)
+    ce.module.open()
+    assert forms[0].destroyed
+
+
+def test_gui_battle_end_mode_map_exit_and_copy_button():
+    ce = FakeCE()
+    copied = []
+    ce.lua.globals().writeToClipboard = copied.append
+
+    def on_show(form, widgets):
+        modes = next(w for w in widgets if w.Name == "TrialMode")
+        modes.ItemIndex = 1
+        modes.OnChange()
+        start = next(w for w in widgets if w.Caption == "Probar hasta salir del combate")
+        copy = next(w for w in widgets if w.Caption == "Copiar registro")
+        timer = next(w for w in widgets if w.OnTimer is not None)
+        start.OnClick()
+        ce.now = 200
+        timer.OnTimer()
+        ce.now = 15000
+        timer.OnTimer()
+        assert len(ce.rate_calls) == 1 and modes.Enabled is False
+        ce.memory[ce.actor + 0x318] = 0xFFFFFFFF
+        ce.memory[0x1539CE18] = 0
+        timer.OnTimer()
+        trial = ce.lua.globals().AtlanticaTimerTrial.trial
+        assert trial.lastRestoration.cause == "battle_exit"
+        assert ce.rate_calls[-1] == (123, ce.created, 1)
+        copy.OnClick()
+        assert copied[0].startswith(f"Atlantica — prueba CE {__version__}")
+        assert "modo=battle_end" in copied[0]
+        assert "contextos=-1/-1" in copied[0]
+        assert "Salida del combate detectada" in copied[0]
+        assert not ce.mutex_owned
+        assert form.OnClose() == 1
 
     forms = install_fake_gui(ce, on_show)
     ce.module.open()

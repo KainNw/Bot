@@ -1,12 +1,16 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.17.0** añade un paquete separado
-**Atlantica-SpeedTrial-CE** para probar el speedhack de Cheat Engine durante
-10 segundos en un combate manual, con selección de 1,25×, 1,5×, 2×, 3× y 4×.
+con Auto Battle apagado. La versión **0.17.1** amplía el paquete separado
+**Atlantica-SpeedTrial-CE** con el modo **Hasta salir del combate (máx. 60 s)**.
+Distingue la restauración al detectar el mapa, el límite de tiempo y la parada
+manual, y permite copiar su registro. Conserva la prueba de 10 segundos y la
+selección de 1,25×, 1,5×, 2×, 3× y 4×.
 Requiere CE de 64 bits instalado y el bot detenido. Reserva el PID y solicita
-1× al terminar o salir de ese combate; el factor informado por CE todavía no
-confirma un efecto visual ni estabilidad con el servidor. No se integra aún
+1× al terminar o salir de ese combate. El usuario observó aceleración y la
+respuesta inmediata de la parada manual; falta validar la restauración por
+salida del combate en el cliente. El factor informado por CE no mide la animación
+ni demuestra estabilidad con el servidor. No se integra aún
 en los turnos automáticos. Consulta [cómo probarlo](docs/ce-speed-trial.md).
 
 Conserva 0.16.5, que extiende la captura de animaciones
