@@ -1,4 +1,4 @@
-# Prueba manual de temporizadores con Cheat Engine — 0.17.1
+# Prueba manual de temporizadores con Cheat Engine — 0.17.2
 
 Este paquete usa el **speedhack de Cheat Engine** como alternativa experimental.
 Necesita Cheat Engine **de 64 bits para Windows**, instalado por el usuario;
@@ -33,13 +33,30 @@ No requiere activar un depurador.
 ## Comprobar la restauración al terminar el combate
 
 El usuario confirmó aceleración visual y una vuelta inmediata a velocidad normal
-al usar la parada manual. También informó un aparente regreso a 1× después de
-terminar una batalla. Las capturas recibidas muestran que CE informó 1× al
-vencer el plazo de 10 s; ese registro no permite atribuir la vuelta al detector
-de salida del combate. La estabilidad de una batalla completa y de la recogida
-de botín con este método sigue sin estar confirmada.
+al usar la parada manual. Las primeras capturas mostraban restauraciones por el
+plazo de 10 s. El registro posterior de 0.17.1 distingue tres ensayos a 3×:
 
-Para distinguir los motivos, 0.17.1 ofrece **Hasta salir del combate (máx. 60 s)**:
+| Tiempo hasta informar 1× | Estado leído antes de restaurar | Interpretación |
+| --- | --- | --- |
+| 13,08 s | Contextos locales `0/-1`, fase `3`, gráfico `0` | Vuelta preventiva por el contexto gráfico. |
+| 1,42 s | Contextos locales `0/-1`, fase `3`, gráfico `0` | Vuelta preventiva por el contexto gráfico. |
+| 6,69 s | Contextos locales `-1/-1`, gráfico `0` | Salida del combate detectada. |
+
+El usuario confirmó que el último ensayo volvió a velocidad normal al terminar
+la batalla. Esto valida ese recorrido en su cliente, sin medir cuánto se
+aceleró la acción ni establecer estabilidad prolongada, recogida de botín o
+funcionamiento simultáneo en otras instancias.
+
+0.17.2 etiqueta los dos primeros estados como **Cambio del contexto gráfico;
+vuelta preventiva a 1×**. Un gráfico `0` por sí solo no prueba que terminó la
+batalla: podría ser una selección temporal del cliente. Solo se aplica una tasa
+mayor de 1× con el contexto gráfico `1` y el resto de las condiciones verificadas.
+La clasificación nueva exige dos instantáneas coincidentes y valores reconocidos;
+los errores de lectura y las instantáneas mezcladas siguen sin confirmar salida.
+La restauración se solicita de inmediato y no se vuelve a aplicar la tasa por
+sí sola. Un intento rechazado conserva el resultado de la prueba anterior.
+
+Para distinguir los motivos, está disponible **Hasta salir del combate (máx. 60 s)**:
 actívalo una vez dentro del combate y deja que la batalla termine, sin pulsar
 Restaurar durante ese ensayo. Al reconocer el mapa, el registro debe mostrar
 **Salida del combate detectada …; CE informa 1×**. Comprueba además que el
@@ -103,11 +120,12 @@ Este método afecta los temporizadores consultados por **todo ese proceso**
 durante el intervalo, incluidas animaciones y posibles esperas de red. Los demás
 PID no reciben solicitudes. El servidor conserva sus propios tiempos y reglas;
 un factor local no garantiza que el combate termine antes ni que siga estable.
-Los comentarios del usuario confirman un efecto visual inicial, sin mediciones
-de duración ni una prueba de estabilidad prolongada. El nuevo modo de salida
-de 0.17.1 tiene pruebas automatizadas con procesos y relojes simulados; sigue
-pendiente su verificación en el cliente real. Compara la misma magia a 1× y al
-factor elegido y usa **Copiar registro** para evaluar el ensayo.
+Los comentarios del usuario confirman un efecto visual inicial y una vuelta a
+velocidad normal al finalizar una batalla. La clasificación adicional de 0.17.2
+y la conservación del último resultado se verificaron con procesos y relojes
+simulados, reproduciendo las combinaciones de campos del registro recibido.
+No se ha medido la duración de las animaciones ni realizado una prueba de
+estabilidad prolongada. Usa **Copiar registro** para evaluar otros ensayos.
 
 ## Referencias técnicas
 

@@ -1,7 +1,8 @@
 -- Atlantica: bounded manual Cheat Engine timer experiment.
 -- Requires 64-bit Cheat Engine on Windows; the game itself is 32-bit.
 -- Loading this file only opens the form. Only its Test button changes timers.
-local M = {version = "0.17.1", rates = {1.25, 1.5, 2, 3, 4}, MAP = "__map__",
+local M = {version = "0.17.2", rates = {1.25, 1.5, 2, 3, 4}, MAP = "__map__",
+  GRAPHICS_OTHER = "__graphics_other__",
   modeOrder = {"timed", "battle_end"}, modes = {
     timed = {seconds = 10, label = "10 segundos"},
     battle_end = {seconds = 60, label = "Hasta salir del combate (máx. 60 s)"}
@@ -118,16 +119,20 @@ function M.newTrial(api)
     if not allowed then error("Elige una de las velocidades de prueba.") end
     mode = mode or "timed"
     if not M.modes[mode] then error("Elige un modo de prueba válido.") end
-    t.mode, t.duration = mode, M.modes[mode].seconds
-    t.startedAt, t.endedAt, t.lastObservation, t.lastRestoration = nil, nil, nil, nil
     t.busy = true
     local ok, err = pcall(function()
       t.binding = api.bind()
       if not equalRate(api.reportedRate(), 1) then
         error("CE ya informa otra velocidad. Vuelve a 1× antes de probar.")
       end
-      t.battle = observation()
-      if t.battle == M.MAP then error("Entra en un combate antes de iniciar la prueba.") end
+      local battle = observation()
+      if battle == M.MAP then error("Entra en un combate antes de iniciar la prueba.", 0) end
+      if battle == M.GRAPHICS_OTHER then
+        error("El contexto gráfico cambió. Espera un momento y vuelve a probar.", 0)
+      end
+      -- A rejected attempt must not erase the last completed trial or its cause.
+      t.battle, t.mode, t.duration = battle, mode, M.modes[mode].seconds
+      t.startedAt, t.endedAt, t.lastRestoration = nil, nil, nil
       t.rate, t.armedAt = rate, api.now()
       t.phase = "arming"
       t.note("PID " .. t.binding.pid .. ", creación " .. t.binding.created ..
@@ -162,6 +167,11 @@ function M.newTrial(api)
         finishRestore("Salida del combate detectada", "battle_exit")
         return
       end
+      if current == M.GRAPHICS_OTHER then
+        finishRestore("Cambio del contexto gráfico; vuelta preventiva a 1×",
+          "graphics_context_changed")
+        return
+      end
       if current ~= t.battle then error("El combate cambió.") end
       if t.phase == "arming" then
         if api.now() - t.armedAt < 200 then return end
@@ -189,6 +199,11 @@ function M.newTrial(api)
         end
         if current == M.MAP then
           finishRestore("Salida del combate detectada durante la aplicación", "battle_exit")
+          return
+        end
+        if current == M.GRAPHICS_OTHER then
+          finishRestore("Cambio del contexto gráfico durante la aplicación; vuelta preventiva a 1×",
+            "graphics_context_changed")
           return
         end
         if current ~= t.battle then error("El combate cambió durante la aplicación.") end
@@ -327,6 +342,8 @@ function M.newCEAdapter()
       d.context_a = index == 0xffffffff and -1 or index
       d.context_b = contextB == 0xffffffff and -1 or contextB
       d.graphics_context_index = read32(0x1539ce18)
+      assert(d.graphics_context_index == 0 or d.graphics_context_index == 1,
+        "El contexto gráfico no tiene un valor reconocido.")
       local key = {owner, world, actor, index, contextB, d.graphics_context_index,
         read32(actor + 0x204), read32(actor + 0x208), read32(actor + 0x20c)}
       -- The labelled map/battle/map captures on this exact build verified these
@@ -343,9 +360,16 @@ function M.newCEAdapter()
       assert(read32(manager) == 0x042d8aa4 and d.battle_phase == 3,
         "El gestor todavía no está en combate.")
       local context = pointer(manager + 8 + index * 4)
-      assert(read32(context + 0x6c74) ~= 0xffffffff and d.graphics_context_index == 1,
+      assert(read32(context + 0x6c74) ~= 0xffffffff,
         "El combate todavía no está listo.")
       key[#key + 1], key[#key + 2] = manager, context
+      if d.graphics_context_index == 0 then
+        -- The user's two captures retained local context 0/-1 and phase 3
+        -- while selecting graphics context 0. Restore promptly, but do not
+        -- confuse this value alone with a verified departure from battle.
+        d.classification = "graphics_other"
+        return {token = M.GRAPHICS_OTHER, signature = table.concat(key, ":"), detail = d}
+      end
       d.classification = "battle"
       local token = table.concat(key, ":")
       return {token = token, signature = token, detail = d}
@@ -361,7 +385,9 @@ function M.newCEAdapter()
   function api.setRate(b, rate)
     identity(b)
     if rate ~= 1 then
-      assert(api.observe(b) ~= M.MAP, "La instancia ya volvió al mapa; no se aplicó velocidad.")
+      local token = api.observe(b)
+      assert(token ~= M.MAP, "La instancia ya volvió al mapa; no se aplicó velocidad.")
+      assert(token ~= M.GRAPHICS_OTHER, "El contexto gráfico cambió; no se aplicó velocidad.")
     end
     -- CE owns injection/hooking; no guessed offsets or private DLLs are used.
     speedhack_setSpeed(rate)
@@ -448,7 +474,8 @@ function M.open()
     modes.Enabled = start.Enabled
     status.Caption = trial.message
     if trial.startedAt then
-      clock.Caption = string.format("Transcurrido: %.1f s / límite %d s. Estado: %s.",
+      local prefix = trial.phase == "idle" and "Última prueba: " or "Transcurrido: "
+      clock.Caption = prefix .. string.format("%.1f s / límite %d s. Estado: %s.",
         trial.elapsed(), trial.duration, phases[trial.phase] or trial.phase)
     else
       clock.Caption = "Estado: " .. (phases[trial.phase] or trial.phase) .. "."

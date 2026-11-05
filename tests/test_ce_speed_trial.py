@@ -343,6 +343,33 @@ def test_manual_request_during_post_apply_read_is_not_attributed_to_map_exit(con
     assert state.calls == [(123, 1.25), (123, 1)]
 
 
+def test_graphics_context_change_restores_without_claiming_battle_exit(controller):
+    trial, state = controller
+    activate(trial, state, 3)
+    state.battle = "__graphics_other__"
+    trial.tick()
+    assert state.calls == [(123, 3), (123, 1)]
+    assert trial.lastRestoration.cause == "graphics_context_changed"
+    assert "vuelta preventiva" in trial.message
+
+
+def test_rejected_graphics_attempt_keeps_last_verified_exit(controller):
+    trial, state = controller
+    assert trial.start(3, "battle_end")
+    state.now = 200
+    trial.tick()
+    state.now, state.battle = 6890, "__map__"
+    trial.tick()
+    assert trial.lastRestoration.cause == "battle_exit"
+    state.now, state.battle = 9000, "__graphics_other__"
+    assert not trial.start(3)
+    assert trial.lastRestoration.cause == "battle_exit"
+    assert trial.elapsed() == pytest.approx(6.69)
+    assert trial.mode == "battle_end" and trial.duration == 60
+    assert "Última causa: Salida del combate detectada" in trial.message
+    assert state.calls == [(123, 3), (123, 1)] and state.releases == 2
+
+
 class FakeCE:
     """Mock the documented CE/Win32 boundary; never open a real process."""
 
@@ -578,6 +605,79 @@ def test_adapter_rejects_mixed_map_battle_read_as_unconfirmed():
     assert ce.api.lastObservation.classification == "unknown"
     assert ce.rate_calls == []
     ce.api.release(b)
+
+
+def test_adapter_recognizes_graphics_change_without_calling_it_map():
+    ce = FakeCE()
+    b = ce.api.bind()
+    ce.memory[0x1539CE18] = 0
+    token, detail = ce.api.observe(b)
+    assert token == ce.module.GRAPHICS_OTHER
+    assert (detail.classification, detail.context_a, detail.battle_phase) == (
+        "graphics_other",
+        0,
+        3,
+    )
+    with pytest.raises(LuaError, match="contexto gráfico cambió"):
+        ce.api.setRate(b, 3)
+    assert ce.rate_calls == []
+    ce.api.setRate(b, 1)
+    assert ce.rate_calls == [(123, ce.created, 1)]
+    ce.api.release(b)
+
+
+@pytest.mark.parametrize("local_index", [0, 0xFFFFFFFF])
+def test_unknown_graphics_value_remains_unconfirmed(local_index):
+    ce = FakeCE()
+    b = ce.api.bind()
+    ce.memory[ce.actor + 0x318] = local_index
+    ce.memory[0x1539CE18] = 2
+    with pytest.raises(LuaError, match="valor reconocido"):
+        ce.api.observe(b)
+    assert ce.api.lastObservation.classification == "unknown"
+    assert ce.rate_calls == []
+    ce.api.release(b)
+
+
+def test_adapter_rejects_graphics_switch_between_snapshots():
+    ce = FakeCE()
+    b = ce.api.bind()
+    ce.memory[0x1539CE18] = 0
+
+    def changing_read(address):
+        value = ce.memory[address]
+        if address == 0x1539CE18:
+            ce.memory[address] = 1
+        return value
+
+    ce.lua.globals().readInteger = changing_read
+    with pytest.raises(LuaError, match="cambiaron durante la lectura"):
+        ce.api.observe(b)
+    assert ce.api.lastObservation.classification == "unknown"
+    assert ce.rate_calls == []
+    ce.api.release(b)
+
+
+def test_replays_two_graphics_restorations_and_final_verified_map_exit():
+    """Replay the reported field combinations through fake CE, not a game process."""
+    ce = FakeCE()
+    trial = ce.module.newTrial(ce.api)
+    causes = []
+    for index, duration_ms in enumerate((13080, 1420, 6690)):
+        ce.memory[ce.actor + 0x318], ce.memory[0x1539CE18] = 0, 1
+        assert trial.start(3, "battle_end")
+        ce.now += 250
+        trial.tick()
+        assert trial.phase == "active"
+        ce.now += duration_ms
+        ce.memory[0x1539CE18] = 0
+        if index == 2:
+            ce.memory[ce.actor + 0x318] = 0xFFFFFFFF
+        trial.tick()
+        causes.append(trial.lastRestoration.cause)
+        assert not ce.mutex_owned
+    assert causes == ["graphics_context_changed", "graphics_context_changed", "battle_exit"]
+    assert ce.rate_calls == [(123, ce.created, rate) for _ in range(3) for rate in (3, 1)]
 
 
 def test_adapter_reattaches_only_live_original_for_restore():
