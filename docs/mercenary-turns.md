@@ -63,9 +63,10 @@ las unidades y la barra, y se puede pedir Q/W/E/R/T en esa misma iteración. Se 
 la pausa de un ciclo que separaba selección y magia; el registro de 0.11 mostraba
 563 ms entre ambas. Nunca se usa la barra anterior a la selección.
 
-La revisión pasa a 100 ms cuando se espera la preparación del combate o una orden
-propia; las solicitudes pendientes, los turnos enemigos posteriores y la espera sin
-enemigos conservan la frecuencia anterior. Cada iteración ejecuta como máximo dos
+Desde 0.22.0, la revisión pasa a 100 ms cuando se espera la preparación del combate,
+una orden propia o el resultado de una solicitud ya encolada. También revisa a ese
+ritmo el botín restante cuando está habilitado. Los turnos enemigos posteriores sin
+orden pendiente conservan la frecuencia anterior. Cada iteración ejecuta como máximo dos
 llamadas: selección y acción, o dos selecciones si cambia la disponibilidad del plan.
 La primera acción encolada termina esa iteración. Desde 0.12.1, la carga inicial de
 enemigos y las lecturas transitorias de combate también pueden recuperarse a 100 ms.
@@ -92,6 +93,9 @@ se esperan cambios observables de animación, vida, valor del miembro o turno an
 de continuar. Esos cambios tampoco se etiquetan como impacto confirmado. Si no hay
 progreso en doce segundos, se detiene sin repetir la solicitud y exige reconectar.
 También se detiene ante selección cambiada durante la solicitud o resultados inciertos.
+Si se ha observado la animación completa, espera 200 ms de reposo antes de pasar
+al siguiente miembro. Un cambio de vida o recursos sin animación observada mantiene
+la espera de 500 ms. Una respuesta de cola por sí sola nunca inicia esta espera.
 
 **Básico alternativo** se aplica si falta la magia de esa tecla/objetivo o si la
 función nativa rechaza la magia sin enviarla. Si lo desmarcas, omite ese mercenario
@@ -108,9 +112,11 @@ Parar bot cancela nuevas solicitudes; una ya aceptada puede terminar.
 
 `combat` en **Copiar estado** contiene el equipo, última orden por puesto, historial
 acotado, respuestas nativas y acción pendiente. La exportación de código incluye
-ese diagnóstico sin los nombres personales del perfil. El perfil usa esquema 3;
-carga los esquemas 1/2 sin reescribirlos hasta que guardes. Se conservan sus nombres,
-orden, acciones y selección, añadiendo enemigo y magia de primer turno por defecto.
+ese diagnóstico sin los nombres personales del perfil. El perfil usa esquema 7;
+carga los esquemas 1–6 sin reescribirlos hasta que guardes. Se conservan sus nombres,
+orden, acciones y selección; los perfiles anteriores mantienen una espera de 1 s
+para el NeoACA. Las comprobaciones de recogida tienen su propio límite de tres
+rechazos sin envío por miembro/turno, separado del de ataque.
 
 Las pruebas individuales siguen disponibles tras **Parar bot**:
 [básico](basic-battle-trial.md) y [selección/magia](magic-battle-trial.md).

@@ -71,6 +71,123 @@ def test_collection_is_optional_and_never_delays_the_opening_magic(turn_frame):
     assert disabled.next(dead, 30) is None and disabled.inflight is None
 
 
+@pytest.mark.parametrize("grace", [0, 0.25, 5])
+def test_collection_respects_configured_neo_wait_and_never_collects_on_enemy_turn(
+    turn_frame, grace
+):
+    frame = defeated(turn_frame)
+    bot = collector(frame)
+    bot.profile = replace(bot.profile, neo_loot_grace_seconds=grace)
+    enemy_turn = replace(frame, turn_group=1)
+    assert bot.next(enemy_turn, 10) is None
+    assert bot.next(enemy_turn, 16) is None
+    assert bot.summary()["loot"]["wait_reason"] == "enemy_turn"
+    assert bot.next(frame, 16).action == "loot"
+    assert bot.summary()["loot"]["neo_grace_seconds"] == grace
+    fresh = collector(frame)
+    fresh.profile = bot.profile
+    if grace:
+        assert fresh.next(frame, 10) is None
+        assert fresh.summary()["loot"]["wait_reason"] == "neo_grace"
+        assert fresh.next(frame, 10 + grace - 0.01) is None
+    assert fresh.next(frame, 10 + grace).action == "loot"
+
+
+@pytest.mark.parametrize("status", [30, 35])
+def test_offensive_rejection_does_not_skip_the_same_member_for_loot(turn_frame, status):
+    bot = collector(turn_frame, execute=True)
+    bot.profile = replace(
+        bot.profile,
+        mercenaries=tuple(
+            replace(
+                m,
+                enabled=m.slot == 1,
+                action="Q" if status == 35 else "basic",
+                fallback_basic=False,
+            )
+            for m in bot.profile.mercenaries
+        ),
+    )
+    attack = bot.next(turn_frame, 0)
+    bot.record(
+        attack,
+        {
+            "pid": bot.pid,
+            "operation": attack.operation,
+            "status": status,
+            "battle": {"native_error": [0x1C1]},
+        },
+        0,
+    )
+    assert 1 in bot.skipped
+    frame = defeated(turn_frame)
+    assert bot.next(frame, 1) is None
+    trial = bot.next(frame, 2)
+    assert trial.action == "loot" and trial.source.member_slot == 1
+    assert not bot.loot_skipped
+
+
+@pytest.mark.parametrize("status", [27, 28, 29])
+def test_combat_not_ready_budget_is_separate_from_bounded_loot_checks(turn_frame, status):
+    bot = collector(turn_frame, execute=True)
+    bot.profile = replace(
+        bot.profile,
+        mercenaries=tuple(replace(m, enabled=m.slot == 1) for m in bot.profile.mercenaries),
+    )
+    for now in (0, 0.3, 0.6):
+        trial = bot.next(turn_frame, now)
+        assert trial.source.member_slot == 1
+        record(bot, trial, status, now)
+    assert bot.unready_attempts == {1: 3} and 1 in bot.skipped
+    frame = defeated(turn_frame)
+    assert bot.next(frame, 1) is None
+    for now in (2, 2.3, 2.6):
+        trial = bot.next(frame, now)
+        assert trial.action == "loot" and trial.source.member_slot == 1
+        record(bot, trial, status, now)
+        if now < 2.6:
+            assert bot.next(frame, now + 0.1) is None
+    assert bot.loot_unready_attempts == {1: 3} and bot.loot_skipped == {1}
+    assert bot.unready_attempts == {1: 3} and not bot.ledger
+    assert bot.next(frame, 2.9) is None
+    later = replace(frame, turn_number=2, turn_tick=124000)
+    fresh = bot.next(later, 3)
+    assert fresh.action == "loot" and fresh.source.member_slot == 1
+    assert not bot.unready_attempts and not bot.loot_unready_attempts
+
+
+@pytest.mark.parametrize("collect", [False, True])
+def test_worker_observes_pending_actions_frequently_without_sending_another(turn_frame, collect):
+    session = SimpleNamespace(process=SimpleNamespace(pid=100), creation_time=777)
+    profile = replace(BotProfile.default(1), collect_remaining_loot=collect)
+    worker = HuntWorker(
+        session,
+        ClientWindow(100, 12345, "Atlantica", 1234),
+        CombatDetector(100, 777, "local_context"),
+        profile,
+        execute_turns=True,
+    )
+    worker.engine.phase = "battle"
+    worker.turns.enter(fresh=True)
+    trial = worker.turns.next(turn_frame, 0)
+    record(worker.turns, trial, 26, 0)
+    assert worker._poll_delay() == 0.1
+    assert worker.turns.pending is not None and worker.turns.inflight is None
+    assert worker.turns.queued == 1
+    worker.turns.next(defeated(turn_frame), 1)
+    assert worker._poll_delay() == (0.1 if collect else 0.5)
+
+
+def test_loot_state_explains_no_known_corpse_instead_of_claiming_bonus_received(turn_frame):
+    bot = collector(turn_frame)
+    empty = replace(turn_frame, units=turn_frame.sources)
+    assert bot.next(empty, 0) is None
+    summary = bot.summary()["loot"]
+    assert summary["known_corpses"] == 0
+    assert summary["wait_reason"] == "no_known_corpses"
+    assert not summary["collection_confirmed"] and not summary["bonus_detection_verified"]
+
+
 def test_loot_selects_an_enabled_present_member_and_reads_again_before_search(turn_frame):
     frame = defeated(turn_frame)
     bot = collector(frame)

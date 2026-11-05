@@ -85,6 +85,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.search_radius = tk.StringVar(value="60")
             self.attack_delay = tk.StringVar(value="0")
             self.collect_loot = tk.BooleanVar(value=False)
+            self.neo_loot_grace = tk.StringVar(value="1")
             self.battle_speed_enabled = tk.BooleanVar(value=False)
             self.battle_speed_rate = tk.StringVar(value="1.25")
             self.battle_speed_status = tk.StringVar(value="Speed desactivado")
@@ -358,6 +359,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     attack_delay=self.attack_delay,
                     search_radius=self.search_radius,
                     collect_loot=self.collect_loot,
+                    neo_loot_grace=self.neo_loot_grace,
                     on_save=self.save_hunt_options,
                     on_calibrate=self.calibrate_radius,
                     world_attack_mode=self.world_attack_mode,
@@ -540,6 +542,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.radius_calibrate_button,
                 self.delay_entry,
                 self.loot_check,
+                self.neo_loot_grace_entry,
                 self.battle_speed_check,
                 self.save_hunt_button,
             ):
@@ -713,6 +716,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.attack_delay.set(f"{self.profile.attack_delay_seconds:g}")
                 self.search_radius.set(str(self.profile.search_radius))
                 self.collect_loot.set(self.profile.collect_remaining_loot)
+                self.neo_loot_grace.set(f"{self.profile.neo_loot_grace_seconds:g}")
                 self.battle_speed_enabled.set(self.profile.battle_speed_enabled)
                 self.battle_speed_rate.set(f"{self.profile.battle_speed_rate:g}")
                 self.world_attack_mode.set(WORLD_ATTACK_LABELS[self.profile.world_attack_mode])
@@ -742,16 +746,18 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 delay = float(self.attack_delay.get().strip().replace(",", "."))
                 radius = int(self.search_radius.get())
                 speed_rate = float(self.battle_speed_rate.get().strip().replace(",", "."))
+                neo_grace = float(self.neo_loot_grace.get().strip().replace(",", "."))
             except ValueError as exc:
                 raise DiagnosticError(
-                    "Escribe una espera de 0 a 60 s, un radio entero de 5 a 500 "
-                    "y elige un factor de Speed de la lista."
+                    "Escribe una espera de 0 a 60 s, un radio entero de 5 a 500, "
+                    "una espera del NeoACA de 0 a 5 s y un factor de Speed de la lista."
                 ) from exc
             updated = replace(
                 profile,
                 attack_delay_seconds=delay,
                 search_radius=radius,
                 collect_remaining_loot=self.collect_loot.get(),
+                neo_loot_grace_seconds=neo_grace,
                 battle_speed_enabled=self.battle_speed_enabled.get(),
                 battle_speed_rate=speed_rate,
                 world_attack_mode=next(
@@ -2264,6 +2270,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.attack_delay.set("1,5")
         panel.search_radius.set("350")
         panel.collect_loot.set(True)
+        panel.neo_loot_grace.set("0,25")
         assert not panel.battle_speed_enabled.get()
         panel.battle_speed_enabled.set(True)
         panel.battle_speed_rate.set("3")
@@ -2271,6 +2278,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         configured = panel.configured_profile(BotProfile.default(1))
         assert configured.attack_delay_seconds == 1.5 and configured.search_radius == 350
         assert configured.collect_remaining_loot
+        assert configured.neo_loot_grace_seconds == 0.25
         assert configured.battle_speed_enabled and configured.battle_speed_rate == 3.0
         assert configured.world_attack_mode == "stationary"
         assert overview.attack_mode_list.get() == WORLD_ATTACK_LABELS["stationary"]

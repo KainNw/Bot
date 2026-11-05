@@ -1,4 +1,4 @@
-# Caza y botín — 0.13.0
+# Caza y botín — 0.22.0
 
 La pestaña **Caza y botín** está en el panel y en **Vista general**. Comparte los
 valores de la misma conexión. Guarda las opciones en el perfil elegido (1–3),
@@ -15,7 +15,7 @@ Desde 0.14.0, **Modo de ataque al mob** permite elegir:
   si no hay candidatos disponibles.
 
 Se conserva el modo nativo al cargar perfiles anteriores. El modo nuevo se guarda
-con el perfil en esquema 5. Consulta [su uso y límites](stationary-attack.md).
+con el perfil. Consulta [su uso y límites](stationary-attack.md).
 
 ## Espera antes del encuentro
 
@@ -48,7 +48,9 @@ El usuario indica que el bonus aparece dentro de la batalla después de eliminar
 a todos los mobs, cada ciertos minutos, y se recoge con X. La opción comienza
 desactivada para los perfiles anteriores. Al habilitarla:
 
-1. Espera que no haya enemigos vivos y deja 1 s para la recogida del NeoACA.
+1. Espera que no haya enemigos vivos y deja la **Espera del NeoACA** configurada
+   para su recogida: de 0 a 5 s, con decimales; por defecto, 1 s. Este ajuste no
+   modifica el temporizador del robot ni retrasa la magia inicial.
 2. En el turno propio y la fase normal, elige un miembro presente y habilitado,
    en el orden del perfil, y un enemigo derrotado.
 3. Selecciona ese miembro y vuelve a leer el combate. Solicita la búsqueda nativa
@@ -57,13 +59,18 @@ desactivada para los perfiles anteriores. Al habilitarla:
    turno o se reinicie el trabajador con el mismo registro de sesión.
 
 Puede usarse con turnos manuales: desmarca **Ejecutar turnos** y deja habilitada
-la recogida. Solo los miembros presentes y habilitados pueden recibirla.
+la recogida. Solo los miembros presentes y habilitados pueden recibirla. Desde
+0.22.0, omitir un miembro por un ataque o una magia rechazados no lo excluye de
+la recogida: el cliente vuelve a comprobar la elegibilidad propia de la búsqueda.
+Los límites de tres comprobaciones sin envío por miembro/turno son independientes
+para combate y recogida. Las órdenes ya encoladas no se vuelven a enviar.
 No envía X global ni cambia el foco de otras ventanas. Cada solicitud conserva
 PID, fecha de creación, ventana, contexto, turno y las identidades elegidas.
 
-La orden de búsqueda está identificada en el código del cliente; todavía **no se
-ha observado una recogida de bonus con esta versión**. Tampoco se ha identificado
-una señal específica de aparición del bonus. Busca botín restante sobre cadáveres
+La orden de búsqueda está identificada en el código del cliente. El usuario
+informó de recogidas de bonus EXP, pero armas/equipamiento y libros de EXP siguen
+pendientes de una captura que permita comprobar el fallo. Tampoco se ha identificado
+una señal específica de aparición o de tipo del bonus. Busca botín restante sobre cadáveres
 elegibles, por lo que también puede recoger botín normal pendiente. No modifica
 el temporizador del NeoACA ni la probabilidad del bonus.
 
@@ -72,6 +79,14 @@ una cola ni una animación demuestran que se recibió un objeto. Si no observa
 progreso tras una orden en 12 s, se detiene sin repetirla. Para validar, prueba
 cuando aparezca el bonus y comprueba el inventario. Si falla, conserva **Copiar
 estado PID…** y **Exportar combate** antes de parar.
+
+`combat.loot` incluye el número de cuerpos conocidos, el motivo de espera
+(`neo_grace`, `enemy_turn`, `no_known_corpses`, `no_eligible_collector`,
+`pending_result` o `all_corpses_requested`) y las comprobaciones sin envío.
+`combat.pending` indica el tiempo pendiente y si se observó animación o cambio
+de estado; ninguno de esos datos confirma la recepción en el inventario.
+Para comparar un bonus de armas/equipamiento o libros que no se recoge, utiliza
+[Capturar bonus (memoria)](bonus-memory.md) antes y después de una X manual.
 
 ## Evidencia nativa y pruebas
 

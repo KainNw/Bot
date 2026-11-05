@@ -1,8 +1,16 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.21.0** añade la consulta del **nombre del
-Main al conectar**. El resultado aparece en la cabecera, en el título de Windows
+con Auto Battle apagado. La versión **0.22.0** revisa las órdenes pendientes de
+combate cada 100 ms para observar mejor las animaciones cortas, separa los rechazos
+de ataque de las comprobaciones de recogida y permite ajustar la **espera del
+NeoACA entre 0 y 5 segundos** en **Caza y botín**. Los perfiles anteriores mantienen
+1 segundo de espera. La recogida de bonus de armas/equipamiento y libros de EXP
+sigue pendiente de comprobar con capturas del cliente; estos cambios no la dan
+por resuelta. Consulta [caza y botín](docs/hunt-settings.md).
+
+Conserva la consulta de 0.21.0 del **nombre del Main al conectar**. El resultado
+aparece en la cabecera, en el título de Windows
 y en la vista general junto al PID. Si el nombre no está disponible, la lectura
 se reintenta y permite un alias manual sin cortar la conexión. Consulta
 [la ruta de lectura y su validación](docs/main-identity.md).

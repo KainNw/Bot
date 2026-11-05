@@ -179,7 +179,7 @@ def test_immediate_refresh_is_bounded_even_if_two_members_need_selection(combat_
     assert state.calls[-1].source.member_slot == 2
 
 
-def test_fast_polling_covers_turn_setup_and_readiness_but_not_animations_or_victory(combat_worker):
+def test_fast_polling_covers_pending_animations_and_preserves_idle_intervals(combat_worker):
     worker, state = combat_worker
     assert worker._poll_delay() == 0.1
     worker.turns.last_frame = replace(state.frame, phase=2)
@@ -189,7 +189,7 @@ def test_fast_polling_covers_turn_setup_and_readiness_but_not_animations_or_vict
     worker.turns.last_frame = replace(state.frame, units=state.frame.sources)
     assert worker._poll_delay() == 0.1  # Initial enemy publication is still loading.
     worker._iteration()
-    assert worker._poll_delay() == 0.5  # A queued action is still pending.
+    assert worker._poll_delay() == 0.1  # Observe short animations without resending the action.
     worker.turns.pending = None
     worker.turns.last_frame = replace(state.frame, units=state.frame.sources)
     assert worker._poll_delay() == 0.5

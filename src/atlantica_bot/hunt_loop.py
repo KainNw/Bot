@@ -1291,21 +1291,20 @@ class HuntWorker:
     def _poll_delay(self) -> float:
         if self.engine.phase == "attack_delay":
             return 0.1
-        if (
-            self.turns is not None
-            and self.engine.phase in ("confirming_battle", "battle")
-            and self.turns.pending is None
-        ):
+        if self.turns is not None and self.engine.phase in ("confirming_battle", "battle"):
             frame = self.turns.last_frame
             waiting_opening = self.turns.opening_turn is None and not self.turns.finished_opening
             if (
-                frame is None
+                self.turns.pending is not None
+                or frame is None
                 or waiting_opening
                 and not self.turns.seen_enemy
                 or waiting_opening
                 and (frame.phase != 3 or frame.turn_number == 0xFFFFFFFF)
                 or frame.enemies
                 and (frame.own_turn or waiting_opening)
+                or not frame.enemies
+                and self.turns.profile.collect_remaining_loot
             ):
                 return 0.1
         return 0.25 if self.engine.deadline is not None or self.engine.route else 0.5

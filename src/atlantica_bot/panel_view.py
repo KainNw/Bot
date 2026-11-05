@@ -231,9 +231,16 @@ def _hunting(p) -> None:
         body, text="Recoger botín restante / bonus", variable=p.collect_loot
     )
     p.loot_check.pack(anchor="w")
+    row = ttk.Frame(body)
+    row.pack(fill="x", pady=(10, 0))
+    ttk.Label(row, text="Espera del NeoACA (0–5 s)").pack(side="left")
+    p.neo_loot_grace_entry = ttk.Spinbox(
+        row, from_=0, to=5, increment=0.25, textvariable=p.neo_loot_grace, width=6
+    )
+    p.neo_loot_grace_entry.pack(side="left", padx=8)
     ttk.Label(
         body,
-        text="Deja 1 s al NeoACA y después busca el botín restante. "
+        text="Al terminar con los mobs, espera al NeoACA y después busca el botín restante. "
         "La recogida del bonus es experimental.",
         style="Caption.TLabel",
         wraplength=370,

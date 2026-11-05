@@ -58,6 +58,7 @@ class BotProfile:
     world_attack_mode: str = "native"
     battle_speed_enabled: bool = False
     battle_speed_rate: float = 1.25
+    neo_loot_grace_seconds: float = 1.0
 
     def validate(self) -> None:
         if type(self.number) is not int or self.number not in (1, 2, 3):
@@ -77,6 +78,12 @@ class BotProfile:
             raise DiagnosticError("El radio de búsqueda debe estar entre 5 y 500 casillas.")
         if type(self.collect_remaining_loot) is not bool:
             raise DiagnosticError("Revisa la opción de recogida de botín restante.")
+        if (
+            type(self.neo_loot_grace_seconds) not in (int, float)
+            or not math.isfinite(self.neo_loot_grace_seconds)
+            or not 0 <= self.neo_loot_grace_seconds <= 5
+        ):
+            raise DiagnosticError("La espera del NeoACA debe estar entre 0 y 5 segundos.")
         if (
             type(self.battle_speed_enabled) is not bool
             or type(self.battle_speed_rate) not in (int, float)
@@ -113,7 +120,7 @@ class BotProfile:
 
     def summary(self) -> dict:
         return {
-            "schema_version": 6,
+            "schema_version": 7,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "magic_first_turn_only": self.magic_first_turn_only,
@@ -123,6 +130,7 @@ class BotProfile:
             "world_attack_mode": self.world_attack_mode,
             "battle_speed_enabled": self.battle_speed_enabled,
             "battle_speed_rate": self.battle_speed_rate,
+            "neo_loot_grace_seconds": self.neo_loot_grace_seconds,
             "turn_execution_available": True,
         }
 
@@ -161,7 +169,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6)
+                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -187,6 +195,7 @@ class ProfileStore:
                 payload["world_attack_mode"] if payload["schema_version"] >= 5 else "native",
                 payload["battle_speed_enabled"] if payload["schema_version"] >= 6 else False,
                 payload["battle_speed_rate"] if payload["schema_version"] >= 6 else 1.25,
+                payload["neo_loot_grace_seconds"] if payload["schema_version"] >= 7 else 1.0,
             )
             profile.validate()
             return profile

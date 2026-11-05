@@ -26,6 +26,7 @@ class OverviewWindow:
         attack_delay,
         search_radius,
         collect_loot,
+        neo_loot_grace,
         on_save: Callable,
         on_calibrate: Callable,
         world_attack_mode,
@@ -130,8 +131,18 @@ class OverviewWindow:
         )
         loot.pack(anchor="w", pady=8)
         self.hunt_controls.append(loot)
+        grace_row = tk.Frame(hunting, background=SURFACE)
+        grace_row.pack(fill="x", pady=(0, 8))
+        tk.Label(
+            grace_row, text="Espera del NeoACA (0–5 s):", background=SURFACE, foreground=TEXT
+        ).pack(side="left", padx=(0, 6))
+        grace = ttk.Spinbox(
+            grace_row, from_=0, to=5, increment=0.25, textvariable=neo_loot_grace, width=7
+        )
+        grace.pack(side="left")
+        self.hunt_controls.append(grace)
         option_label(
-            "Da 1 s al NeoACA. Después usa la búsqueda nativa en enemigos derrotados. "
+            "Al acabar la espera del NeoACA, usa la búsqueda nativa en enemigos derrotados. "
             "La recogida del bonus necesita confirmación en el juego."
         )
         controls = tk.Frame(hunting, background=SURFACE)

@@ -214,6 +214,34 @@ def test_resource_change_is_progress_without_claiming_damage_confirmation(turn_f
     assert "attack_confirmed" not in bot.summary()
 
 
+def test_observed_animation_uses_short_settle_but_never_overtakes_busy_member(turn_frame):
+    bot = engine()
+    trial = bot.next(turn_frame, 0)
+    reply(bot, trial)
+    busy = changed(turn_frame, 0, action_state=2)
+    assert bot.next(busy, 0.1) is None
+    assert bot.next(busy, 0.8) is None
+    assert bot.summary()["pending"]["animation_observed"]
+    assert bot.next(turn_frame, 1) is None
+    assert bot.next(turn_frame, 1.19) is None
+    next_trial = bot.next(turn_frame, 1.21)
+    assert next_trial.source.member_slot == 2 and bot.queued == 1
+
+
+def test_resource_change_keeps_long_settle_until_animation_is_observed(turn_frame):
+    bot = engine()
+    trial = bot.next(turn_frame, 0)
+    reply(bot, trial)
+    frame = changed(turn_frame, life=900)
+    assert bot.next(frame, 0.1) is None
+    assert bot.next(frame, 0.31) is None
+    busy = changed(frame, 0, action_state=2)
+    assert bot.next(busy, 0.4) is None
+    assert bot.next(frame, 0.5) is None
+    assert bot.next(frame, 0.69) is None
+    assert bot.next(frame, 0.71).source.member_slot == 2
+
+
 def test_ineligible_basic_skips_rejected_target_but_insufficient_ap_skips_member(turn_frame):
     bot = engine()
     first = bot.next(turn_frame, 0)

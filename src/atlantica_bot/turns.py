@@ -80,6 +80,10 @@ class TurnEngine:
         self.loot_queued = 0
         self.loot_suspended = False
         self.loot_pause_reason: str | None = None
+        self.loot_skipped = set()
+        self.loot_deferred_until = {}
+        self.loot_unready_attempts = {}
+        self.loot_wait_reason = "not_in_battle"
         self.active = False
         self.fresh_battle = False
         self.turn = None
@@ -127,12 +131,17 @@ class TurnEngine:
             self.loot_rejected.clear()
             self.loot_suspended = False
             self.loot_pause_reason = None
+            self.loot_skipped.clear()
+            self.loot_deferred_until.clear()
+            self.loot_unready_attempts.clear()
+            self.loot_wait_reason = "waiting_enemies"
             self.pending = self.inflight = None
 
     def leave(self) -> None:
         self.active = False
         self.pending = self.inflight = None
         self.last_frame = None
+        self.loot_wait_reason = "not_in_battle"
         self.message = "Fuera de combate."
 
     def stop(self, message: str, *, uncertain: bool = False) -> None:
@@ -151,13 +160,21 @@ class TurnEngine:
     def _defer_unready(self, trial: BattleTrial, now: float) -> None:
         # InvokeBattle returns 27–29 before its send path. Other outcomes never use this retry.
         slot = trial.source.member_slot
-        count = self.unready_attempts.get(slot, 0) + 1
-        self.unready_attempts[slot] = count
+        collecting = trial.action == "loot" or (
+            trial.action == "select"
+            and self.profile.collect_remaining_loot
+            and not trial.frame.enemies
+        )
+        attempts = self.loot_unready_attempts if collecting else self.unready_attempts
+        skipped = self.loot_skipped if collecting else self.skipped
+        deferred = self.loot_deferred_until if collecting else self.deferred_until
+        count = attempts.get(slot, 0) + 1
+        attempts[slot] = count
         if count >= 3:
-            self.skipped.add(slot)
+            skipped.add(slot)
             message = "No disponible tras tres comprobaciones sin envío; omitido en este turno"
         else:
-            self.deferred_until[slot] = now + 0.25
+            deferred[slot] = now + 0.25
             message = "Cliente no listo; esperando una lectura nueva antes de solicitar otra vez"
         self._order(slot, trial.action, message, now)
 
@@ -197,7 +214,10 @@ class TurnEngine:
         if (pending.changed or pending.seen_busy) and not busy:
             if pending.idle_since is None:
                 pending.idle_since = now
-            if now - pending.idle_since >= 0.5:
+            # A full busy → idle transition supports a shorter settle. A resource
+            # change alone can precede the animation, so it keeps the longer wait.
+            settle = 0.2 if pending.seen_busy and source is not None else 0.5
+            if now - pending.idle_since >= settle:
                 self.observed += 1
                 self._order(
                     trial.source.member_slot,
@@ -222,20 +242,32 @@ class TurnEngine:
 
     def _next_loot(self, frame: BattleFrame, now: float) -> BattleTrial | None:
         if self.pending is not None and self.pending.trial.action == "loot":
+            self.loot_wait_reason = "pending_result"
             if not self._observe_pending(frame, now):
                 return None
         if self.loot_suspended:
+            self.loot_wait_reason = "selection_changed"
             self.message = self.loot_pause_reason
             return None
-        if not self.profile.collect_remaining_loot or not frame.corpses:
+        if not self.profile.collect_remaining_loot:
+            self.loot_wait_reason = "disabled"
+            return None
+        if not frame.corpses:
+            self.loot_wait_reason = "no_known_corpses"
             return None
         if self.loot_empty_since is None:
             self.loot_empty_since = now
         # Give NeoACA the first opportunity. This does not delay the opening magic.
-        if now - self.loot_empty_since < 1 or not frame.own_turn:
+        if now - self.loot_empty_since < self.profile.neo_loot_grace_seconds:
+            self.loot_wait_reason = "neo_grace"
             self.message = "Esperando la recogida del NeoACA antes de buscar botín restante."
             return None
+        if not frame.own_turn:
+            self.loot_wait_reason = "enemy_turn"
+            self.message = "Esperando el turno de tu grupo para recoger el botín restante."
+            return None
         if self.pending is not None and not self._observe_pending(frame, now):
+            self.loot_wait_reason = "pending_result"
             return None
         sources = {u.member_slot: u for u in frame.sources}
         for plan in self.profile.mercenaries:
@@ -244,10 +276,10 @@ class TurnEngine:
                 not plan.enabled
                 or source is None
                 or source.action_state != 1
-                or plan.slot in self.skipped
+                or plan.slot in self.loot_skipped
             ):
                 continue
-            if now < self.deferred_until.get(plan.slot, 0):
+            if now < self.loot_deferred_until.get(plan.slot, 0):
                 continue
             targets = [
                 u
@@ -264,8 +296,14 @@ class TurnEngine:
             )
             trial.validate()
             self.inflight = trial
+            self.loot_wait_reason = "requesting"
             self._order(plan.slot, trial.action, "Preparando recogida de botín restante", now)
             return trial
+        self.loot_wait_reason = (
+            "all_corpses_requested"
+            if all(loot_key(frame, u) in self.ledger for u in frame.corpses)
+            else "no_eligible_collector"
+        )
         self.message = "Sin recogidas pendientes disponibles; esperando el final del combate."
         return None
 
@@ -307,6 +345,7 @@ class TurnEngine:
             self.stop("Hay una orden sin respuesta; no se permite otra.", uncertain=True)
             return None
         if frame.phase != 3 or frame.turn_number == 0xFFFFFFFF:
+            self.loot_wait_reason = "waiting_phase"
             self.message = "Esperando la fase de combate."
             return None
         self.observed_initial_turn |= frame.turn_number == 0
@@ -324,9 +363,13 @@ class TurnEngine:
             self.fallback.clear()
             self.deferred_until.clear()
             self.unready_attempts.clear()
+            self.loot_skipped.clear()
+            self.loot_deferred_until.clear()
+            self.loot_unready_attempts.clear()
         if frame.own_turn:
             self._mark("first_own_turn", now)
         if frame.enemies:
+            self.loot_wait_reason = "live_enemies"
             self.loot_empty_since = None
             self.seen_enemy = True
             self._mark("first_enemies", now)
@@ -437,6 +480,7 @@ class TurnEngine:
         self.attempts += 1
         slot = trial.source.member_slot
         if code == 36:
+            self.loot_wait_reason = "pending_result"
             self.loot_queued += 1
             self.ledger.add(loot_key(trial.frame, trial.target))
             self.pending = PendingTurn(trial, now, self._value(trial.frame, slot))
@@ -478,6 +522,7 @@ class TurnEngine:
                 # 33 is returned before an action is sent. Do not fight the selection
                 # or stop hunting because an optional collection could not be sent.
                 self.loot_suspended = True
+                self.loot_wait_reason = "selection_changed"
                 self.loot_pause_reason = (
                     "Cambió la selección; recogida restante en pausa hasta el siguiente combate."
                 )
@@ -500,7 +545,10 @@ class TurnEngine:
                 "queued": self.loot_queued,
                 "paused": self.loot_suspended,
                 "pause_reason": self.loot_pause_reason,
-                "neo_grace_seconds": 1,
+                "neo_grace_seconds": self.profile.neo_loot_grace_seconds,
+                "wait_reason": self.loot_wait_reason,
+                "known_corpses": len(self.last_frame.corpses) if self.last_frame else 0,
+                "unready_attempts": dict(self.loot_unready_attempts),
                 "bonus_detection_verified": False,
                 "collection_confirmed": False,
             },
@@ -549,6 +597,9 @@ class TurnEngine:
                 "slot": self.pending.trial.source.member_slot,
                 "action": self.pending.trial.action,
                 "target": asdict(self.pending.trial.target),
+                "seconds_pending": round(self.observed_at - self.pending.sent_at, 3),
+                "animation_observed": self.pending.seen_busy,
+                "state_change_observed": self.pending.changed,
             }
             if self.pending
             else None,

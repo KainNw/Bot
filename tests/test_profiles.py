@@ -34,7 +34,7 @@ def test_magic_actions_and_fallback_are_saved_per_mercenary_in_priority_order(tm
     store.save(updated)
     assert store.load(1) == updated
     payload = json.loads((tmp_path / "profile-1.json").read_text())
-    assert payload["schema_version"] == 6
+    assert payload["schema_version"] == 7
     assert [m["action"] for m in payload["mercenaries"]] == list(reversed(actions))
     assert payload["turn_execution_available"] is True
 
@@ -58,8 +58,48 @@ def test_legacy_profile_migrates_in_memory_without_rewriting_or_losing_settings(
     assert all(m.action == "basic" and m.fallback_basic for m in loaded.mercenaries)
     assert path.read_bytes() == saved
     store.save(loaded)
-    assert json.loads(path.read_bytes())["schema_version"] == 6
+    assert json.loads(path.read_bytes())["schema_version"] == 7
     assert store.load(1) == loaded
+
+
+@pytest.mark.parametrize("grace", [0, 0.25, 1, 5])
+def test_neo_grace_is_saved_without_changing_combat_settings(tmp_path, grace):
+    original = BotProfile.default(1)
+    profile = replace(original, neo_loot_grace_seconds=grace)
+    store = ProfileStore(tmp_path)
+    store.save(profile)
+    assert store.load(1) == profile
+
+
+def test_schema_six_keeps_previous_neo_wait_and_does_not_rewrite_saved_profile(tmp_path):
+    payload = replace(BotProfile.default(1), battle_speed_enabled=True).summary()
+    payload["schema_version"] = 6
+    del payload["neo_loot_grace_seconds"]
+    saved = json.dumps(payload).encode()
+    path = tmp_path / "profile-1.json"
+    path.write_bytes(saved)
+    loaded = ProfileStore(tmp_path).load(1)
+    assert loaded.neo_loot_grace_seconds == 1 and loaded.battle_speed_enabled
+    assert path.read_bytes() == saved
+
+
+@pytest.mark.parametrize("grace", [-0.1, 5.1, float("nan"), float("inf"), True, "0"])
+def test_invalid_neo_wait_preserves_saved_profile(tmp_path, grace):
+    store = ProfileStore(tmp_path)
+    original = BotProfile.default(1)
+    store.save(original)
+    with pytest.raises(DiagnosticError, match="NeoACA"):
+        store.save(replace(original, neo_loot_grace_seconds=grace))
+    assert store.load(1) == original
+
+
+def test_incomplete_neo_wait_in_current_schema_is_rejected(tmp_path):
+    payload = BotProfile.default(1).summary()
+    del payload["neo_loot_grace_seconds"]
+    path = tmp_path / "profile-1.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(DiagnosticError, match="archivo se conserva"):
+        ProfileStore(tmp_path).load(1)
 
 
 @pytest.mark.parametrize(
