@@ -337,3 +337,42 @@ páginas, con un máximo total de 256 KiB nuevos. La exportación mantiene las
 comprobaciones de instancia y contexto. Se necesita **Exportar combate** con
 0.16.5 para obtener las nuevas dependencias. La prueba de escala sigue siendo
 opcional y no es necesaria para esta exportación; no se activa un SpeedHack.
+
+## Captura 033723: frecuencias por animación y alternativa con CE
+
+La captura de 0.16.5, PID 10852 y creación `134383363734202228`, conserva
+82 bloques y 1 147 136 bytes, con tamaños, CRC y SHA-256 comprobados. Las
+39 regiones de código que comparte con la captura anterior coinciden en
+SHA-256. Se comparó código entre ambas capturas de esa instancia; los punteros
+de objetos se mantienen como observaciones de cada instante. El recorrido
+alcanza sus límites de nodos e instrucciones y no certifica cobertura completa.
+
+Ahora aparece la actualización de `NiActorManager` por `00AAC680` y la operación
+de tiempo de `NiControllerSequence` por `00ADA5C0`. Esta última combina tiempo
+transcurrido, frecuencia `+40` y desplazamiento `+48`, con ancla temporal `+44`.
+Cambiar solo la frecuencia en mitad de una acción podría alterar la continuidad.
+
+También se identifican rutas nativas de frecuencia:
+
+| Entrada observada | Operación candidata según sus instrucciones |
+| --- | --- |
+| `00A4C92F` | Busca la frecuencia original almacenada de una animación por ID. |
+| `00A4E008` | Reúne las frecuencias originales de `N3DCActorInstance`. |
+| `00A4E07D` | Cambia una frecuencia absoluta y su referencia almacenada. |
+| `00A4E0E5` | Combina la frecuencia original con un factor y maneja referencias/copias. |
+| `00A1C905` | Método `+68` de la tabla base: combina un factor con un campo del propietario y delega en `00A4E0E5`. |
+
+Estos destinos están respaldados por código capturado y etiquetas estáticas del
+motor. **Todavía no se llaman desde el bot**. Falta validar el receptor vivo,
+el propietario `personaje+24`, los recursos compartidos entre personajes y
+escenas y la restauración de las referencias originales. La ruta que clona o
+reutiliza definiciones impide asumir que cualquier escritura afectaría solo a
+un actor o que repetir un factor conservaría la referencia original.
+
+Por autorización del usuario, 0.17.0 entrega además
+[una prueba separada del speedhack de Cheat Engine](ce-speed-trial.md).
+Usa los temporizadores del proceso elegido, con prueba manual de hasta 10 s,
+reserva del PID y solicitud de 1× al salir. No cambia estas rutinas nativas ni
+convierte las observaciones de frecuencia en un control validado de animaciones.
+El efecto en el cliente y la estabilidad con el servidor siguen pendientes de
+la prueba real; no se solicita otra captura de solo lectura para usar la tabla CE.

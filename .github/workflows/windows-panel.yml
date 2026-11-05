@@ -125,11 +125,19 @@ jobs:
         run: |
           $panelDigest = Get-FileHash -LiteralPath dist/AtlanticaPanel.exe -Algorithm SHA256
           "$($panelDigest.Hash)  AtlanticaPanel.exe" | Set-Content dist/SHA256.txt -Encoding ascii
+      - name: Package separate Cheat Engine timer trial
+        run: uv run --frozen --group build python tools/package_ce_speed.py
       - uses: actions/upload-artifact@v4
         with:
           name: AtlanticaPanel-Windows
           path: |
             dist/AtlanticaPanel.exe
             dist/SHA256.txt
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Atlantica-SpeedTrial-CE
+          path: dist/Atlantica-SpeedTrial-CE/*
           if-no-files-found: error
           retention-days: 14
