@@ -28,7 +28,7 @@ static bool Owner(SharedCommand& command, DWORD pid) {
     if (process) CloseHandle(process);
     return ok;
 }
-int wmain(int argc, wchar_t** argv) {
+static int RunTest(int argc, wchar_t** argv) {
     if (argc == 2 && std::wcscmp(argv[1], L"--owner-child") == 0) { Sleep(800); return 0; }
     // Synthetic data in this test process; never attach to or execute the game.
     if (!Allocate(0x04a90000, 0x10000) || !Allocate(0x04e50000, 0x10000)
@@ -77,12 +77,17 @@ int wmain(int argc, wchar_t** argv) {
     SetEvent(signal); Sleep(60); GetTickCount64();
     if (clock_scaler::Rate() != 1.f || info->armed || info->reason != 7) return 13;
     // A stale owner cannot stop a newer run.
+    auto stale = command; stale.operation = ClockStop;
     ResetEvent(signal); command.nonce_lo += 1; command.operation = ClockStart;
-    if (ClockExecute(&command, signal, window) != ClockArmed) return 14;
+    swprintf_s(command.cancel_name, L"Local\\AtlanticaPanel.Cancel.NextFixture.%lu", GetCurrentProcessId());
+    const auto next_signal = CreateEventW(nullptr, TRUE, FALSE, command.cancel_name);
+    if (!next_signal || ClockExecute(&command, next_signal, window) != ClockArmed) return 14;
+    if (ClockExecute(&stale, signal, window) != ClockBusy) return 22;
+    CloseHandle(signal);
     auto stranger = command; stranger.clock_owner_pid += 1; stranger.operation = ClockStop;
-    if (ClockExecute(&stranger, signal, window) != ClockBusy) return 15;
+    if (ClockExecute(&stranger, next_signal, window) != ClockBusy) return 15;
     command.operation = ClockStop;
-    if (ClockExecute(&command, signal, window) != ClockStopped || clock_scaler::Rate() != 1.f) return 16;
+    if (ClockExecute(&command, next_signal, window) != ClockStopped || clock_scaler::Rate() != 1.f) return 16;
     // Owner exit is detected by a process handle; only this fixture is accelerated.
     wchar_t executable[32768] = {}; GetModuleFileNameW(nullptr, executable, 32768);
     std::wstring line = L"\"" + std::wstring(executable) + L"\" --owner-child";
@@ -90,13 +95,19 @@ int wmain(int argc, wchar_t** argv) {
     PROCESS_INFORMATION process = {};
     if (!CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) return 17;
     command.operation = ClockStart;
-    if (!Owner(command, process.dwProcessId) || ClockExecute(&command, signal, window) != ClockArmed) return 18;
+    if (!Owner(command, process.dwProcessId) || ClockExecute(&command, next_signal, window) != ClockArmed) return 18;
     ClockPoll(); Sleep(230); ClockPoll();
     if (clock_scaler::Rate() != 3.f) return 19;
     if (WaitForSingleObject(process.hProcess, 2000) != WAIT_OBJECT_0) return 20;
     ClockPoll();
     if (clock_scaler::Rate() != 1.f || info->armed || info->reason != 8) return 21;
-    CloseHandle(process.hThread); CloseHandle(process.hProcess); CloseHandle(signal); DestroyWindow(window);
+    CloseHandle(process.hThread); CloseHandle(process.hProcess); CloseHandle(next_signal); DestroyWindow(window);
     std::cout << "Own fixture: readiness, repeated battles, map restore, cap, cancellation, owner scope and exit passed.\n";
     return 0;
+}
+int wmain(int argc, wchar_t** argv) {
+    const auto code = RunTest(argc, argv);
+    if (code) std::cerr << "Clock lifecycle fixture failed at stage " << code
+        << "; Win32=" << GetLastError() << "; rate=" << clock_scaler::Rate() << '\n';
+    return code;
 }

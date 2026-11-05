@@ -17,11 +17,14 @@ static bool Sample(float rate) {
         static_cast<double>(static_cast<DWORD>(timeGetTime() - c)),
         static_cast<double>(end.QuadPart - d.QuadPart) * 1000. / static_cast<double>(frequency.QuadPart)};
     for (const auto value : values) {
-        if (duration < 100. || std::abs(value / duration - static_cast<double>(rate)) > .45) return false;
+        if (duration < 100. || std::abs(value / duration - static_cast<double>(rate)) > .45) {
+            std::cerr << "Expected rate " << rate << ", clock delta=" << value
+                << ", real duration=" << duration << '\n'; return false;
+        }
     }
     return true;
 }
-int main() {
+static int RunTest() {
     DWORD error = 0;
     if (!clock_scaler::Initialize(nullptr, &error)) {
         std::cerr << "Clock hook initialization failed: " << error << '\n'; return 1;
@@ -40,4 +43,10 @@ int main() {
     if (std::abs(static_cast<double>(end - start) - static_cast<double>(elapsed + 200)) > 90.) return 4;
     std::cout << "Own-process clocks scaled, restored monotonically, and expired without polling.\n";
     return 0;
+}
+int main() {
+    const auto code = RunTest();
+    if (code) std::cerr << "Own-process clocks failed at stage " << code
+        << "; Win32=" << GetLastError() << '\n';
+    return code;
 }

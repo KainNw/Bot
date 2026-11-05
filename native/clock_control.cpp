@@ -108,7 +108,8 @@ uint32_t ExistingClock() {
     MODULEENTRY32W entry = {}; entry.dwSize = sizeof entry;
     uint32_t found = 0;
     if (Module32FirstW(snapshot, &entry)) do {
-        if (GetProcAddress(entry.hModule, "InitializeSpeedhack")) { found = ClockExternal; break; }
+        if (GetProcAddress(entry.hModule, "InitializeSpeedhack")
+            || _wcsnicmp(entry.szModule, L"speedhack", 9) == 0) { found = ClockExternal; break; }
         if (entry.hModule != current) {
             auto marker = GetProcAddress(entry.hModule, "AtlanticaClockHooksInstalled");
             if (!marker) marker = GetProcAddress(entry.hModule, "_AtlanticaClockHooksInstalled");

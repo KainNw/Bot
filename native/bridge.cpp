@@ -306,11 +306,15 @@ static int SelfTest() {
     SharedCommand empty_channel = {}, empty_response = {};
     empty_channel.operation = Approach;
     const int empty_code = Run(test.window, GetCurrentProcessId(), empty_channel, &empty_response, true);
+    const auto native_module = GetModuleHandleW(L"AtlanticaHook.dll");
+    auto clock_marker = native_module ? GetProcAddress(native_module, "AtlanticaClockHooksInstalled") : nullptr;
+    if (!clock_marker && native_module) clock_marker = GetProcAddress(native_module, "_AtlanticaClockHooksInstalled");
+    const bool no_clock_hooks = clock_marker && *reinterpret_cast<volatile LONG*>(clock_marker) == 0;
     PostThreadMessageW(tid, WM_QUIT, 0, 0);
     WaitForSingleObject(thread, 5000); CloseHandle(thread); CloseHandle(test.ready);
     // The bridge executable's base/build must be rejected before any client address is read.
     const int result = code ? code : (
-        invalid_window_ok && disabled_window_ok && minimized_window_ok
+        invalid_window_ok && disabled_window_ok && minimized_window_ok && no_clock_hooks
         && response.result == Unsupported && response.thread_id == tid
         && !cancelled_code && cancelled_response.result == Cancelled
         && !move_code && move_response.result == Cancelled
@@ -331,6 +335,8 @@ static int SelfTest() {
         && !empty_code && empty_response.result == CancellationUnavailable ? 0 : 31);
     if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result
         << ", cancelled: " << cancelled_code << "/" << cancelled_response.result
+        << ", clock: " << clock_start_code << "/" << clock_start_response.result
+        << ", clock guard: " << no_clock_hooks
         << ", missing: " << missing_code << "/" << missing_response.result
         << ", empty: " << empty_code << "/" << empty_response.result << std::endl;
     return result;

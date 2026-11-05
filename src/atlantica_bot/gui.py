@@ -220,6 +220,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 row, textvariable=self.attack_delay, values=("0", "1", "3"), width=7
             )
             self.delay_entry.pack(side="left", padx=8)
+            ttk.Label(
+                self.hunt_tab,
+                text="Elige 0, 1, 3 o escribe un valor de 0 a 60. "
+                "La espera se aplica antes de la persecución; "
+                "la magia del primer turno conserva su rapidez.",
+                wraplength=760,
+            ).pack(anchor="w")
             speed_row = ttk.Frame(self.hunt_tab)
             speed_row.pack(fill="x", pady=(12, 4))
             self.battle_speed_check = ttk.Checkbutton(
@@ -238,13 +245,6 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.battle_speed_list.pack(side="left", padx=8)
             ttk.Label(speed_row, text="×").pack(side="left")
             ttk.Label(self.hunt_tab, textvariable=self.battle_speed_status).pack(anchor="w")
-            ttk.Label(
-                self.hunt_tab,
-                text="Elige 0, 1, 3 o escribe un valor de 0 a 60. "
-                "La espera se aplica antes de la persecución; "
-                "la magia del primer turno conserva su rapidez.",
-                wraplength=760,
-            ).pack(anchor="w")
             self.loot_check = ttk.Checkbutton(
                 self.hunt_tab,
                 text="Recoger bonus / botín restante al derrotar a todos los mobs (experimental)",
