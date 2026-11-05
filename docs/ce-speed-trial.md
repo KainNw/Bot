@@ -1,5 +1,10 @@
 # Control de temporizadores con Cheat Engine — 0.18.0
 
+Desde 0.19.0 existe [Speed integrado en el panel](panel-speed.md), que no requiere
+CE. Esta guía corresponde a la alternativa CE. No combines ambos controles en
+el mismo cliente; reinicia el juego para cambiar entre ellos.
+
+
 Este paquete usa el **speedhack de Cheat Engine** como alternativa experimental.
 Necesita Cheat Engine **de 64 bits para Windows**, instalado por el usuario;
 el Atlantica.exe admitido sigue siendo de 32 bits. No incluye Cheat Engine ni el

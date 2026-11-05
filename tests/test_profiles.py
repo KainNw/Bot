@@ -141,6 +141,36 @@ def test_encounter_mode_is_saved_with_delay_and_mercenaries(tmp_path, mode):
     assert store.load(2) == profile
 
 
+@pytest.mark.parametrize("rate", [1.25, 1.5, 2, 3, 4])
+def test_speed_options_survive_profile_save_and_reload(tmp_path, rate):
+    profile = replace(BotProfile.default(1), battle_speed_enabled=True, battle_speed_rate=rate)
+    store = ProfileStore(tmp_path)
+    store.save(profile)
+    assert store.load(1) == profile
+
+
+def test_schema_five_keeps_hunt_and_team_but_starts_with_speed_disabled(tmp_path):
+    payload = replace(BotProfile.default(1), world_attack_mode="stationary").summary()
+    payload["schema_version"] = 5
+    del payload["battle_speed_enabled"], payload["battle_speed_rate"]
+    path = tmp_path / "profile-1.json"
+    saved = json.dumps(payload).encode()
+    path.write_bytes(saved)
+    profile = ProfileStore(tmp_path).load(1)
+    assert profile.world_attack_mode == "stationary" and not profile.battle_speed_enabled
+    assert profile.battle_speed_rate == 1.25 and path.read_bytes() == saved
+
+
+@pytest.mark.parametrize("rate", [True, "3", 0, 1, 1.45, 5, float("nan"), float("inf")])
+def test_invalid_speed_cannot_replace_saved_profile(tmp_path, rate):
+    store = ProfileStore(tmp_path)
+    original = BotProfile.default(1)
+    store.save(original)
+    with pytest.raises(DiagnosticError):
+        store.save(replace(original, battle_speed_rate=rate))
+    assert store.load(1) == original
+
+
 def test_schema_four_preserves_previous_hunt_settings_and_defaults_to_native_pursuit(tmp_path):
     payload = replace(
         BotProfile.default(1),

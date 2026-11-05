@@ -51,10 +51,12 @@ jobs:
             $stepCode = $LASTEXITCODE
             $messages | ForEach-Object { Write-Output $_ }
             if ($stepCode -ne 0) {
-              foreach ($line in $messages) {
-                $failureText = "$line".Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-                Write-Output "::error title=Native bridge build::$failureText"
+              $failureTail = ($messages | Select-Object -Last 60) -join "`n"
+              if ($failureTail.Length -gt 10000) {
+                $failureTail = $failureTail.Substring($failureTail.Length - 10000)
               }
+              $failureText = $failureTail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::error title=Native bridge build::$failureText"
               exit $stepCode
             }
           }

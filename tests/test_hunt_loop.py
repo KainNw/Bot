@@ -761,6 +761,80 @@ def test_out_of_range_wait_reports_distance_without_changing_native_limit():
     assert engine.running and engine.attempts == 0
 
 
+@pytest.mark.parametrize("enabled,stop_fault", [(False, False), (True, False), (True, True)])
+def test_worker_owns_speed_until_cancelled_and_restore_is_confirmed(
+    monkeypatch, enabled, stop_fault
+):
+    lifecycle = []
+
+    class Lease:
+        def __init__(self, name):
+            self.name = name
+
+        def __enter__(self):
+            lifecycle.append("enter " + self.name)
+            return self
+
+        def __exit__(self, *args):
+            lifecycle.append("exit " + self.name)
+
+    class Signal(Lease):
+        def __init__(self, pid):
+            super().__init__("cancel")
+            self.cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+            lifecycle.append("cancel")
+
+    class Clock:
+        def __init__(self, session, window, signal, rate):
+            self.signal, self.attempted = signal, True
+            self.report = {"armed": True, "current_rate": 1.0, "message": "Esperando combate"}
+
+        def start(self):
+            lifecycle.append("start speed")
+
+        def read(self):
+            return self.report
+
+        def stop(self):
+            assert self.signal.cancelled and "exit speed" not in lifecycle
+            lifecycle.append("stop speed")
+            if stop_fault:
+                raise DiagnosticError("ack lost")
+            self.attempted = False
+            self.report.update(armed=False, current_rate=1.0)
+
+        def confirm_stopped(self):
+            assert "exit speed" not in lifecycle and "exit cancel" not in lifecycle
+            lifecycle.append("confirm speed")
+            self.attempted = False
+            self.report.update(armed=False, current_rate=1.0)
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.SpeedLease", lambda pid: Lease("speed"))
+    monkeypatch.setattr("atlantica_bot.hunt_loop.BotLease", lambda pid: Lease("bot"))
+    monkeypatch.setattr("atlantica_bot.hunt_loop.Cancellation", Signal)
+    monkeypatch.setattr("atlantica_bot.hunt_loop.NativeClock", Clock)
+    worker = HuntWorker(
+        SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100)),
+        ClientWindow(100, 0x1234, "Atlantica"),
+        DETECTOR,
+        profile=replace(BotProfile.default(1), battle_speed_enabled=enabled),
+    )
+    monkeypatch.setattr(worker, "_iteration", lambda: worker.engine.stop("Finished"))
+    worker._run()
+    assert not worker.engine.running and not worker.engine.needs_reconnect
+    if enabled:
+        assert lifecycle[:4] == ["enter speed", "enter bot", "enter cancel", "start speed"]
+        assert lifecycle.count("stop speed") == 1
+        assert lifecycle[-3:] == ["exit cancel", "exit bot", "exit speed"]
+        assert lifecycle.count("confirm speed") == int(stop_fault)
+        assert worker.engine.speed["current_rate"] == 1.0
+    else:
+        assert lifecycle == ["enter bot", "enter cancel", "cancel", "exit cancel", "exit bot"]
+
+
 def test_calibration_for_another_instance_cannot_start_worker():
     session = SimpleNamespace(creation_time=888, process=SimpleNamespace(pid=100))
     with pytest.raises(DiagnosticError, match="Calibra"):

@@ -533,6 +533,19 @@ class FakeCE:
         return True
 
 
+def test_ce_refuses_to_layer_speed_over_native_panel_hooks():
+    ce = FakeCE()
+    ce.memory[0x800080] = 1
+    ce.lua.execute(
+        "function getAddressSafe(name) "
+        'assert(name == "AtlanticaHook.AtlanticaClockHooksInstalled"); return 0x800080 end'
+    )
+    with pytest.raises(LuaError, match="relojes del panel"):
+        ce.api.bind()
+    assert ce.rate_calls == [] and not ce.mutex_owned
+    assert all(handle < 0x900 for handle in ce.handles)
+
+
 def test_adapter_only_local_api_until_explicit_rate_request():
     ce = FakeCE()
     b = ce.api.bind()
