@@ -228,6 +228,17 @@ static bool LootSupported() {
         "8d8d848affffe837a8f1ff8b0d0c29a9048b018d95848affff52ff5064")
         && HexAnchor(0x4f1cd8, "5f5e5bc9c20c00");
 }
+static bool StanceSupported() {
+    // Captured dispatcher: action 0x20 -> payload 5; action 0x29 -> payload 8.
+    // Run the full routines so their native restrictions and UI cleanup remain intact.
+    return SelectionSupported()
+        && HexAnchor(0x4f2627, "83f820750b57")
+        && HexAnchor(0x4f2637, "83f829751757")
+        && HexAnchor(0x4f1759, "558becb864750000e88a177e00a10c29a9045356578bf9")
+        && HexAnchor(0x4f1863, "558becb864750000e880167e00a10c29a9045356578bf9")
+        && HexAnchor(0x4f1815, "8d45f450535353ff750c8d4dd8ff75086a05e803f8ffff")
+        && HexAnchor(0x4f191f, "8d45f450535353ff750c8d4dd8ff75086a08e8f9f6ffff");
+}
 static uint32_t BattleUnitIndex(uint32_t client, uint32_t unit) {
     for (unsigned i = 1; i < 100; ++i)
         if (Read<uint8_t>(client + 0xd4 + i) == 1 && Read<uint32_t>(client + 0x138 + i * 4) == unit)
@@ -258,6 +269,25 @@ static bool BattleUnitMatches(uint32_t client, uint32_t unit, uint32_t world,
     return info && info == info_base + world_slot * 0x215b8
         && Read<uint32_t>(unit + 0x21c) == info && Read<uint32_t>(unit + 0x230) == record
         && Read<int>(record + 8) > 0 && (alive ? Read<int>(record + 0x4c) > 0 : Read<int>(record + 0x4c) <= 0);
+}
+static bool HasLivingEnemy(uint32_t client, uint32_t world, uint32_t context, int own_group,
+    uint32_t info_base, uint32_t info_count) {
+    for (unsigned i = 1; i < 100; ++i) {
+        if (Read<uint8_t>(client + 0xd4 + i) != 1) continue;
+        const auto unit = Read<uint32_t>(client + 0x138 + i * 4);
+        if (!unit) return false;
+        const auto slot = Read<uint32_t>(unit + 4), member = Read<uint32_t>(unit + 8) + 1;
+        if (!slot || slot >= 450 || slot >= info_count) return false;
+        const auto actor = Read<uint32_t>(world + 0x28 + slot * 4);
+        if (!actor) return false;
+        uint32_t identity[3];
+        std::memcpy(identity, reinterpret_cast<void*>(actor + 0x204), 12);
+        const int group = BattleGroup(context, identity);
+        if (group < 0) return false;
+        if (group != own_group && identity[0] >= 3500 && identity[0] < 22000
+            && BattleUnitMatches(client, unit, world, slot, member, info_base, info_count)) return true;
+    }
+    return false;
 }
 static bool EnemiesDefeated(uint32_t client, uint32_t world, uint32_t context, int own_group,
     uint32_t info_base, uint32_t info_count) {
@@ -319,7 +349,11 @@ static uint32_t InvokeBattle(uint32_t owner, uint32_t world, uint32_t player,
     const auto target = Read<uint32_t>(world + 0x28 + cmd->slot * 4);
     if (!target || !Identity(target, cmd)) return BattleTargetChanged;
     const int target_group = BattleGroup(context, cmd->identity);
-    const bool own_target = cmd->operation == BattleMagic && cmd->slot == 1 && target_group == own_group;
+    const bool stance = cmd->operation == BattleDefend || cmd->operation == BattlePass;
+    const bool own_target = (cmd->operation == BattleMagic || stance)
+        && cmd->slot == 1 && target_group == own_group;
+    if (stance && (!own_target || cmd->target_unit != cmd->source_unit
+        || cmd->target_mercenary != cmd->mercenary)) return BattleTargetChanged;
     if (!own_target && (cmd->slot == 1 || target_group < 0 || target_group == own_group
         || cmd->identity[0] < 3500 || cmd->identity[0] >= 22000)) return BattleTargetChanged;
     if (!BattleUnitMatches(client, cmd->target_unit, world, cmd->slot, cmd->target_mercenary,
@@ -344,6 +378,13 @@ static uint32_t InvokeBattle(uint32_t owner, uint32_t world, uint32_t player,
         if (!reinterpret_cast<SearchEligible>(0x433701)(reinterpret_cast<void*>(player),
             static_cast<int>(cmd->mercenary - 1), static_cast<int>(cmd->identity[0]),
             static_cast<int>(cmd->target_mercenary - 1), cmd->battle_error)) return BattleLootNotEligible;
+    } else if (stance) {
+        if (!StanceSupported() || !Read<uint32_t>(owner + 0x11ee8)) return Unsupported;
+        const auto selected = Read<uint32_t>(client + 0xd0);
+        if (!selected || selected >= 100 || Read<uint32_t>(client + 0x138 + selected * 4) != cmd->source_unit)
+            return BattleSelectionChanged;
+        if (!reinterpret_cast<Ready>(0x5a2955)(reinterpret_cast<void*>(cmd->source_unit))
+            || !HasLivingEnemy(client, world, context, own_group, info_base, info_count)) return BattleNotReady;
     } else {
         if (!MagicSupported()) return Unsupported;
         const auto selected = Read<uint32_t>(client + 0xd0);
@@ -380,6 +421,20 @@ static uint32_t InvokeBattle(uint32_t owner, uint32_t world, uint32_t player,
                     static_cast<int>(BattleUnitIndex(client, cmd->target_unit)));
                 const auto after = Read<int>(queue + 0x10);
                 result = after == used + 33 ? BattleLootQueued : after == used ? BattleLootNotEligible : NotQueued;
+            }
+        } else if (stance) {
+            if (!HasLivingEnemy(client, world, context, own_group, info_base, info_count)) result = BattleNotReady;
+            else {
+                using Stance = void(__thiscall*)(void*, int, int);
+                const auto address = cmd->operation == BattleDefend ? 0x4f1759 : 0x4f1863;
+                reinterpret_cast<Stance>(address)(reinterpret_cast<void*>(manager),
+                    static_cast<int>(cmd->actor_identity[0]), static_cast<int>(cmd->mercenary - 1));
+                const auto after = Read<int>(queue + 0x10);
+                result = after == used + 33
+                    ? (cmd->operation == BattleDefend ? BattleDefendQueued : BattlePassQueued)
+                    : after == used
+                    ? (cmd->operation == BattleDefend ? BattleDefendNotEligible : BattlePassNotEligible)
+                    : NotQueued;
             }
         } else if (cmd->operation == BattleMagic) {
             using Cast = bool(__thiscall*)(void*, int, int, int, int, int);
@@ -533,7 +588,7 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation, HWND window) {
     const auto player = Read<uint32_t>(manager + 0x2c);
     if (!player || Read<uint32_t>(player + 0x200) != 1
         || Read<uint32_t>(player + 0x2c) != manager) return TargetChanged;
-    if (cmd->operation >= BattleBasic && cmd->operation <= BattleLoot)
+    if (IsBattleOperation(cmd->operation))
         return InvokeBattle(owner, manager, player, cmd, cancellation);
     if (Read<int>(player + 0x318) >= 0 || Read<int>(player + 0x254) >= 0)
         return cmd->operation == StopNativePursuit ? NativePursuitInBattle : InvalidScene;
@@ -710,7 +765,7 @@ extern "C" LRESULT CALLBACK AtlanticaHookProc(int code, WPARAM removed, LPARAM d
                 if (mapping) {
                     auto cmd = static_cast<SharedCommand*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedCommand)));
                     if (cmd) {
-                        if (cmd->magic == kMagic && cmd->version == 11 && cmd->pid == pid
+                        if (cmd->magic == kMagic && cmd->version == 12 && cmd->pid == pid
                             && cmd->nonce_lo == msg->wParam && cmd->nonce_hi == static_cast<DWORD>(msg->lParam)
                             && InterlockedCompareExchange(&cmd->state, 2, 1) == 1) {
                             cmd->thread_id = GetCurrentThreadId();

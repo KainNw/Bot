@@ -5,13 +5,18 @@
 
 constexpr uint32_t kMagic = 0x414F5031;
 constexpr uint32_t kMaxSearchRadius = 500;
-constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.11";
+constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.12";
 enum Operation : uint32_t {
     Probe = 0, Attack = 1, Approach = 2, StopMovement = 3,
     NativeAttack = 4, StopNativePursuit = 5, BattleBasic = 6,
     BattleSelect = 7, BattleMagic = 8, BattleLoot = 9, StationaryAttack = 10,
-    SpeedApply = 11, SpeedRestore = 12, ClockStart = 13, ClockStop = 14, ClockStatus = 15
+    SpeedApply = 11, SpeedRestore = 12, ClockStart = 13, ClockStop = 14, ClockStatus = 15,
+    BattleDefend = 16, BattlePass = 17
 };
+inline bool IsBattleOperation(uint32_t operation) {
+    return (operation >= BattleBasic && operation <= BattleLoot)
+        || operation == BattleDefend || operation == BattlePass;
+}
 enum Result : uint32_t {
     Verified = 0, Queued = 1, Blocked = 2, OutOfRange = 3, InvalidScene = 4,
     NativeHunting = 5, TargetChanged = 6, InvalidQueue = 7, QueueFull = 8,
@@ -29,7 +34,8 @@ enum Result : uint32_t {
     SpeedApplied = 38, SpeedRestored = 39, SpeedChanged = 40, SpeedRejected = 41,
     SpeedRetired = 42, ClockArmed = 43, ClockStopped = 44, ClockReported = 45,
     ClockBusy = 46, ClockRejected = 47, ClockExternal = 48, ClockUnavailable = 49,
-    ClockOldPanel = 50
+    ClockOldPanel = 50, BattleDefendQueued = 51, BattlePassQueued = 52,
+    BattleDefendNotEligible = 53, BattlePassNotEligible = 54
 };
 struct SharedCommand {
     uint32_t magic, version, pid, nonce_lo, nonce_hi, operation, slot;

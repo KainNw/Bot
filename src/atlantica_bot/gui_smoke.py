@@ -67,6 +67,55 @@ def check_character_settings(panel) -> None:
             for m in reversed(panel.profile.mercenaries)
         )
         panel.persist_profile(replace(panel.profile, mercenaries=members))
+        panel.edit_profile()
+
+        def children(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from children(child)
+
+        editor_widgets = list(children(panel.profile_editor))
+        main_check = next(
+            widget
+            for widget in editor_widgets
+            if widget.winfo_class() == "TCheckbutton" and widget.cget("text") == "Main (1)"
+        )
+        main_controls = list(children(main_check.master))
+        initial = next(
+            widget
+            for widget in main_controls
+            if widget.winfo_class() == "TCombobox" and len(widget.cget("values")) == 8
+        )
+        initial.set("Magia Q")
+        initial.event_generate("<<ComboboxSelected>>")
+        later = next(
+            widget
+            for widget in main_controls
+            if widget.winfo_class() == "TCombobox" and len(widget.cget("values")) == 3
+        )
+        later.set("Defender (G)")
+        next(
+            widget
+            for widget in editor_widgets
+            if widget.winfo_class() == "TCheckbutton"
+            and str(widget.cget("text")).startswith("Pasar las acciones restantes")
+        ).invoke()
+        next(
+            widget
+            for widget in editor_widgets
+            if widget.winfo_class() == "TButton"
+            and widget.cget("text") == "Solo Main + pasar las acciones restantes"
+        ).invoke()
+        next(
+            widget
+            for widget in editor_widgets
+            if widget.winfo_class() == "TButton" and widget.cget("text") == "Guardar perfil"
+        ).invoke()
+        assert panel.profile.pass_remaining
+        assert [m.slot for m in panel.profile.mercenaries if m.enabled] == [1]
+        assert next(m for m in panel.profile.mercenaries if m.slot == 1).later_action == "defend"
+        members = panel.profile.mercenaries
+        panel.profile_editor.destroy()
         first_store = panel.character_store
         saved = first_store.load(2)
         assert saved.search_radius == 275 and saved.collect_remaining_loot
@@ -101,6 +150,7 @@ def check_character_settings(panel) -> None:
         assert panel.profile_number.get() == "2" and panel.turns_enabled.get()
         assert panel.search_radius.get() == "300" and panel.collect_loot.get()
         assert panel.profile.mercenaries == members
+        assert panel.profile.pass_remaining
         assert panel.bot_worker is None and panel.speed_experiment is None
 
         # An unflushed callback from a replaced PID must not write into either character.

@@ -7,6 +7,12 @@ from atlantica_bot.errors import DiagnosticError
 from atlantica_bot.profiles import BotProfile, Mercenary, ProfileStore
 
 
+def remove_new_turn_commands(payload):
+    payload.pop("pass_remaining", None)
+    for mercenary in payload["mercenaries"]:
+        mercenary.pop("later_action", None)
+
+
 def test_persists_selection_names_and_priority_without_touching_other_profiles(tmp_path):
     store = ProfileStore(tmp_path)
     first = BotProfile.default(1)
@@ -34,7 +40,7 @@ def test_magic_actions_and_fallback_are_saved_per_mercenary_in_priority_order(tm
     store.save(updated)
     assert store.load(1) == updated
     payload = json.loads((tmp_path / "profile-1.json").read_text())
-    assert payload["schema_version"] == 7
+    assert payload["schema_version"] == 8
     assert [m["action"] for m in payload["mercenaries"]] == list(reversed(actions))
     assert payload["turn_execution_available"] is True
 
@@ -58,7 +64,7 @@ def test_legacy_profile_migrates_in_memory_without_rewriting_or_losing_settings(
     assert all(m.action == "basic" and m.fallback_basic for m in loaded.mercenaries)
     assert path.read_bytes() == saved
     store.save(loaded)
-    assert json.loads(path.read_bytes())["schema_version"] == 7
+    assert json.loads(path.read_bytes())["schema_version"] == 8
     assert store.load(1) == loaded
 
 
@@ -74,6 +80,7 @@ def test_neo_grace_is_saved_without_changing_combat_settings(tmp_path, grace):
 def test_schema_six_keeps_previous_neo_wait_and_does_not_rewrite_saved_profile(tmp_path):
     payload = replace(BotProfile.default(1), battle_speed_enabled=True).summary()
     payload["schema_version"] = 6
+    remove_new_turn_commands(payload)
     del payload["neo_loot_grace_seconds"]
     saved = json.dumps(payload).encode()
     path = tmp_path / "profile-1.json"
@@ -115,7 +122,7 @@ def test_invalid_actions_preserve_existing_profile(tmp_path, action, fallback):
     assert store.load(1) == profile
 
 
-@pytest.mark.parametrize("missing", ["action", "fallback_basic", "target"])
+@pytest.mark.parametrize("missing", ["action", "fallback_basic", "target", "later_action"])
 def test_incomplete_new_schema_is_rejected_instead_of_silently_changing_actions(tmp_path, missing):
     payload = BotProfile.default(1).summary()
     del payload["mercenaries"][0][missing]
@@ -130,6 +137,7 @@ def test_incomplete_new_schema_is_rejected_instead_of_silently_changing_actions(
 def test_schema_two_preserves_order_actions_and_fallback_without_rewriting(tmp_path):
     payload = BotProfile.default(1).summary()
     payload["schema_version"] = 2
+    remove_new_turn_commands(payload)
     del payload["magic_first_turn_only"]
     payload["mercenaries"].reverse()
     for merc in payload["mercenaries"]:
@@ -192,6 +200,7 @@ def test_speed_options_survive_profile_save_and_reload(tmp_path, rate):
 def test_schema_five_keeps_hunt_and_team_but_starts_with_speed_disabled(tmp_path):
     payload = replace(BotProfile.default(1), world_attack_mode="stationary").summary()
     payload["schema_version"] = 5
+    remove_new_turn_commands(payload)
     del payload["battle_speed_enabled"], payload["battle_speed_rate"]
     path = tmp_path / "profile-1.json"
     saved = json.dumps(payload).encode()
@@ -219,6 +228,7 @@ def test_schema_four_preserves_previous_hunt_settings_and_defaults_to_native_pur
         attack_delay_seconds=3,
     ).summary()
     payload["schema_version"] = 4
+    remove_new_turn_commands(payload)
     del payload["world_attack_mode"]
     saved = json.dumps(payload).encode()
     path = tmp_path / "profile-1.json"
@@ -253,6 +263,7 @@ def test_missing_mode_in_new_schema_is_rejected_without_resetting_profile(tmp_pa
 def test_schema_three_keeps_team_settings_and_uses_safe_hunt_defaults_without_rewriting(tmp_path):
     payload = replace(BotProfile.default(1), magic_first_turn_only=False).summary()
     payload["schema_version"] = 3
+    remove_new_turn_commands(payload)
     for key in ("attack_delay_seconds", "search_radius", "collect_remaining_loot"):
         del payload[key]
     payload["mercenaries"][0].update(action="Q", target="self", fallback_basic=False)

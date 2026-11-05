@@ -36,10 +36,14 @@ def roster_rows(
                 "alive": unit.life > 0 if unit else None,
                 "kind_id": unit.kind_id if unit else None,
                 "life": unit.life if unit is not None and unit.life >= 0 else None,
-                "target": TARGET_LABELS[plan.target],
+                "target": "—" if plan.action in ("defend", "pass") else TARGET_LABELS[plan.target],
                 "opening_action": ACTION_LABELS[plan.action] if plan.enabled else "Sin orden",
                 "later_action": (
-                    "Ataque básico" if profile.magic_first_turn_only else ACTION_LABELS[plan.action]
+                    ACTION_LABELS[
+                        plan.action_for_turn(
+                            opening=False, first_only=profile.magic_first_turn_only
+                        )
+                    ]
                 )
                 if plan.enabled
                 else "Sin orden",
@@ -95,6 +99,13 @@ class TurnEngine:
         self.fallback = set()
         self.deferred_until = {}
         self.unready_attempts = {}
+        self.passing = False
+        self.passed = set()
+        self.pass_skipped = set()
+        self.pass_deferred_until = {}
+        self.pass_unready_attempts = {}
+        self.passes_queued = 0
+        self.selecting_pass = None
         self.seen_enemy = False
         self.observed_initial_turn = False
         self.timeline = {}
@@ -122,6 +133,12 @@ class TurnEngine:
             self.fallback.clear()
             self.deferred_until.clear()
             self.unready_attempts.clear()
+            self.passing = False
+            self.selecting_pass = None
+            self.passed.clear()
+            self.pass_skipped.clear()
+            self.pass_deferred_until.clear()
+            self.pass_unready_attempts.clear()
             self.seen_enemy = False
             self.observed_initial_turn = False
             self.timeline.clear()
@@ -139,6 +156,8 @@ class TurnEngine:
 
     def leave(self) -> None:
         self.active = False
+        self.passing = False
+        self.selecting_pass = None
         self.pending = self.inflight = None
         self.last_frame = None
         self.loot_wait_reason = "not_in_battle"
@@ -165,9 +184,28 @@ class TurnEngine:
             and self.profile.collect_remaining_loot
             and not trial.frame.enemies
         )
-        attempts = self.loot_unready_attempts if collecting else self.unready_attempts
-        skipped = self.loot_skipped if collecting else self.skipped
-        deferred = self.loot_deferred_until if collecting else self.deferred_until
+        passing = (
+            trial.action == "pass"
+            or trial.action == "select"
+            and (self.passing or self.selecting_pass == slot)
+        )
+        attempts = (
+            self.loot_unready_attempts
+            if collecting
+            else self.pass_unready_attempts
+            if passing
+            else self.unready_attempts
+        )
+        skipped = (
+            self.loot_skipped if collecting else self.pass_skipped if passing else self.skipped
+        )
+        deferred = (
+            self.loot_deferred_until
+            if collecting
+            else self.pass_deferred_until
+            if passing
+            else self.deferred_until
+        )
         count = attempts.get(slot, 0) + 1
         attempts[slot] = count
         if count >= 3:
@@ -202,7 +240,7 @@ class TurnEngine:
             or target.life != trial.target.life
             or self._value(frame, trial.source.member_slot) != pending.source_value
         )
-        if trial.action == "loot" and target is not None:
+        if trial.action in ("loot", "defend", "pass") and target is not None:
             pending.changed |= (
                 target.flags != trial.target.flags
                 or target.action_state != trial.target.action_state
@@ -310,6 +348,8 @@ class TurnEngine:
     def _targets(
         self, frame: BattleFrame, plan: Mercenary, source: BattleUnit, action: str
     ) -> tuple:
+        if action in ("defend", "pass"):
+            return (source,)
         if action == "basic" or plan.target == "enemy":
             targets = frame.enemies
         elif plan.target == "self":
@@ -320,6 +360,39 @@ class TurnEngine:
         return tuple(
             u for u in targets if (source.member_slot, action, unit_key(u)) not in self.rejected
         )
+
+    def _next_pass(self, frame: BattleFrame, now: float) -> BattleTrial | None:
+        if not self.profile.pass_remaining:
+            return None
+        self.passing = True
+        for source in sorted(frame.sources, key=lambda unit: unit.member_slot):
+            slot = source.member_slot
+            trial = BattleTrial(frame, source, source, "pass")
+            if slot in self.passed | self.pass_skipped or trial.key() in self.ledger:
+                continue
+            if not source.flags & 0x8000:
+                continue  # Native ready flag is absent: do not force an inactive member.
+            if now < self.pass_deferred_until.get(slot, 0):
+                continue
+            if source.action_state != 1:
+                self.message = (
+                    "Esperando que termine la animación antes de pasar las acciones restantes."
+                )
+                return None
+            if frame.selected_unit != source.address:
+                trial = BattleTrial(frame, source, action="select")
+                self.selecting_pass = slot
+            trial.validate()
+            self.inflight = trial
+            self._order(
+                slot,
+                trial.action,
+                "Pasando las acciones restantes tras las órdenes del perfil",
+                now,
+            )
+            return trial
+        self.message = "Acciones restantes revisadas; esperando el siguiente turno del juego."
+        return None
 
     def next(self, frame: BattleFrame, now: float) -> BattleTrial | None:
         if not self.running or not self.active:
@@ -363,6 +436,12 @@ class TurnEngine:
             self.fallback.clear()
             self.deferred_until.clear()
             self.unready_attempts.clear()
+            self.passing = False
+            self.selecting_pass = None
+            self.passed.clear()
+            self.pass_skipped.clear()
+            self.pass_deferred_until.clear()
+            self.pass_unready_attempts.clear()
             self.loot_skipped.clear()
             self.loot_deferred_until.clear()
             self.loot_unready_attempts.clear()
@@ -397,23 +476,37 @@ class TurnEngine:
             else:
                 self.finished_opening = True
         opening = self.opening_turn == turn and not self.finished_opening
+        if self.passing:
+            return self._next_pass(frame, now)
         sources = {u.member_slot: u for u in frame.sources}
         for plan in self.profile.mercenaries:
             source = sources.get(plan.slot)
             if not plan.enabled or source is None or plan.slot in self.consumed | self.skipped:
                 continue
-            if (*prefix, plan.slot) in self.ledger:
+            if (*prefix, plan.slot) in self.ledger or (*prefix, plan.slot, "pass") in self.ledger:
                 continue
-            if now < self.deferred_until.get(plan.slot, 0):
+            action = plan.action_for_turn(
+                opening=opening, first_only=self.profile.magic_first_turn_only
+            )
+            if action == "pass" and plan.slot in self.pass_skipped:
+                continue
+            deferred = self.pass_deferred_until if action == "pass" else self.deferred_until
+            if now < deferred.get(plan.slot, 0):
                 self.message = f"{member_label(plan.slot)}: esperando que el cliente esté listo."
                 return None
             if source.action_state != 1:
                 self.message = f"{member_label(plan.slot)}: esperando que termine su animación."
                 return None
-            action = plan.action if opening or not self.profile.magic_first_turn_only else "basic"
             if plan.slot in self.fallback:
                 action = "basic"
-            if action != "basic":
+            if action in ("defend", "pass") and frame.selected_unit != source.address:
+                self.selecting_pass = plan.slot if action == "pass" else None
+                trial = BattleTrial(frame, source, action="select")
+                trial.validate()
+                self.inflight = trial
+                self._order(plan.slot, "select", "Seleccionando para defender o pasar", now)
+                return trial
+            if action in "QWERT":
                 if frame.selected_unit != source.address:
                     trial = BattleTrial(frame, source, action="select")
                     trial.validate()
@@ -430,7 +523,7 @@ class TurnEngine:
                         continue
             targets = self._targets(frame, plan, source, action)
             if not targets:
-                if action != "basic" and plan.fallback_basic:
+                if action in "QWERT" and plan.fallback_basic:
                     self.fallback.add(plan.slot)
                     self._order(plan.slot, action, "Objetivo de magia ausente; usará básico", now)
                     return None
@@ -446,7 +539,7 @@ class TurnEngine:
             self._order(plan.slot, action, f"Solicitando {ACTION_LABELS[action]}", now)
             return trial
         self.message = "Esperando unidades disponibles o el siguiente turno del juego."
-        return None
+        return self._next_pass(frame, now)
 
     def record(self, trial: BattleTrial, report: dict, now: float) -> None:
         if (
@@ -469,10 +562,15 @@ class TurnEngine:
             and trial.operation != 8
             or code == 36
             and trial.operation != 9
+            or code == 51
+            and trial.operation != 16
+            or code == 52
+            and trial.operation != 17
         ):
             self.stop("La respuesta no corresponde al tipo de orden.", uncertain=True)
             return
         if code == 31:
+            self.selecting_pass = None
             self._mark("first_selection", now)
             self.selections += 1
             self._order(trial.source.member_slot, "select", "Seleccionado; leyendo su barra", now)
@@ -488,13 +586,22 @@ class TurnEngine:
         elif code == 37:
             self.loot_rejected.add((slot, unit_key(trial.target)))
             self._order(slot, "loot", "Recogida rechazada sin envío", now)
-        elif code in (26, 32):
+        elif code in (26, 32, 51, 52):
             self._mark("first_order_queued", now)
             self.queued += 1
             self.consumed.add(slot)
             self.ledger.add(trial.key())
             self.pending = PendingTurn(trial, now, self._value(trial.frame, slot))
+            if code == 52:
+                self.passed.add(slot)
+                self.passes_queued += 1
             self._order(slot, trial.action, f"{ACTION_LABELS[trial.action]} encolado", now)
+        elif code in (53, 54):
+            if code == 54:
+                self.pass_skipped.add(slot)
+            else:
+                self.skipped.add(slot)
+            self._order(slot, trial.action, "Acción rechazada por el cliente sin envío", now)
         elif code == 30:
             error = report.get("battle", {}).get("native_error", [0])[0]
             if error == 0x1C1:
@@ -540,6 +647,10 @@ class TurnEngine:
         return {
             "enabled": True,
             "execute_orders": self.execute_orders,
+            "pass_remaining": self.profile.pass_remaining,
+            "passing_remaining": self.passing,
+            "passes_queued": self.passes_queued,
+            "pass_unready_attempts": dict(self.pass_unready_attempts),
             "loot": {
                 "enabled": self.profile.collect_remaining_loot,
                 "queued": self.loot_queued,

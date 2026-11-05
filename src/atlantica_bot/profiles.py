@@ -17,7 +17,11 @@ ACTION_LABELS = {
     "E": "Magia E",
     "R": "Magia R",
     "T": "Magia T",
+    "defend": "Defender (G)",
+    "pass": "Pasar acción (F)",
 }
+
+LATER_ACTION_LABELS = {key: ACTION_LABELS[key] for key in ("basic", "defend", "pass")}
 
 WORLD_ATTACK_LABELS = {
     "native": "Perseguir y atacar (nativo)",
@@ -63,6 +67,12 @@ class Mercenary:
     action: str = "basic"
     fallback_basic: bool = True
     target: str = "enemy"
+    later_action: str = "basic"
+
+    def action_for_turn(self, *, opening: bool, first_only: bool) -> str:
+        if not opening and first_only and self.action in "QWERT":
+            return self.later_action
+        return self.action
 
 
 @dataclass(frozen=True)
@@ -77,12 +87,15 @@ class BotProfile:
     battle_speed_enabled: bool = False
     battle_speed_rate: float = 1.25
     neo_loot_grace_seconds: float = 1.0
+    pass_remaining: bool = False
 
     def validate(self) -> None:
         if type(self.number) is not int or self.number not in (1, 2, 3):
             raise DiagnosticError("Elige uno de los tres perfiles.")
         if type(self.magic_first_turn_only) is not bool:
             raise DiagnosticError("Revisa la configuración de magia del primer turno.")
+        if type(self.pass_remaining) is not bool:
+            raise DiagnosticError("Revisa la opción de pasar las acciones restantes.")
         if (
             type(self.attack_delay_seconds) not in (int, float)
             or not math.isfinite(self.attack_delay_seconds)
@@ -133,12 +146,14 @@ class BotProfile:
                 or type(merc.fallback_basic) is not bool
                 or type(merc.target) is not str
                 or merc.target not in TARGET_LABELS
+                or type(merc.later_action) is not str
+                or merc.later_action not in LATER_ACTION_LABELS
             ):
-                raise DiagnosticError("Elige ataque básico o una magia Q/W/E/R/T por puesto.")
+                raise DiagnosticError("Elige básico, magia, defensa o pasar por puesto.")
 
     def summary(self) -> dict:
         return {
-            "schema_version": 7,
+            "schema_version": 8,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "magic_first_turn_only": self.magic_first_turn_only,
@@ -149,6 +164,7 @@ class BotProfile:
             "battle_speed_enabled": self.battle_speed_enabled,
             "battle_speed_rate": self.battle_speed_rate,
             "neo_loot_grace_seconds": self.neo_loot_grace_seconds,
+            "pass_remaining": self.pass_remaining,
             "turn_execution_available": True,
         }
 
@@ -187,7 +203,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7)
+                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -200,7 +216,7 @@ class ProfileStore:
                         raise ValueError
                 elif set(entry) != {"slot", "name", "enabled", "action", "fallback_basic"} | (
                     {"target"} if payload["schema_version"] >= 3 else set()
-                ):
+                ) | ({"later_action"} if payload["schema_version"] >= 8 else set()):
                     raise ValueError
             mercenaries = tuple(Mercenary(**entry) for entry in payload["mercenaries"])
             profile = BotProfile(
@@ -214,6 +230,7 @@ class ProfileStore:
                 payload["battle_speed_enabled"] if payload["schema_version"] >= 6 else False,
                 payload["battle_speed_rate"] if payload["schema_version"] >= 6 else 1.25,
                 payload["neo_loot_grace_seconds"] if payload["schema_version"] >= 7 else 1.0,
+                payload["pass_remaining"] if payload["schema_version"] >= 8 else False,
             )
             profile.validate()
             return profile

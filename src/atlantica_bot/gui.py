@@ -26,6 +26,7 @@ from .overview import OverviewWindow
 from .panel_view import build_panel
 from .profiles import (
     ACTION_LABELS,
+    LATER_ACTION_LABELS,
     TARGET_LABELS,
     WORLD_ATTACK_LABELS,
     BotProfile,
@@ -891,12 +892,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.world_attack_mode.set(WORLD_ATTACK_LABELS[profile.world_attack_mode])
                 count = sum(merc.enabled for merc in profile.mercenaries)
                 magic_count = sum(
-                    merc.enabled and merc.action != "basic" for merc in profile.mercenaries
+                    merc.enabled and merc.action in "QWERT" for merc in profile.mercenaries
                 )
                 self.profile_status.set(
                     f"Perfil {profile.number}: {count} habilitados, {magic_count} con magia. "
                     + (
-                        "Magia solo en primer turno; básicos después."
+                        "Magia solo en primer turno; después usa la acción configurada."
                         if profile.magic_first_turn_only
                         else "Repetir la acción configurada por turno."
                     )
@@ -972,12 +973,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             selected_store = self.profile_store
             window = self.profile_editor = tk.Toplevel(self.root)
             window.title(f"Perfil {number} — mercenarios")
+            window.geometry("1100x720")
+            window.minsize(840, 580)
             frame = ttk.Frame(window, padding=16)
             frame.pack(fill="both", expand=True)
             ttk.Label(
                 frame,
                 text="Selecciona los puestos de tu equipo y ordénalos por prioridad.\n"
-                "Elige ataque básico o la magia Q/W/E/R/T de cada mercenario.\n"
+                "Elige básico, magia Q/W/E/R/T, defender (G) o pasar acción (F).\n"
                 "Objetivo de magia: enemigo, sí mismo o un puesto de tu equipo.\n"
                 "Usar bot solo afecta al perfil; el equipo que llevas se elige en el juego.",
                 wraplength=820,
@@ -985,14 +988,31 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             first_turn = tk.BooleanVar(value=profile.magic_first_turn_only)
             ttk.Checkbutton(
                 frame,
-                text="Magia configurada solo en primer turno; básicos después",
+                text="Magia solo en primer turno; después usa la acción posterior de cada puesto",
                 variable=first_turn,
             ).pack(anchor="w", pady=4)
+            pass_remaining = tk.BooleanVar(value=profile.pass_remaining)
+            ttk.Checkbutton(
+                frame,
+                text="Pasar las acciones restantes (F) después de las órdenes del perfil",
+                variable=pass_remaining,
+            ).pack(anchor="w", pady=4)
+            ttk.Label(
+                frame,
+                text="Incluye a los miembros disponibles sin orden habilitada. "
+                "Si no quedan enemigos vivos, deja paso al NeoACA y al botín.",
+                style="Caption.TLabel",
+                wraplength=900,
+            ).pack(anchor="w")
             order = [merc.slot for merc in profile.mercenaries]
             names = {merc.slot: tk.StringVar(value=merc.name) for merc in profile.mercenaries}
             enabled = {merc.slot: tk.BooleanVar(value=merc.enabled) for merc in profile.mercenaries}
             actions = {
                 merc.slot: tk.StringVar(value=ACTION_LABELS[merc.action])
+                for merc in profile.mercenaries
+            }
+            later_actions = {
+                merc.slot: tk.StringVar(value=LATER_ACTION_LABELS[merc.later_action])
                 for merc in profile.mercenaries
             }
             fallback = {
@@ -1001,8 +1021,35 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             targets = {
                 m.slot: tk.StringVar(value=TARGET_LABELS[m.target]) for m in profile.mercenaries
             }
-            body = ttk.Frame(frame)
-            body.pack(fill="x", pady=8)
+
+            def main_then_pass() -> None:
+                for slot, variable in enabled.items():
+                    variable.set(slot == 1)
+                pass_remaining.set(True)
+
+            ttk.Button(
+                frame, text="Solo Main + pasar las acciones restantes", command=main_then_pass
+            ).pack(anchor="w", pady=(8, 0))
+            viewport = ttk.Frame(frame)
+            viewport.pack(fill="both", expand=True, pady=8)
+            viewport.rowconfigure(0, weight=1)
+            viewport.columnconfigure(0, weight=1)
+            canvas = tk.Canvas(
+                viewport,
+                highlightthickness=0,
+                background=ttk.Style().lookup("TFrame", "background"),
+            )
+            canvas.grid(row=0, column=0, sticky="nsew")
+            vertical = ttk.Scrollbar(viewport, orient="vertical", command=canvas.yview)
+            vertical.grid(row=0, column=1, sticky="ns")
+            horizontal = ttk.Scrollbar(viewport, orient="horizontal", command=canvas.xview)
+            horizontal.grid(row=1, column=0, sticky="ew")
+            canvas.configure(xscrollcommand=horizontal.set, yscrollcommand=vertical.set)
+            body = ttk.Frame(canvas)
+            canvas.create_window((0, 0), window=body, anchor="nw")
+            body.bind(
+                "<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
             rows, priorities = {}, {}
 
             def render() -> None:
@@ -1035,6 +1082,15 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     width=15,
                 )
                 action.pack(side="left", padx=(0, 8))
+                ttk.Label(row, text="Después:").pack(side="left")
+                later = ttk.Combobox(
+                    row,
+                    textvariable=later_actions[slot],
+                    values=tuple(LATER_ACTION_LABELS.values()),
+                    state="readonly",
+                    width=16,
+                )
+                later.pack(side="left", padx=(4, 8))
                 alternate = ttk.Checkbutton(row, text="Básico alternativo", variable=fallback[slot])
                 alternate.pack(side="left", padx=(0, 8))
                 target_list = ttk.Combobox(
@@ -1047,18 +1103,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 target_list.pack(side="left", padx=4)
 
                 def update_fallback(
-                    event=None, slot=slot, alternate=alternate, target_list=target_list
+                    event=None, slot=slot, alternate=alternate, target_list=target_list, later=later
                 ) -> None:
-                    alternate.configure(
-                        state="disabled"
-                        if actions[slot].get() == ACTION_LABELS["basic"]
-                        else "normal"
-                    )
-                    target_list.configure(
-                        state="disabled"
-                        if actions[slot].get() == ACTION_LABELS["basic"]
-                        else "readonly"
-                    )
+                    magic = actions[slot].get() in [ACTION_LABELS[key] for key in "QWERT"]
+                    alternate.configure(state="normal" if magic else "disabled")
+                    target_list.configure(state="readonly" if magic else "disabled")
+                    later.configure(state="readonly" if magic else "disabled")
 
                 action.bind("<<ComboboxSelected>>", update_fallback)
                 update_fallback()
@@ -1103,10 +1153,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                                     for key, label in TARGET_LABELS.items()
                                     if label == targets[slot].get()
                                 ),
+                                next(
+                                    key
+                                    for key, label in LATER_ACTION_LABELS.items()
+                                    if label == later_actions[slot].get()
+                                ),
                             )
                             for slot in order
                         ),
                         first_turn.get(),
+                        pass_remaining=pass_remaining.get(),
                     )
                     self.persist_profile(self.configured_profile(updated))
                     self.load_profile()
@@ -1962,6 +2018,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             def refresh_actions(event=None) -> None:
                 actions = ["Ataque básico"]
                 source = source_choices.get(source_choice.get())
+                if live and source and live.selected_unit == source.address and live.enemies:
+                    actions.extend(ACTION_LABELS[key] for key in ("defend", "pass"))
                 if (
                     live
                     and source
@@ -1985,9 +2043,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     targets = (
                         live.enemies
                         if action_choice.get() == "Ataque básico"
+                        else (source_choices.get(source_choice.get()),)
+                        if action_choice.get() in (ACTION_LABELS["defend"], ACTION_LABELS["pass"])
                         else live.magic_targets
                     )
                     for unit in targets:
+                        if unit is None:
+                            continue
                         label = (
                             f"Tu equipo — {member_label(unit.member_slot)}"
                             if unit.world_slot == 1
@@ -2122,9 +2184,11 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     action = (
                         "select"
                         if select
-                        else "basic"
-                        if action_choice.get() == "Ataque básico"
-                        else action_choice.get()[-1]
+                        else next(
+                            key
+                            for key, label in ACTION_LABELS.items()
+                            if label == action_choice.get()
+                        )
                     )
                     trial = BattleTrial(live, source, None if select else target, action)
                     trial.validate()
@@ -2143,7 +2207,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 try:
                     result = try_battle_action(selected_session, selected_window, trial)
                     self.last_trial = result
-                    if not select and result["status"] not in (26, 32, 10, 11):
+                    if not select and result["status"] not in (26, 32, 51, 52, 10, 11):
                         self.battle_trials.discard(trial.key())
                     self.trial_unknown |= result["status"] in (10, 11)
                     last["combat_trial"] = result

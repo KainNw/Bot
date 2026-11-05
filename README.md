@@ -1,7 +1,15 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.23.0** guarda la configuración de cada
+con Auto Battle apagado. La versión **0.24.0** añade **Defender (G)** y **Pasar
+acción (F)** al perfil y a las pruebas individuales. **Solo Main + pasar las
+acciones restantes** permite que el Main ejecute su acción y después se pasen los
+miembros disponibles. Si todos los enemigos mueren, omite esos pases para dejar
+trabajar al NeoACA y al recolector. Se conserva el guardado por personaje. Las
+nuevas acciones necesitan comprobarse visualmente en el cliente; una cola no
+confirma el resultado. Consulta [defensa y pases](docs/defend-and-pass.md).
+
+Conserva el guardado de **0.23.0** de la configuración de cada
 personaje y la carga al reconocer su **nick** al conectar, aunque cambie el PID.
 Recuerda el último perfil, las órdenes de sus mercenarios, caza, botín, Speed y
 la opción de ejecutar turnos. Los ajustes de caza se guardan automáticamente;

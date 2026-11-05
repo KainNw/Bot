@@ -79,6 +79,26 @@ jobs:
           exit /b %errorlevel%
           "@ | Set-Content build-native.cmd -Encoding ascii
           Run-NativeBuildStep @('cmd', '/d', '/c', 'build-native.cmd')
+      - name: Verify defense and pass parsing on a non-game process
+        shell: pwsh
+        run: |
+          $stanceProbe = Get-Process -Id $PID
+          foreach ($stanceOperation in @('--battle-defend', '--battle-pass')) {
+            $stanceArguments = @(
+              $stanceOperation, '--pid', "$PID", '--created', "$($stanceProbe.StartTime.ToFileTimeUtc())",
+              '--window', '1', '--thread', '1', '--slot', '1', '--kind', '209',
+              '--serial', '8888', '--unique', '0', '--battle-manager', '65536',
+              '--battle-context', '65536', '--battle-client', '65536',
+              '--turn-number', '0', '--turn-tick', '1', '--mercenary', '1', '--enemy-member', '1',
+              '--source-unit', '65536', '--target-unit', '65536',
+              '--actor-kind', '209', '--actor-serial', '8888', '--actor-unique', '0'
+            )
+            & build/native/Release/AtlanticaBridge.exe @stanceArguments
+            if ($LASTEXITCODE -ne 4) {
+              throw "Stance parser returned $LASTEXITCODE; expected process/build rejection 4."
+            }
+          }
+          exit 0
       - name: Verify speed command parsing on a non-game process
         shell: pwsh
         run: |

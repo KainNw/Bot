@@ -95,7 +95,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 11; command.pid = pid;
+        command.magic = kMagic; command.version = 12; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -143,7 +143,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
                     << "," << shared->world_goal[2] << "]";
             } else std::cout << "null";
             std::cout << ",\"battle\":";
-            if (shared->operation >= BattleBasic && shared->operation <= BattleLoot) {
+            if (IsBattleOperation(shared->operation)) {
             std::cout << "{\"manager\":" << shared->battle_manager
                 << ",\"context\":" << shared->battle_context << ",\"client\":" << shared->battle_client
                 << ",\"turn_number\":" << shared->turn_number << ",\"turn_tick\":" << shared->turn_tick
@@ -279,6 +279,11 @@ static int SelfTest() {
     SharedCommand loot_response = {};
     cancelled.operation = BattleLoot;
     const int loot_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &loot_response, true) : 32;
+    SharedCommand defend_response = {}, pass_response = {};
+    cancelled.operation = BattleDefend;
+    const int defend_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &defend_response, true) : 32;
+    cancelled.operation = BattlePass;
+    const int pass_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &pass_response, true) : 32;
     SharedCommand stationary_response = {};
     cancelled.operation = StationaryAttack;
     const int stationary_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &stationary_response, true) : 32;
@@ -325,6 +330,8 @@ static int SelfTest() {
         && !select_code && select_response.result == Cancelled
         && !magic_code && magic_response.result == Cancelled
         && !loot_code && loot_response.result == Cancelled
+        && !defend_code && defend_response.result == Cancelled
+        && !pass_code && pass_response.result == Cancelled
         && !stationary_code && stationary_response.result == Cancelled
         && !speed_code && speed_response.result == Cancelled
         && !speed_restore_code && speed_restore_response.result == Cancelled
@@ -352,6 +359,7 @@ int wmain(int argc, wchar_t** argv) {
             if (key == L"--attack" || key == L"--probe" || key == L"--approach" || key == L"--stop-move"
                 || key == L"--native-attack" || key == L"--stop-native" || key == L"--battle-basic"
                 || key == L"--battle-select" || key == L"--battle-magic" || key == L"--battle-loot"
+                || key == L"--battle-defend" || key == L"--battle-pass"
                 || key == L"--stationary-attack" || key == L"--speed-apply" || key == L"--speed-restore"
                 || key == L"--clock-start" || key == L"--clock-stop" || key == L"--clock-status") {
                 if (operation) return 2;
@@ -360,6 +368,7 @@ int wmain(int argc, wchar_t** argv) {
                     : key == L"--native-attack" ? NativeAttack : key == L"--stop-native" ? StopNativePursuit
                     : key == L"--battle-basic" ? BattleBasic : key == L"--battle-select" ? BattleSelect
                     : key == L"--battle-magic" ? BattleMagic : key == L"--battle-loot" ? BattleLoot
+                    : key == L"--battle-defend" ? BattleDefend : key == L"--battle-pass" ? BattlePass
                     : key == L"--speed-apply" ? SpeedApply : key == L"--speed-restore" ? SpeedRestore
                     : key == L"--clock-start" ? ClockStart : key == L"--clock-stop" ? ClockStop
                     : key == L"--clock-status" ? ClockStatus : StationaryAttack;
@@ -469,8 +478,9 @@ int wmain(int argc, wchar_t** argv) {
             if (!command.route_player) return 2;
         } else if (command.operation == BattleSelect || speed_operation || clock_operation) {
             if (command.slot) return 2;
-        } else if (command.slot < (command.operation == BattleMagic ? 1u : 2u) || command.slot >= 450) return 2;
-        if (command.operation >= BattleBasic && command.operation <= BattleLoot) {
+        } else if (command.slot < (command.operation == BattleMagic || command.operation == BattleDefend
+            || command.operation == BattlePass ? 1u : 2u) || command.slot >= 450) return 2;
+        if (IsBattleOperation(command.operation)) {
             const auto expected_fields = command.operation == BattleSelect ? 0xebfu : 0xfffu;
             if (battle_fields != expected_fields || !command.battle_manager || !command.battle_context
                 || !command.battle_client || !command.source_unit || command.mercenary < 1 || command.mercenary > 9)

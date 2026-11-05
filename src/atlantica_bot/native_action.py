@@ -58,7 +58,30 @@ RESULTS = {
     35: "Esta habilidad usa una ruta especial todavía sin habilitar; no se solicitó la magia.",
     36: "El cliente encoló una búsqueda de botín. Comprueba la recogida en el juego.",
     37: "El cliente rechazó la búsqueda de botín sin envío.",
+    51: "El cliente encoló defensa. Comprueba el resultado en el juego.",
+    52: "El cliente encoló pasar la acción. Comprueba el siguiente mercenario o turno.",
+    53: "El cliente rechazó defender sin envío.",
+    54: "El cliente rechazó pasar la acción sin envío.",
 }
+
+BATTLE_OPERATIONS = (6, 7, 8, 9, 16, 17)
+OPERATION_NAMES = dict(
+    enumerate(
+        (
+            "probe",
+            "attack",
+            "approach",
+            "stop-move",
+            "native-attack",
+            "stop-native",
+            "battle-basic",
+            "battle-select",
+            "battle-magic",
+            "battle-loot",
+            "stationary-attack",
+        )
+    )
+) | {16: "battle-defend", 17: "battle-pass"}
 
 
 def bridge_path() -> Path:
@@ -308,7 +331,8 @@ def _try_action(
     ):
         raise DiagnosticError("La ventana no corresponde a la instancia conectada.")
     if candidate is not None and (
-        not (1 if operation == 8 else 2) <= candidate.slot < 450 or len(candidate.identity) != 3
+        not (1 if operation in (8, 16, 17) else 2) <= candidate.slot < 450
+        or len(candidate.identity) != 3
     ):
         raise DiagnosticError("Actualiza los candidatos antes de solicitar un ataque.")
     helper = bridge_path()
@@ -316,19 +340,7 @@ def _try_action(
         raise DiagnosticError("Esta copia no contiene el puente Windows de 32 bits compilado.")
     args = [
         str(helper),
-        (
-            "--probe",
-            "--attack",
-            "--approach",
-            "--stop-move",
-            "--native-attack",
-            "--stop-native",
-            "--battle-basic",
-            "--battle-select",
-            "--battle-magic",
-            "--battle-loot",
-            "--stationary-attack",
-        )[operation],
+        "--" + OPERATION_NAMES[operation],
         "--pid",
         str(window.pid),
         "--created",
@@ -454,7 +466,7 @@ def _try_action(
             args.extend(("--map", str(pursuit.map_id)))
     elif operation == 5:
         raise DiagnosticError("Falta la persecución propia que se desea detener.")
-    if operation in (6, 7, 8, 9):
+    if operation in BATTLE_OPERATIONS:
         if battle is None:
             raise DiagnosticError("Falta la lectura del turno de combate.")
         battle.validate()
@@ -528,8 +540,15 @@ def _try_action(
                 raise ValueError("Posición no válida")
             if struct.pack("<3f", *position) != struct.pack("<3f", *stationary_position):
                 raise ValueError("Respuesta de otra posición")
-        if operation in (6, 7, 8, 9):
-            outcomes = {6: {26, 30}, 7: {31, 33}, 8: {32, 33, 34, 35}, 9: {33, 36, 37}}[operation]
+        if operation in BATTLE_OPERATIONS:
+            outcomes = {
+                6: {26, 30},
+                7: {31, 33},
+                8: {32, 33, 34, 35},
+                9: {33, 36, 37},
+                16: {33, 51, 53},
+                17: {33, 52, 54},
+            }[operation]
             if code not in {4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 27, 28, 29} | outcomes:
                 raise ValueError("Resultado de otra operación")
             expected = {
@@ -564,8 +583,8 @@ def _try_action(
                 ):
                     raise ValueError("Barra de magia no válida")
         if code >= 15 and code not in (
-            {26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37}
-            if operation in (6, 7, 8, 9)
+            {26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 51, 52, 53, 54}
+            if operation in BATTLE_OPERATIONS
             else {15, 17, 18, 19, 20, 21}
             if operation == 2
             else {16, 17, 21}
@@ -606,19 +625,9 @@ def _try_action(
         ) from exc
     report["message"] = RESULTS[code]
     report["battle_confirmed"] = False
-    report["action"] = (
-        "probe",
-        "attack",
-        "approach",
-        "stop_movement",
-        "native_attack",
-        "stop_native_pursuit",
-        "battle_basic",
-        "battle_select",
-        "battle_magic",
-        "battle_loot",
-        "stationary_attack",
-    )[operation]
+    report["action"] = {3: "stop_movement", 5: "stop_native_pursuit"}.get(
+        operation, OPERATION_NAMES[operation].replace("-", "_")
+    )
     if operation == 10:
         report["stationary"] = {
             "requested_position": list(stationary_position),
@@ -629,10 +638,12 @@ def _try_action(
             report["message"] = (
                 "Solicitud directa encolada sin acercamiento; esperando confirmar combate."
             )
-    if operation in (6, 7, 8, 9):
+    if operation in BATTLE_OPERATIONS:
         report["attack_confirmed"] = False
         if operation == 9:
             report["loot_confirmed"] = False
+        if operation in (16, 17):
+            report["stance_confirmed"] = False
         report["target_identity"] = list(battle.target.identity) if battle.target else None
         report["actor_identity"] = list(battle.frame.context.actor_identity)
         report["requested_action"] = battle.action

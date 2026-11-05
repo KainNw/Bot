@@ -563,7 +563,7 @@ def battle_trial(bridge):
 
 def battle_reply(trial, status=None):
     if status is None:
-        status = {6: 26, 7: 31, 8: 32, 9: 36}[trial.operation]
+        status = {6: 26, 7: 31, 8: 32, 9: 36, 16: 51, 17: 52}[trial.operation]
     return {
         "pid": 200,
         "slot": trial.target.world_slot if trial.target else 0,
@@ -588,6 +588,49 @@ def battle_reply(trial, status=None):
             + [0] * (5 - len(trial.frame.magic_actions)),
         },
     }
+
+
+@pytest.mark.parametrize(
+    "action,code", [("defend", 51), ("pass", 52), ("defend", 53), ("pass", 54)]
+)
+def test_stance_uses_exact_own_source_and_one_window_bound_request(
+    bridge, battle_trial, monkeypatch, action, code
+):
+    session, window, _ = bridge
+    frame = replace(battle_trial.frame, selected_unit=battle_trial.source.address)
+    trial = BattleTrial(frame, battle_trial.source, battle_trial.source, action)
+    calls = []
+
+    def run(args, **_kwargs):
+        calls.append(args)
+        assert f"--battle-{action}" in args
+        assert args[args.index("--slot") + 1] == "1"
+        assert args[args.index("--source-unit") + 1] == args[args.index("--target-unit") + 1]
+        assert "--magic-action" not in args
+        return SimpleNamespace(returncode=0, stdout=json.dumps(battle_reply(trial, code)))
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    result = try_battle_action(session, window, trial)
+    assert len(calls) == 1 and result["status"] == code
+    assert result["requested_action"] == action
+    assert not result["stance_confirmed"] and not result["attack_confirmed"]
+
+
+@pytest.mark.parametrize("code", [1, 26, 32, 36, 52, 54])
+def test_defend_cannot_accept_a_response_from_another_action(
+    bridge, battle_trial, monkeypatch, code
+):
+    session, window, _ = bridge
+    frame = replace(battle_trial.frame, selected_unit=battle_trial.source.address)
+    trial = BattleTrial(frame, battle_trial.source, battle_trial.source, "defend")
+    monkeypatch.setattr(
+        "atlantica_bot.native_action.subprocess.run",
+        lambda *_a, **_k: SimpleNamespace(
+            returncode=0, stdout=json.dumps(battle_reply(trial, code))
+        ),
+    )
+    with pytest.raises(DiagnosticError, match="respuesta no válida"):
+        try_battle_action(session, window, trial)
 
 
 def test_battle_basic_sends_one_bound_request_with_distinct_member_and_enemy_slots(

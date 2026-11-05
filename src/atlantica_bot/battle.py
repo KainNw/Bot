@@ -125,7 +125,11 @@ class BattleTrial:
             return 8
         if self.action == "loot":
             return 9
-        raise DiagnosticError("Elige básico, selección, magia Q/W/E/R/T o recogida.")
+        if self.action == "defend":
+            return 16
+        if self.action == "pass":
+            return 17
+        raise DiagnosticError("Elige básico, selección, magia, defensa, pasar o recogida.")
 
     def validate(self) -> None:
         if (
@@ -139,11 +143,18 @@ class BattleTrial:
             if self.target is not None:
                 raise DiagnosticError("La selección no admite un objetivo de ataque.")
             return
+        if operation in (16, 17):
+            if self.target != self.source or not self.frame.enemies:
+                raise DiagnosticError(
+                    "Defender o pasar requiere el propio mercenario y enemigos vivos."
+                )
+            if self.frame.selected_unit != self.source.address:
+                raise DiagnosticError("Selecciona ese mercenario y vuelve a leer el combate.")
         targets = (
             self.frame.corpses
             if operation == 9
             else self.frame.magic_targets
-            if operation == 8
+            if operation in (8, 16, 17)
             else self.frame.enemies
         )
         if self.target not in targets:
@@ -171,7 +182,7 @@ class BattleTrial:
 
     def key(self) -> tuple:
         ctx = self.frame.context
-        return (
+        key = (
             ctx.pid,
             ctx.creation_time,
             ctx.context,
@@ -179,6 +190,9 @@ class BattleTrial:
             self.frame.turn_tick,
             self.source.member_slot,
         )
+        # Passing after a queued attack is a separate native command. Its own
+        # session ledger still permits only one pass per member and turn.
+        return (*key, "pass") if self.action == "pass" else key
 
     def arguments(self) -> dict[str, int]:
         ctx = self.frame.context
