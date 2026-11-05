@@ -674,6 +674,24 @@ def test_adapter_rejects_graphics_switch_between_snapshots():
     ce.api.release(b)
 
 
+def test_adapter_rejects_a_turn_becoming_ready_between_the_two_snapshots():
+    ce = FakeCE()
+    b = ce.api.bind()
+    ce.memory[ce.context + 0x6C74] = 0xFFFFFFFF
+
+    def changing_read(address):
+        value = ce.memory[address]
+        if address == ce.context + 0x6C74:
+            ce.memory[address] = 1
+        return value
+
+    ce.lua.globals().readInteger = changing_read
+    with pytest.raises(LuaError, match="cambiaron durante la lectura"):
+        ce.api.observe(b)
+    assert ce.api.lastObservation.classification == "unknown" and ce.rate_calls == []
+    ce.api.release(b)
+
+
 def test_replays_two_graphics_restorations_and_final_verified_map_exit():
     """Replay the reported field combinations through fake CE, not a game process."""
     ce = FakeCE()

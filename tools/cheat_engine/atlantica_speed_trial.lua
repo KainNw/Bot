@@ -595,7 +595,7 @@ function M.newCEAdapter()
       return {token = token, signature = token, detail = d}
     end
     local before, after = snapshot(), snapshot()
-    if before.signature ~= after.signature then
+    if before.signature ~= after.signature or before.token ~= after.token then
       api.lastObservation.classification = "unknown"
       error("Los objetos del combate cambiaron durante la lectura.")
     end
