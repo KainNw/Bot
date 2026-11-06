@@ -1,13 +1,20 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.25.0** añade una casilla aparte de
-**Speedhack general** en **Caza y botín**, con factor propio de **1,25× a 4×**.
-Al iniciar el bot aplica ese factor en mapa y combate del PID seleccionado;
-al parar vuelve a 1×. **Speed en combate** conserva su comportamiento de
+con Auto Battle apagado. La versión **0.26.0** activa **Speedhack general** al
+marcar la casilla, sin iniciar el bot, con factor propio de **1,25× a 4×**.
+Permanece en mapa y combate del PID seleccionado aunque pares el bot;
+al desmarcar o cerrar el panel vuelve a 1×. **Speed en combate** conserva su comportamiento de
 acelerar solo la batalla y volver a 1× en el mapa. Se elige un modo a la vez,
 conservando el factor de cada uno, y se guarda por personaje. Consulta
 [Speed del panel](docs/panel-speed.md).
+
+También añade **Auto Life · MP**: con el bot iniciado, consulta el maná del Main
+y de los mercenarios vivos fuera del combate. El umbral inicial es **50 %** y
+la tecla se elige entre **F1 y F9**, donde el usuario coloca Potion Life. Espera
+recuperación antes de reanudar la búsqueda y pausa solo Auto Life si no la observa,
+sin repetir una tecla incierta. La recuperación real de la poción necesita prueba
+en el cliente. Consulta [Auto Life](docs/auto-life.md).
 
 Conserva la corrección de **0.24.1**, que permite ejecutar las órdenes con
 la ventana del juego minimizada: elimina el rechazo que detenía el bot con código

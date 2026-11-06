@@ -96,7 +96,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 13; command.pid = pid;
+        command.magic = kMagic; command.version = 14; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -206,6 +206,19 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
                 << ",\"view\":" << shared->clock_view << ",\"address\":" << shared->clock_info_address
                 << ",\"token_lo\":" << shared->clock_token_lo << ",\"token_hi\":" << shared->clock_token_hi << "}";
             } else std::cout << "null";
+            if (command.operation == AutoLife) {
+                std::cout << ",\"auto_life\":{\"key\":" << shared->life_key
+                    << ",\"threshold\":" << shared->life_threshold
+                    << ",\"low_mask\":" << shared->life_low
+                    << ",\"unavailable_mask\":" << shared->life_unavailable << ",\"members\":[";
+                for (unsigned slot = 0; slot < 9; ++slot) {
+                    if (slot) std::cout << ",";
+                    std::cout << "{\"slot\":" << slot + 1 << ",\"kind\":" << shared->life_kinds[slot]
+                        << ",\"hp\":" << shared->life_hp[slot] << ",\"mp\":" << shared->life_mp[slot]
+                        << ",\"max_mp\":" << shared->life_max_mp[slot] << "}";
+                }
+                std::cout << "]}";
+            }
             std::cout << "}" << std::endl;
             }
         } else {
@@ -308,6 +321,9 @@ static int SelfTest() {
     SharedCommand general_start_response = {};
     cancelled.operation = ClockGeneralStart;
     const int general_start_code = cancellation ? Run(test.window, pid, cancelled, &general_start_response, true) : 32;
+    SharedCommand auto_life_response = {};
+    cancelled.operation = AutoLife;
+    const int auto_life_code = cancellation ? Run(test.window, pid, cancelled, &auto_life_response, true) : 32;
     cancelled.operation = ClockStop;
     ShowWindow(test.window, SW_MINIMIZE); EnableWindow(test.window, FALSE);
     const int clock_stop_code = cancellation ? Run(test.window, pid, cancelled, &clock_stop_response, true) : 32;
@@ -345,6 +361,7 @@ static int SelfTest() {
         && !speed_restore_code && speed_restore_response.result == Cancelled
         && !clock_start_code && clock_start_response.result == Cancelled
         && !general_start_code && general_start_response.result == Cancelled
+        && !auto_life_code && auto_life_response.result == Cancelled
         && !clock_stop_code && clock_stop_response.result == Unsupported
         && !clock_status_code && clock_status_response.result == Unsupported
         && !missing_code && missing_response.result == CancellationUnavailable
@@ -363,7 +380,7 @@ int wmain(int argc, wchar_t** argv) {
     try {
         DWORD pid = 0, expected_thread = 0; uint64_t created = 0, hwnd = 0; SharedCommand command = {};
         bool operation = false; unsigned goal_fields = 0, position_fields = 0, battle_fields = 0,
-            magic_fields = 0, speed_fields = 0, clock_fields = 0;
+            magic_fields = 0, speed_fields = 0, clock_fields = 0, life_fields = 0;
         for (int i = 1; i < argc; ++i) {
             std::wstring key(argv[i]);
             if (key == L"--attack" || key == L"--probe" || key == L"--approach" || key == L"--stop-move"
@@ -372,7 +389,7 @@ int wmain(int argc, wchar_t** argv) {
                 || key == L"--battle-defend" || key == L"--battle-pass"
                 || key == L"--stationary-attack" || key == L"--speed-apply" || key == L"--speed-restore"
                 || key == L"--clock-start" || key == L"--clock-stop" || key == L"--clock-status"
-                || key == L"--clock-general-start") {
+                || key == L"--clock-general-start" || key == L"--auto-life") {
                 if (operation) return 2;
                 command.operation = key == L"--attack" ? Attack : key == L"--probe" ? Probe
                     : key == L"--approach" ? Approach : key == L"--stop-move" ? StopMovement
@@ -383,6 +400,7 @@ int wmain(int argc, wchar_t** argv) {
                     : key == L"--speed-apply" ? SpeedApply : key == L"--speed-restore" ? SpeedRestore
                     : key == L"--clock-start" ? ClockStart : key == L"--clock-stop" ? ClockStop
                     : key == L"--clock-general-start" ? ClockGeneralStart
+                    : key == L"--auto-life" ? AutoLife
                     : key == L"--clock-status" ? ClockStatus : StationaryAttack;
                 operation = true; continue;
             }
@@ -448,6 +466,14 @@ int wmain(int argc, wchar_t** argv) {
                     command.magic_action = small; magic_fields |= 2;
                 }
                 else {
+                    const wchar_t* life_names[] = {L"--life-player", L"--life-info", L"--life-threshold", L"--life-key"};
+                    uint32_t* life_values[] = {&command.life_player, &command.life_info, &command.life_threshold, &command.life_key};
+                    bool life_matched = false;
+                    for (unsigned n = 0; n < 4; ++n) if (key == life_names[n]) {
+                        if (life_fields & (1u << n)) return 2;
+                        *life_values[n] = small; life_fields |= 1u << n; life_matched = true;
+                    }
+                    if (life_matched) continue;
                     const wchar_t* speed_names[] = {L"--speed-table", L"--speed-root0-0", L"--speed-root0-1",
                         L"--speed-root0-2", L"--speed-root0-3", L"--speed-root1-0", L"--speed-root1-1",
                         L"--speed-root1-2", L"--speed-root1-3", L"--speed-player", L"--speed-original-bits", L"--speed-requested-bits"};
@@ -480,6 +506,12 @@ int wmain(int argc, wchar_t** argv) {
         if (!pid || !hwnd || !created || !expected_thread || !operation) return 2;
         const bool speed_operation = command.operation == SpeedApply || command.operation == SpeedRestore;
         const bool clock_operation = IsClockOperation(command.operation);
+        if (command.operation == AutoLife) {
+            if (life_fields != 15 || battle_fields != 0xe00 || clock_fields || speed_fields
+                || magic_fields || goal_fields || position_fields || command.slot
+                || !command.life_player || !command.life_info || command.life_key < 1
+                || command.life_key > 9 || command.life_threshold < 1 || command.life_threshold > 100) return 2;
+        } else if (life_fields) return 2;
         if (clock_operation) {
             if (clock_fields != 7u || speed_fields || battle_fields || magic_fields || goal_fields || position_fields)
                 return 2;
@@ -488,7 +520,7 @@ int wmain(int argc, wchar_t** argv) {
             if (!command.route_player || !command.x || !command.y) return 2;
         } else if (command.operation == StopNativePursuit) {
             if (!command.route_player) return 2;
-        } else if (command.operation == BattleSelect || speed_operation || clock_operation) {
+        } else if (command.operation == BattleSelect || speed_operation || clock_operation || command.operation == AutoLife) {
             if (command.slot) return 2;
         } else if (command.slot < (command.operation == BattleMagic || command.operation == BattleDefend
             || command.operation == BattlePass ? 1u : 2u) || command.slot >= 450) return 2;

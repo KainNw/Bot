@@ -17,6 +17,7 @@ from .character_profiles import CharacterPreferences, CharacterProfileStore, cha
 from .clients import control_native_marker, marker_scope
 from .combat import SAMPLES_PER_STAGE, CombatCalibration, CombatDetector
 from .errors import DiagnosticError, SceneChanged, WindowUnavailable
+from .general_speed import GeneralSpeedWorker
 from .hunt_loop import HuntWorker
 from .hunting import control_hunting, marker_state
 from .identity import read_main_identity
@@ -64,6 +65,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.trial_unknown = False
             self.battle_trials = set()
             self.bot_worker: HuntWorker | None = None
+            self.general_speed_worker: GeneralSpeedWorker | None = None
+            self.general_speed_report = {}
             self.bot_report = {}
             self.closing = False
             self.calibrating = False
@@ -102,6 +105,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.general_speed_enabled = tk.BooleanVar(value=False)
             self.general_speed_rate = tk.StringVar(value="1.25")
             self.general_speed_status = tk.StringVar(value="Speed general desactivado")
+            self.auto_life_enabled = tk.BooleanVar(value=False)
+            self.auto_life_threshold = tk.StringVar(value="50")
+            self.auto_life_key = tk.StringVar(value="F1")
+            self.auto_life_status = tk.StringVar(value="Auto Life desactivado")
             self.bot_status = tk.StringVar(value="Bot detenido.")
             self.execution_status = tk.StringVar()
             self.pid = tk.StringVar()
@@ -141,6 +148,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.battle_speed_rate,
                 self.general_speed_enabled,
                 self.general_speed_rate,
+                self.auto_life_enabled,
+                self.auto_life_threshold,
+                self.auto_life_key,
                 self.world_attack_mode,
                 self.turns_enabled,
             ):
@@ -367,6 +377,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     return  # Name polling must never reload over edits or an active run.
                 if (
                     self.bot_worker is not None
+                    or self.general_speed_worker is not None
                     or self.calibrating
                     or self.bonus_open()
                     or self.speed_open()
@@ -484,6 +495,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ):
                 report = {}
             speed = report.get("speed", {})
+            general = self.general_speed_report
+            if self.session is not None and (general.get("pid"), general.get("creation_time")) == (
+                self.session.process.pid,
+                self.session.creation_time,
+            ):
+                speed = general
             rate = speed.get("current_rate")
             speed_label = (
                 f"Speed {rate:g}×"
@@ -640,6 +657,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     return
             self.flush_character_settings()
             self.stop_bot()
+            self.stop_general_speed()
             self.session = None
             self.directory = None
             self.start_button.configure(state="disabled")
@@ -680,11 +698,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 or self.bonus_open()
                 or self.speed_open()
             )
-            self.window_list.configure(state="disabled" if active else "readonly")
-            self.profile_list.configure(state="disabled" if active else "readonly")
+            target_active = active or self.general_speed_worker is not None
+            self.window_list.configure(state="disabled" if target_active else "readonly")
+            self.profile_list.configure(state="disabled" if target_active else "readonly")
             self.attack_mode_list.configure(state="disabled" if active else "readonly")
             self.battle_speed_list.configure(state="disabled" if active else "readonly")
-            self.general_speed_list.configure(state="disabled" if active else "readonly")
+            self.general_speed_list.configure(state="disabled" if target_active else "readonly")
+            self.auto_life_key_list.configure(state="disabled" if active else "readonly")
             for button in (
                 self.list_button,
                 self.pick_button,
@@ -699,10 +719,35 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.loot_check,
                 self.neo_loot_grace_entry,
                 self.battle_speed_check,
-                self.general_speed_check,
+                self.auto_life_check,
+                self.auto_life_threshold_entry,
                 self.save_hunt_button,
             ):
                 button.configure(state="disabled" if active else "normal")
+            for button in (
+                self.list_button,
+                self.pick_button,
+                self.browse_button,
+                self.connect_button,
+                self.pid_entry,
+                self.profile_button,
+                self.battle_speed_check,
+            ):
+                button.configure(state="disabled" if target_active else "normal")
+            general_blocked = (
+                self.closing
+                or self.calibrating
+                or self.bonus_open()
+                or self.speed_open()
+                or self.bot_worker is not None
+                and self.bot_worker.engine.profile.battle_speed_enabled
+            )
+            self.general_speed_check.configure(state="disabled" if general_blocked else "normal")
+            self.general_speed_apply.configure(
+                state="disabled"
+                if general_blocked or self.general_speed_worker is not None or self.session is None
+                else "normal"
+            )
             self.bot_stop_button.configure(
                 state="normal" if self.bot_worker is not None else "disabled"
             )
@@ -727,7 +772,17 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def speed_open(self) -> bool:
             return self.speed_window is not None and bool(self.speed_window.winfo_exists())
 
-        def require_idle_bot(self, *, allow_bonus: bool = False, allow_speed: bool = False) -> None:
+        def require_idle_bot(
+            self,
+            *,
+            allow_bonus: bool = False,
+            allow_speed: bool = False,
+            allow_general: bool = False,
+        ) -> None:
+            if self.general_speed_worker is not None and not allow_general:
+                raise DiagnosticError(
+                    "Desmarca Speed general y espera a 1× antes de cambiar el cliente o perfil."
+                )
             if self.speed_open() and not allow_speed:
                 raise DiagnosticError(
                     "Cierra la prueba de velocidad antes de iniciar o cambiar de cliente."
@@ -744,6 +799,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def target_is_editable(self) -> bool:
             if (
                 self.bot_worker is not None
+                or self.general_speed_worker is not None
                 or self.closing
                 or self.calibrating
                 or self.bonus_open()
@@ -766,7 +822,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
         def start_bot(self) -> None:
             try:
-                self.require_idle_bot()
+                self.require_idle_bot(allow_general=True)
                 self.refresh_main_identity(force=True)
                 session = self.session
                 if session is None:
@@ -822,6 +878,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     self.detail.set(str(exc))
 
         def poll_bot(self) -> None:
+            self.poll_general_speed()
             worker = self.bot_worker
             if worker is not None:
                 try:
@@ -836,6 +893,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     self.lock_target_controls()
                 if self.bot_report:
                     info = self.bot_report
+                    self.auto_life_status.set(
+                        info.get("auto_life", {}).get("message", "Desactivado")
+                    )
                     speed = info.get("speed", {})
                     current_rate = speed.get("current_rate")
                     speed_status = (
@@ -866,11 +926,21 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.root.after(100, self.poll_bot)
 
         def copy_bot(self) -> None:
-            if self.bot_report:
+            general = self.general_speed_report
+            if self.session is not None and (general.get("pid"), general.get("creation_time")) != (
+                self.session.process.pid,
+                self.session.creation_time,
+            ):
+                general = {}
+            if self.bot_report or general:
                 self.root.clipboard_clear()
                 self.root.clipboard_append(
                     json.dumps(
-                        {"tool_version": __version__, **self.bot_report},
+                        {
+                            "tool_version": __version__,
+                            **self.bot_report,
+                            **({"general_speed": general} if general else {}),
+                        },
                         ensure_ascii=False,
                         indent=2,
                     )
@@ -903,6 +973,15 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.battle_speed_rate.set(f"{profile.battle_speed_rate:g}")
                 self.general_speed_enabled.set(profile.general_speed_enabled)
                 self.general_speed_rate.set(f"{profile.general_speed_rate:g}")
+                self.auto_life_enabled.set(profile.auto_life_enabled)
+                self.auto_life_threshold.set(str(profile.auto_life_threshold))
+                self.auto_life_key.set(profile.auto_life_key)
+                if self.general_speed_worker is None:
+                    self.general_speed_status.set(
+                        "Configuración cargada; pulsa Aplicar para activar General."
+                        if profile.general_speed_enabled
+                        else "Speed general desactivado"
+                    )
                 self.world_attack_mode.set(WORLD_ATTACK_LABELS[profile.world_attack_mode])
                 count = sum(merc.enabled for merc in profile.mercenaries)
                 magic_count = sum(
@@ -929,6 +1008,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 radius = int(self.search_radius.get())
                 speed_rate = float(self.battle_speed_rate.get().strip().replace(",", "."))
                 general_rate = float(self.general_speed_rate.get().strip().replace(",", "."))
+                life_threshold = int(self.auto_life_threshold.get())
                 neo_grace = float(self.neo_loot_grace.get().strip().replace(",", "."))
             except ValueError as exc:
                 raise DiagnosticError(
@@ -945,6 +1025,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 battle_speed_rate=speed_rate,
                 general_speed_enabled=self.general_speed_enabled.get(),
                 general_speed_rate=general_rate,
+                auto_life_enabled=self.auto_life_enabled.get(),
+                auto_life_threshold=life_threshold,
+                auto_life_key=self.auto_life_key.get(),
                 world_attack_mode=next(
                     (
                         key
@@ -960,8 +1043,73 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def select_speed_mode(self, mode: str) -> None:
             if mode == "general" and self.general_speed_enabled.get():
                 self.battle_speed_enabled.set(False)
+                self.apply_general_speed()
+            elif mode == "general":
+                self.stop_general_speed()
             elif mode == "battle" and self.battle_speed_enabled.get():
                 self.general_speed_enabled.set(False)
+                self.stop_general_speed()
+
+        def apply_general_speed(self) -> None:
+            try:
+                if not self.general_speed_enabled.get():
+                    self.stop_general_speed()
+                    return
+                if self.general_speed_worker is not None:
+                    return
+                if self.closing or self.calibrating or self.bonus_open() or self.speed_open():
+                    raise DiagnosticError("Termina la operación actual antes de activar General.")
+                if (
+                    self.bot_worker is not None
+                    and self.bot_worker.engine.profile.battle_speed_enabled
+                ):
+                    raise DiagnosticError("Para el bot antes de cambiar el modo Speed en combate.")
+                if self.session is None:
+                    raise DiagnosticError("Conecta con el PID antes de activar Speed general.")
+                self.session.snapshot()
+                rate = float(self.general_speed_rate.get())
+                self.battle_speed_enabled.set(False)
+                worker = GeneralSpeedWorker(self.session, self.selected_window(self.session), rate)
+                self.general_speed_worker = worker
+                self.general_speed_report = dict(worker.report)
+                worker.start()
+                self.general_speed_status.set("Activando Speed general…")
+                self.lock_target_controls()
+            except (DiagnosticError, OSError, ValueError, RuntimeError) as exc:
+                if self.general_speed_worker is not None and not self.general_speed_worker.alive:
+                    self.general_speed_worker = None
+                self.general_speed_enabled.set(False)
+                self.general_speed_status.set(str(exc))
+                self.error(exc)
+
+        def stop_general_speed(self) -> None:
+            worker = self.general_speed_worker
+            if worker is not None:
+                try:
+                    worker.stop()
+                    self.general_speed_status.set("Restaurando 1×…")
+                except (DiagnosticError, OSError) as exc:
+                    self.general_speed_status.set(f"Restauración pendiente: {exc}")
+
+        def poll_general_speed(self) -> None:
+            worker = self.general_speed_worker
+            if worker is None:
+                return
+            self.general_speed_report = dict(worker.report)
+            info = self.general_speed_report
+            rate = info.get("current_rate")
+            self.general_speed_status.set(
+                (f"{rate:g}× · " if isinstance(rate, (int, float)) else "")
+                + info.get("message", "General")
+            )
+            if not worker.alive:
+                self.general_speed_worker = None
+                self.general_speed_enabled.set(False)
+                self.lock_target_controls()
+            self.bot_copy_button.configure(
+                state="normal", text=f"Copiar estado PID {worker.window.pid}"
+            )
+            self.render_identity()
 
         def save_hunt_options(self) -> None:
             try:
@@ -1618,10 +1766,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             ):
                 return
             self.closing = True
+            self.stop_general_speed()
             self.lock_target_controls()
 
             def finish_close() -> None:
-                if self.bot_worker is not None and self.bot_worker.alive:
+                if (self.bot_worker is not None and self.bot_worker.alive) or (
+                    self.general_speed_worker is not None and self.general_speed_worker.alive
+                ):
                     self.root.after(100, finish_close)
                 else:
                     self.root.destroy()
@@ -2679,9 +2830,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.show_members(load=False)
         panel.calibrate_combat()
         panel.calibration_window.destroy()
-        from .gui_smoke import check_character_settings
+        from .gui_smoke import check_character_settings, check_general_speed_controls
 
         check_character_settings(panel)
+        check_general_speed_controls(panel)
         panel.session = None
         panel.root.update_idletasks()
         panel.toggle_advanced()

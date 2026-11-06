@@ -140,6 +140,15 @@ jobs:
             }
           }
           exit 0
+      - name: Verify Auto Life parsing on a non-game process
+        shell: pwsh
+        run: |
+          $lifeProbe = Get-Process -Id $PID
+          & build/native/Release/AtlanticaBridge.exe --auto-life --pid "$PID" --created "$($lifeProbe.StartTime.ToFileTimeUtc())" --window 1 --thread 1 --life-player 65536 --life-info 65536 --life-key 9 --life-threshold 50 --actor-kind 209 --actor-serial 8888 --actor-unique 0
+          if ($LASTEXITCODE -ne 4) {
+            throw "Auto Life parser returned $LASTEXITCODE; expected process/build rejection 4."
+          }
+          exit 0
       - name: Build executable
         run: >-
           uv run --frozen --group build pyinstaller

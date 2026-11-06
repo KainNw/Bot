@@ -251,16 +251,50 @@ def _hunting(p) -> None:
     )
     p.general_speed_list.pack(side="left", padx=8)
     ttk.Label(row, text="×").pack(side="left")
+    p.general_speed_apply = ttk.Button(row, text="Aplicar", command=p.apply_general_speed)
+    p.general_speed_apply.pack(side="left", padx=(8, 0))
     ttk.Label(
         body, textvariable=p.general_speed_status, style="Accent.TLabel", wraplength=370
     ).pack(anchor="w", pady=(8, 4))
     ttk.Label(
         body,
-        text="Mapa y combate del PID seleccionado. Se aplica al iniciar el bot y vuelve "
-        "a 1× al pararlo. Un modo de Speed a la vez.",
+        text="Se activa al marcar o pulsar Aplicar, sin iniciar el bot. Desmarca para volver "
+        "a 1×. Parar bot mantiene General; cerrar el panel lo desactiva.",
         style="Caption.TLabel",
         wraplength=370,
     ).pack(anchor="w")
+    life, body = card(extras, "Auto Life · MP")
+    life.pack(fill="x", pady=(14, 0))
+    p.auto_life_check = ttk.Checkbutton(
+        body, text="Recuperar maná del equipo fuera de combate", variable=p.auto_life_enabled
+    )
+    p.auto_life_check.pack(anchor="w")
+    row = ttk.Frame(body)
+    row.pack(fill="x", pady=8)
+    ttk.Label(row, text="MP menor de").pack(side="left")
+    p.auto_life_threshold_entry = ttk.Spinbox(
+        row, from_=1, to=100, textvariable=p.auto_life_threshold, width=5
+    )
+    p.auto_life_threshold_entry.pack(side="left", padx=6)
+    ttk.Label(row, text="% · Tecla").pack(side="left")
+    p.auto_life_key_list = ttk.Combobox(
+        row,
+        textvariable=p.auto_life_key,
+        values=tuple(f"F{i}" for i in range(1, 10)),
+        state="readonly",
+        width=5,
+    )
+    p.auto_life_key_list.pack(side="left", padx=6)
+    ttk.Label(body, textvariable=p.auto_life_status, style="Accent.TLabel", wraplength=370).pack(
+        anchor="w"
+    )
+    ttk.Label(
+        body,
+        text="Coloca Potion Life en esa tecla. Con el bot activo, vigila al Main y "
+        "mercenarios vivos. Si no observa recuperación, pausa Auto Life sin repetir la tecla.",
+        style="Caption.TLabel",
+        wraplength=370,
+    ).pack(anchor="w", pady=(6, 0))
     loot, body = card(extras, "Botín y bonus")
     loot.pack(fill="both", expand=True, pady=(14, 0))
     p.loot_check = ttk.Checkbutton(

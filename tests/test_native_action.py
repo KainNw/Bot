@@ -91,6 +91,50 @@ def test_one_request_targets_only_selected_pid_window_creation_and_identity(brid
     assert result["battle_confirmed"] is False
 
 
+@pytest.mark.parametrize("status", [55, 56, 57, 58])
+def test_auto_life_request_keeps_window_binding_and_selected_function_key(
+    bridge, monkeypatch, status
+):
+    from atlantica_bot.native_action import _request
+
+    session, window, _ = bridge
+    calls = []
+    fields = {
+        "life-player": 65536,
+        "life-info": 131072,
+        "life-key": 9,
+        "life-threshold": 50,
+        "actor-kind": 209,
+        "actor-serial": 8888,
+        "actor-unique": 0,
+    }
+
+    def run(args, **kwargs):
+        calls.append(args)
+        for key, value in fields.items():
+            assert args[args.index("--" + key) + 1] == str(value)
+        assert args[args.index("--pid") + 1] == "200"
+        assert args[args.index("--window") + 1] == str(window.handle)
+        assert "--slot" not in args and "--auto-life" in args
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "pid": 200,
+                    "slot": 0,
+                    "status": status,
+                    "thread_id": 1234,
+                    "exception": 0,
+                    "operation": 19,
+                }
+            ),
+        )
+
+    monkeypatch.setattr("atlantica_bot.native_action.subprocess.run", run)
+    report = _request(session, window, None, operation=19, auto_life=fields)
+    assert len(calls) == 1 and report["status"] == status
+
+
 @pytest.mark.parametrize("status", [1, 2, 17, 18, 20])
 def test_stationary_request_binds_far_target_source_position_and_pid_without_movement(
     bridge, monkeypatch, status

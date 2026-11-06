@@ -320,7 +320,11 @@ class GeneralNativeClock(NativeClock):
     mode = "general"
     start_argument = "--clock-general-start"
     start_operation = 18
-    reason_labels = REASONS | {12: "Speed general activo", 13: "Esperando datos del cliente; 1×"}
+    reason_labels = REASONS | {
+        7: "Speed general desactivado",
+        12: "Speed general activo",
+        13: "Esperando datos del cliente; 1×",
+    }
     start_message = "Speed general activo"
     start_error = "No se confirmó el inicio del Speed general."
 

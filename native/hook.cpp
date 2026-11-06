@@ -1,5 +1,6 @@
 #include "protocol.h"
 #include "clock_control.h"
+#include "auto_life.h"
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -576,6 +577,11 @@ static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation, HWND window) {
     }
     if (IsCancelled(cancellation)) return Cancelled;
     if (!Supported()) return Unsupported;
+    if (cmd->operation == AutoLife) {
+        if (!HexAnchor(0x0044761a, "56578b7c240c8bf185ff744a68700100006a0056e8b3b88800")
+            || !HexAnchor(0x00449ae8, "5581ec480500008d6c24fca108b06f0433c5898548050000")) return Unsupported;
+        return AutoLifeExecute(cmd, cancellation, window);
+    }
     if (cmd->operation == SpeedApply || cmd->operation == SpeedRestore)
         return InvokeSpeed(cmd, cancellation);
     const auto owner = Read<uint32_t>(0x04a9290c);
@@ -765,7 +771,7 @@ extern "C" LRESULT CALLBACK AtlanticaHookProc(int code, WPARAM removed, LPARAM d
                 if (mapping) {
                     auto cmd = static_cast<SharedCommand*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedCommand)));
                     if (cmd) {
-                        if (cmd->magic == kMagic && cmd->version == 13 && cmd->pid == pid
+                        if (cmd->magic == kMagic && cmd->version == 14 && cmd->pid == pid
                             && cmd->nonce_lo == msg->wParam && cmd->nonce_hi == static_cast<DWORD>(msg->lParam)
                             && InterlockedCompareExchange(&cmd->state, 2, 1) == 1) {
                             cmd->thread_id = GetCurrentThreadId();

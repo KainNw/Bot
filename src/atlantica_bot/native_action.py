@@ -62,6 +62,10 @@ RESULTS = {
     52: "El cliente encoló pasar la acción. Comprueba el siguiente mercenario o turno.",
     53: "El cliente rechazó defender sin envío.",
     54: "El cliente rechazó pasar la acción sin envío.",
+    55: "Auto Life: maná consultado sin pulsar una tecla.",
+    56: "Auto Life: acceso rápido enviado; esperando recuperación de maná.",
+    57: "Auto Life: esperando el mapa y el personaje preparados.",
+    58: "Auto Life: cambió el personaje; no se pulsó una tecla.",
 }
 
 BATTLE_OPERATIONS = (6, 7, 8, 9, 16, 17)
@@ -81,7 +85,7 @@ OPERATION_NAMES = dict(
             "stationary-attack",
         )
     )
-) | {16: "battle-defend", 17: "battle-pass"}
+) | {16: "battle-defend", 17: "battle-pass", 19: "auto-life"}
 
 
 def bridge_path() -> Path:
@@ -274,6 +278,7 @@ def _request(
     pursuit: NativePursuit | None = None,
     battle: BattleTrial | None = None,
     stationary_position: tuple[float, float, float] | None = None,
+    auto_life: dict | None = None,
 ) -> dict:
     with BotLease(session.process.pid):
         signal = cancellation or Cancellation(session.process.pid)
@@ -290,6 +295,7 @@ def _request(
                 pursuit=pursuit,
                 battle=battle,
                 stationary_position=stationary_position,
+                auto_life=auto_life,
             )
         finally:
             if cancellation is None:
@@ -312,6 +318,7 @@ def _try_action(
     pursuit: NativePursuit | None,
     battle: BattleTrial | None,
     stationary_position: tuple[float, float, float] | None,
+    auto_life: dict | None = None,
 ) -> dict:
     """Issue one explicit request on the selected window's thread; never retry or move input."""
     if sys.platform != "win32":
@@ -363,6 +370,11 @@ def _try_action(
                 str(candidate.identity[2]),
             )
         )
+    if operation == 19:
+        if auto_life is None:
+            raise DiagnosticError("Falta la identidad y la configuración de Auto Life.")
+        for key, value in auto_life.items():
+            args.extend(("--" + key, str(value)))
     if operation == 2:
         if origin is None or candidate is None or route is None:
             raise DiagnosticError(
@@ -595,6 +607,8 @@ def _try_action(
             if operation == 5
             else {17, 18, 20}
             if operation == 10
+            else {55, 56, 57, 58}
+            if operation == 19
             else {20}
         ):
             raise ValueError("Resultado de otra operación")

@@ -8,9 +8,10 @@ from collections import deque
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 
+from .auto_life import AutoLife
 from .battle import BattleFrame, read_battle_frame
 from .clients import ClientWindow
-from .clock_control import GeneralNativeClock, NativeClock
+from .clock_control import NativeClock
 from .combat import CombatDetector
 from .errors import BeforeSendChanged, DiagnosticError, SceneChanged, WindowUnavailable
 from .ipc import BotLease, Cancellation, SpeedLease
@@ -66,6 +67,7 @@ class HuntEngine:
     speed: dict = field(
         default_factory=lambda: {"enabled": False, "current_rate": 1.0, "message": "Desactivado"}
     )
+    auto_life: dict = field(default_factory=lambda: {"enabled": False})
     running: bool = True
     phase: str = "waiting_map"
     message: str = "Esperando mapa."
@@ -1184,6 +1186,7 @@ class HuntEngine:
             "profile": self.profile.summary(),
             "combat": dict(self.combat),
             "speed": dict(self.speed),
+            "auto_life": dict(self.auto_life),
             "battle_entry": dict(self.battle_entry),
             "last_read_error": dict(self.last_read_error),
             "manual_control": {
@@ -1251,6 +1254,8 @@ class HuntWorker:
         if self.turns is not None:
             self.engine.combat = self.turns.summary()
         self.seen_map = False
+        self.auto_life = AutoLife(self.engine.profile)
+        self.engine.auto_life = dict(self.auto_life.report)
         self.events: queue.Queue[dict] = queue.Queue(maxsize=20)
         self.stop_event = threading.Event()
         self.cancellation: Cancellation | None = None
@@ -1312,7 +1317,7 @@ class HuntWorker:
     def _run(self) -> None:
         try:
             with ExitStack() as leases:
-                if self.engine.profile.speed_enabled:
+                if self.engine.profile.battle_speed_enabled:
                     try:
                         leases.enter_context(SpeedLease(self.window.pid))
                     except (DiagnosticError, OSError) as exc:
@@ -1324,17 +1329,13 @@ class HuntWorker:
                 try:
                     if self.stop_event.is_set():
                         signal.cancel()
-                    if self.engine.profile.speed_enabled and not self.stop_event.is_set():
+                    if self.engine.profile.battle_speed_enabled and not self.stop_event.is_set():
                         try:
-                            general = self.engine.profile.general_speed_enabled
-                            clock_type = GeneralNativeClock if general else NativeClock
-                            self.clock = clock_type(
+                            self.clock = NativeClock(
                                 self.session,
                                 self.window,
                                 signal,
-                                self.engine.profile.general_speed_rate
-                                if general
-                                else self.engine.profile.battle_speed_rate,
+                                self.engine.profile.battle_speed_rate,
                             )
                             self.clock.start()
                             self.engine.speed = dict(self.clock.report)
@@ -1463,6 +1464,14 @@ class HuntWorker:
         )
         if self.engine.detector.classify(observation) == "map":
             self.seen_map = True
+            if not (self.engine.pending_target or self.engine.pursuit or self.engine.route):
+                pause = self.auto_life.tick(
+                    self.session, self.window, self.cancellation, time.monotonic()
+                )
+                self.engine.auto_life = dict(self.auto_life.report)
+                if pause:
+                    self.engine.message = self.auto_life.report["message"]
+                    return
             if self.turns is not None:
                 self.turns.note_map(time.monotonic())
         if self.engine.observe(observation, time.monotonic()):

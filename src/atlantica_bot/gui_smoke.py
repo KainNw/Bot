@@ -123,17 +123,26 @@ def check_character_settings(panel) -> None:
         assert saved.neo_loot_grace_seconds == 0.25 and saved.attack_delay_seconds == 1.5
         assert first_store.load_preferences() == CharacterPreferences(2, True)
         assert not panel.general_speed_enabled.get()
-        panel.general_speed_check.invoke()
+        with patch.object(panel, "apply_general_speed") as apply_speed:
+            panel.general_speed_check.invoke()
+            apply_speed.assert_called_once()
         panel.general_speed_rate.set("2")
+        panel.auto_life_enabled.set(True)
+        panel.auto_life_threshold.set("45")
+        panel.auto_life_key.set("F9")
         panel.flush_character_settings()
         assert panel.general_speed_enabled.get() and not panel.battle_speed_enabled.get()
         assert first_store.load(2).general_speed_rate == 2
         assert first_store.load(2).battle_speed_rate == 3
+        assert first_store.load(2).auto_life_enabled
+        assert first_store.load(2).auto_life_threshold == 45
+        assert first_store.load(2).auto_life_key == "F9"
         panel.battle_speed_check.invoke()
         panel.flush_character_settings()
         assert panel.battle_speed_enabled.get() and not panel.general_speed_enabled.get()
         assert panel.battle_speed_rate.get() == "3" and panel.general_speed_rate.get() == "2"
-        panel.general_speed_check.invoke()
+        with patch.object(panel, "apply_general_speed"):
+            panel.general_speed_check.invoke()
         panel.flush_character_settings()
 
         # Invalid input keeps the previous file, and name polling preserves live edits.
@@ -166,6 +175,8 @@ def check_character_settings(panel) -> None:
         assert panel.profile.mercenaries == members
         assert panel.profile.pass_remaining
         assert panel.general_speed_enabled.get() and panel.general_speed_rate.get() == "2"
+        assert panel.auto_life_enabled.get() and panel.auto_life_key.get() == "F9"
+        assert panel.auto_life_threshold.get() == "45"
         assert not panel.battle_speed_enabled.get() and panel.battle_speed_rate.get() == "3"
         assert panel.bot_worker is None and panel.speed_experiment is None
 
@@ -218,3 +229,62 @@ def check_character_settings(panel) -> None:
         panel.session = None
         panel.template_profile_store = original_templates
         panel.sync_identity()
+
+
+def check_general_speed_controls(panel) -> None:
+    """The real checkbox must start a clock with no hunting worker or game access."""
+    calls = []
+
+    class Worker:
+        def __init__(self, session, window, rate):
+            self.window = window
+            self.alive = False
+            self.report = {
+                "pid": window.pid,
+                "creation_time": session.creation_time,
+                "mode": "general",
+                "enabled": True,
+                "armed": True,
+                "current_rate": rate,
+                "message": "General activo",
+            }
+
+        def start(self):
+            calls.append("start general")
+            self.alive = True
+
+        def stop(self):
+            calls.append("stop general")
+            self.alive = False
+            self.report.update(armed=False, current_rate=1, message="Velocidad normal")
+
+    original = panel.session
+    panel.session = SimpleNamespace(
+        process=SimpleNamespace(pid=777),
+        creation_time=888,
+        snapshot=lambda: None,
+    )
+    window = SimpleNamespace(pid=777, handle=0x1234, thread_id=500)
+    try:
+        with (
+            patch("atlantica_bot.gui.GeneralSpeedWorker", Worker),
+            patch.object(panel, "selected_window", return_value=window),
+        ):
+            panel.general_speed_enabled.set(False)
+            panel.battle_speed_enabled.set(False)
+            panel.lock_target_controls()
+            panel.general_speed_check.invoke()
+            assert panel.bot_worker is None and panel.general_speed_worker.alive
+            panel.poll_general_speed()
+            assert "General activo" in panel.general_speed_status.get()
+            panel.stop_bot()
+            assert panel.general_speed_worker.alive and calls == ["start general"]
+            panel.general_speed_check.invoke()
+            panel.poll_general_speed()
+            assert panel.general_speed_worker is None and panel.bot_worker is None
+            assert panel.general_speed_report["current_rate"] == 1
+            assert calls == ["start general", "stop general"]
+    finally:
+        panel.session = original
+        panel.general_speed_report = {}
+        panel.lock_target_controls()

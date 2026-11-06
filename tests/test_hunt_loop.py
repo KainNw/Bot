@@ -798,7 +798,7 @@ def test_worker_owns_speed_until_cancelled_and_restore_is_confirmed(
 
     class Clock:
         def __init__(self, session, window, signal, rate):
-            assert rate == (2.0 if general else 1.25)
+            assert rate == 1.25
             self.signal, self.attempted = signal, True
             self.report = {"armed": True, "current_rate": 1.0, "message": "Esperando combate"}
 
@@ -830,9 +830,6 @@ def test_worker_owns_speed_until_cancelled_and_restore_is_confirmed(
         pytest.fail("The unselected Speed mode must not start")
 
     monkeypatch.setattr("atlantica_bot.hunt_loop.NativeClock", other_mode if general else Clock)
-    monkeypatch.setattr(
-        "atlantica_bot.hunt_loop.GeneralNativeClock", Clock if general else other_mode
-    )
     worker = HuntWorker(
         SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100)),
         ClientWindow(100, 0x1234, "Atlantica"),
@@ -847,7 +844,7 @@ def test_worker_owns_speed_until_cancelled_and_restore_is_confirmed(
     monkeypatch.setattr(worker, "_iteration", lambda: worker.engine.stop("Finished"))
     worker._run()
     assert not worker.engine.running and not worker.engine.needs_reconnect
-    if enabled:
+    if enabled and not general:
         assert lifecycle[:4] == ["enter speed", "enter bot", "enter cancel", "start speed"]
         assert lifecycle.count("stop speed") == 1
         assert lifecycle[-3:] == ["exit cancel", "exit bot", "exit speed"]

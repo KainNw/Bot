@@ -202,6 +202,7 @@ def _bot_context(session: GameSession, report: dict | None) -> dict | None:
         "transport",
         "approach",
         "combat",
+        "auto_life",
         "manual_control",
         "battle_entry",
         "last_read_error",

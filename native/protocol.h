@@ -5,13 +5,13 @@
 
 constexpr uint32_t kMagic = 0x414F5031;
 constexpr uint32_t kMaxSearchRadius = 500;
-constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.13";
+constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.14";
 enum Operation : uint32_t {
     Probe = 0, Attack = 1, Approach = 2, StopMovement = 3,
     NativeAttack = 4, StopNativePursuit = 5, BattleBasic = 6,
     BattleSelect = 7, BattleMagic = 8, BattleLoot = 9, StationaryAttack = 10,
     SpeedApply = 11, SpeedRestore = 12, ClockStart = 13, ClockStop = 14, ClockStatus = 15,
-    BattleDefend = 16, BattlePass = 17, ClockGeneralStart = 18
+    BattleDefend = 16, BattlePass = 17, ClockGeneralStart = 18, AutoLife = 19
 };
 inline bool IsClockStart(uint32_t operation) {
     return operation == ClockStart || operation == ClockGeneralStart;
@@ -41,7 +41,8 @@ enum Result : uint32_t {
     SpeedRetired = 42, ClockArmed = 43, ClockStopped = 44, ClockReported = 45,
     ClockBusy = 46, ClockRejected = 47, ClockExternal = 48, ClockUnavailable = 49,
     ClockOldPanel = 50, BattleDefendQueued = 51, BattlePassQueued = 52,
-    BattleDefendNotEligible = 53, BattlePassNotEligible = 54
+    BattleDefendNotEligible = 53, BattlePassNotEligible = 54,
+    LifeChecked = 55, LifeKeySent = 56, LifeNotReady = 57, LifeChanged = 58
 };
 struct SharedCommand {
     uint32_t magic, version, pid, nonce_lo, nonce_hi, operation, slot;
@@ -70,8 +71,11 @@ struct SharedCommand {
     uint32_t clock_armed, clock_current_bits, clock_reason, clock_apply_count;
     uint32_t clock_restore_count, clock_error, clock_view;
     uint32_t clock_info_address, clock_token_lo, clock_token_hi;
+    uint32_t life_player, life_info, life_threshold, life_key, life_low, life_unavailable;
+    int32_t life_mp[9], life_max_mp[9], life_hp[9];
+    uint32_t life_kinds[9];
 };
-static_assert(sizeof(SharedCommand) == 532, "IPC layout must match the x86 helper and hook");
+static_assert(sizeof(SharedCommand) == 700, "IPC layout must match the x86 helper and hook");
 struct ClockTelemetry {
     uint32_t magic, version, pid, owner_pid, created_lo, created_hi, token_lo, token_hi;
     volatile LONG sequence;

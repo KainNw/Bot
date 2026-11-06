@@ -10,15 +10,17 @@ factor de ambos. Cargar un perfil o conectar un personaje no activa relojes.
 ## Speedhack general
 
 1. Conecta con el personaje y entra en **Caza y botín → Speedhack general**.
-2. Marca **Activar Speed general**, elige **1,25×, 1,5×, 2×, 3× o 4×** y pulsa
-   **Iniciar bot**. El factor se aplica al cliente seleccionado en mapa y combate.
-3. **Parar bot** o cerrar el panel solicita **1×**. Para cambiar de modo o factor,
-   para el bot, cambia la configuración e inícialo otra vez.
+2. Desde **0.26.0**, elige **1,25×, 1,5×, 2×, 3× o 4×** y marca
+   **Activar Speed general**. Se aplica inmediatamente, sin pulsar Iniciar bot.
+   Si la casilla viene marcada de un perfil cargado, pulsa **Aplicar**.
+3. **Parar bot** conserva General. Desmarca la casilla para volver a **1×**.
+   Para cambiar de factor, desmarca, espera la confirmación, cambia y vuelve a marcar.
+   Cerrar el panel o perder su proceso propietario también solicita **1×**.
 
 General no vuelve a 1× solo por salir del combate y no usa el límite por batalla.
 Su controlador mantiene la comprobación del personaje y del proceso propietario.
 Si temporalmente no puede leer el cliente, pasa a 1× y espera datos válidos para
-reanudar mientras el bot siga activo. Un cambio de personaje o la cancelación
+reanudar mientras General siga activado. Un cambio de personaje o la cancelación
 retiran el control. No afecta a otros PID ni inicia un segundo controlador.
 
 El factor general es independiente del de combate. Por ejemplo, puedes conservar
@@ -56,8 +58,9 @@ componentes nativos. Si actualizas a una compilación diferente mientras ese
 cliente conserva los relojes de la anterior, el panel pide reiniciar ese juego
 antes de activar el Speed nuevo.
 
-Ambos modos solicitan **1×** al parar, al cerrar el panel o al perder su proceso
-propietario. En el modo de combate, una lectura inválida retira el control.
+Ambos modos solicitan **1×** al desactivar su propio control, al cerrar el panel
+o al perder su proceso propietario. Parar bot retira el modo de combate, mientras
+que General tiene una cancelación independiente. En el modo de combate, una lectura inválida retira el control.
 Un cambio gráfico o de preparación del
 combate devuelve 1× y espera el mapa antes de volver a acelerar. También tiene
 un límite de **60 segundos reales por combate**; no reaplica el factor durante

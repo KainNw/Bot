@@ -90,6 +90,9 @@ class BotProfile:
     pass_remaining: bool = False
     general_speed_enabled: bool = False
     general_speed_rate: float = 1.25
+    auto_life_enabled: bool = False
+    auto_life_threshold: int = 50
+    auto_life_key: str = "F1"
 
     @property
     def speed_enabled(self) -> bool:
@@ -136,6 +139,16 @@ class BotProfile:
         if self.general_speed_enabled and self.battle_speed_enabled:
             raise DiagnosticError("Elige un modo de Speed: general o solo combate.")
         if (
+            type(self.auto_life_enabled) is not bool
+            or type(self.auto_life_threshold) is not int
+            or not 1 <= self.auto_life_threshold <= 100
+            or type(self.auto_life_key) is not str
+            or self.auto_life_key not in tuple(f"F{i}" for i in range(1, 10))
+        ):
+            raise DiagnosticError(
+                "Auto Life requiere un umbral de MP de 1–100 % y una tecla F1–F9."
+            )
+        if (
             type(self.world_attack_mode) is not str
             or self.world_attack_mode not in WORLD_ATTACK_LABELS
         ):
@@ -167,7 +180,7 @@ class BotProfile:
 
     def summary(self) -> dict:
         return {
-            "schema_version": 9,
+            "schema_version": 10,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "magic_first_turn_only": self.magic_first_turn_only,
@@ -181,6 +194,9 @@ class BotProfile:
             "pass_remaining": self.pass_remaining,
             "general_speed_enabled": self.general_speed_enabled,
             "general_speed_rate": self.general_speed_rate,
+            "auto_life_enabled": self.auto_life_enabled,
+            "auto_life_threshold": self.auto_life_threshold,
+            "auto_life_key": self.auto_life_key,
             "turn_execution_available": True,
         }
 
@@ -219,7 +235,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9)
+                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -249,6 +265,9 @@ class ProfileStore:
                 payload["pass_remaining"] if payload["schema_version"] >= 8 else False,
                 payload["general_speed_enabled"] if payload["schema_version"] >= 9 else False,
                 payload["general_speed_rate"] if payload["schema_version"] >= 9 else 1.25,
+                payload["auto_life_enabled"] if payload["schema_version"] >= 10 else False,
+                payload["auto_life_threshold"] if payload["schema_version"] >= 10 else 50,
+                payload["auto_life_key"] if payload["schema_version"] >= 10 else "F1",
             )
             profile.validate()
             return profile
