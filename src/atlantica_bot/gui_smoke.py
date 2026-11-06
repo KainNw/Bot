@@ -12,6 +12,61 @@ from .identity import MainIdentity
 from .profiles import WORLD_ATTACK_LABELS, BotProfile, ProfileStore
 
 
+def check_tbs_research_controls(panel) -> None:
+    from zipfile import ZipFile
+
+    from .tbs import TBS_STAGES
+
+    original_session = panel.session
+    session = SimpleNamespace(process=SimpleNamespace(pid=123), creation_time=777)
+    panel.session = session
+    sample = {"pid": 123, "creation_time": 777, "route": "bf_context_b_candidate"}
+    try:
+        with (
+            patch.object(panel, "error") as error,
+            patch("atlantica_bot.tbs_view.capture_tbs_snapshot", return_value=sample),
+            patch("atlantica_bot.tbs_view.read_tbs_code", return_value=([], [])),
+            patch("atlantica_bot.gui.HuntWorker") as hunt,
+        ):
+            panel.capture_tbs()
+            assert panel.tbs_open()
+            assert str(panel.bot_start_button.cget("state")) == "disabled"
+            assert str(panel.profile_list.cget("state")) == "disabled"
+            assert str(panel.general_speed_check.cget("state")) == "disabled"
+            assert str(panel.independent_battle_speed_check.cget("state")) == "disabled"
+            window = panel.tbs_window
+            panel.capture_tbs()
+            assert panel.tbs_window is window
+            panel.start_bot()
+            hunt.assert_not_called()
+            assert error.call_count == 1 and "TBS" in str(error.call_args.args[0])
+            panel.tbs_take_button.invoke()
+            panel.tbs_stage.set(TBS_STAGES["after_move"])
+            panel.tbs_note.set("Moví una casilla")
+            panel.tbs_take_button.invoke()
+            assert len(panel.tbs_research.samples) == 2
+            assert panel.tbs_research.samples[1]["stage"] == "after_move"
+            panel.session = SimpleNamespace(process=SimpleNamespace(pid=124), creation_time=888)
+            panel.tbs_take_button.invoke()
+            assert len(panel.tbs_research.samples) == 2
+            assert "conexión cambió" in panel.tbs_status.get()
+            panel.session = session
+            with TemporaryDirectory(prefix="atlantica-tbs-research-") as directory:
+                destination = Path(directory) / "Scourge.zip"
+                panel.tbs_research.export(destination, mission="Scourge")
+                with ZipFile(destination) as archive:
+                    assert archive.testzip() is None
+                    assert b"Scourge" in archive.read("manifest.json")
+            window.tk.call(window.protocol("WM_DELETE_WINDOW"))
+            assert not panel.tbs_open() and panel.tbs_research is None
+            assert str(panel.profile_list.cget("state")) == "readonly"
+    finally:
+        if panel.tbs_open():
+            panel.tbs_window.tk.call(panel.tbs_window.protocol("WM_DELETE_WINDOW"))
+        panel.session = original_session
+        panel.lock_target_controls()
+
+
 def check_character_settings(panel) -> None:
     original_templates = panel.template_profile_store
 

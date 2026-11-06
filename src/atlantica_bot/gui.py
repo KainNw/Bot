@@ -38,6 +38,7 @@ from .profiles import (
 )
 from .session import GameSession, LiveState
 from .speed_trial import SpeedExperiment, prepare_speed_plan
+from .tbs_view import open_tbs_capture
 from .turns import roster_rows
 from .ui_theme import page_heading
 from .world import observe_scene, scan_world
@@ -75,6 +76,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.calibrating = False
             self.calibration_window = None
             self.bonus_window = None
+            self.tbs_window = None
+            self.tbs_research = None
             self.speed_window = None
             self.speed_experiment = None
             self.profile_editor = None
@@ -394,6 +397,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     or self.independent_battle_speed_worker is not None
                     or self.calibrating
                     or self.bonus_open()
+                    or self.tbs_open()
                     or self.speed_open()
                     or self.closing
                     or self.profile_editor is not None
@@ -575,6 +579,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 and not self.closing
                 and not self.calibrating
                 and not self.bonus_open()
+                and not self.tbs_open()
                 and not self.speed_open()
             )
             self.overview.set_controls(
@@ -725,6 +730,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 or self.closing
                 or self.calibrating
                 or self.bonus_open()
+                or self.tbs_open()
                 or self.speed_open()
             )
             target_active = (
@@ -775,6 +781,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.closing
                 or self.calibrating
                 or self.bonus_open()
+                or self.tbs_open()
                 or self.speed_open()
                 or self.independent_battle_speed_worker is not None
                 or self.bot_worker is not None
@@ -790,6 +797,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.closing
                 or self.calibrating
                 or self.bonus_open()
+                or self.tbs_open()
                 or self.speed_open()
                 or self.general_speed_worker is not None
                 or self.bot_worker is not None
@@ -831,14 +839,25 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         def speed_open(self) -> bool:
             return self.speed_window is not None and bool(self.speed_window.winfo_exists())
 
+        def tbs_open(self) -> bool:
+            return self.tbs_window is not None and bool(self.tbs_window.winfo_exists())
+
+        def capture_tbs(self) -> None:
+            open_tbs_capture(self)
+
         def require_idle_bot(
             self,
             *,
             allow_bonus: bool = False,
+            allow_tbs: bool = False,
             allow_speed: bool = False,
             allow_general: bool = False,
             allow_independent: bool = False,
         ) -> None:
+            if self.tbs_open() and not allow_tbs:
+                raise DiagnosticError(
+                    "Cierra la captura TBS antes de iniciar el bot o cambiar el cliente."
+                )
             if self.independent_battle_speed_worker is not None and not allow_independent:
                 raise DiagnosticError(
                     "Desmarca Speed en combate independiente y espera a 1× "
@@ -875,6 +894,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 or self.closing
                 or self.calibrating
                 or self.bonus_open()
+                or self.tbs_open()
                 or self.speed_open()
             ):
                 self.detail.set(
@@ -1174,7 +1194,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     raise DiagnosticError(
                         "Desactiva Speed en combate independiente antes de activar General."
                     )
-                if self.closing or self.calibrating or self.bonus_open() or self.speed_open():
+                if (
+                    self.closing
+                    or self.calibrating
+                    or self.bonus_open()
+                    or self.tbs_open()
+                    or self.speed_open()
+                ):
                     raise DiagnosticError("Termina la operación actual antes de activar General.")
                 if (
                     self.bot_worker is not None
@@ -1235,7 +1261,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     return
                 if self.independent_battle_speed_worker is not None:
                     return
-                if self.closing or self.calibrating or self.bonus_open() or self.speed_open():
+                if (
+                    self.closing
+                    or self.calibrating
+                    or self.bonus_open()
+                    or self.tbs_open()
+                    or self.speed_open()
+                ):
                     raise DiagnosticError(
                         "Termina la operación actual antes de activar el Speed independiente."
                     )
@@ -2836,6 +2868,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             "Control",
             "Mercenarios",
             "Caza y botín",
+            "TBS",
             "Diagnóstico",
         )
         for tab in panel.tabs.tabs():
@@ -3041,11 +3074,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             check_character_settings,
             check_general_speed_controls,
             check_independent_battle_speed_controls,
+            check_tbs_research_controls,
         )
 
         check_character_settings(panel)
         check_general_speed_controls(panel)
         check_independent_battle_speed_controls(panel)
+        check_tbs_research_controls(panel)
         panel.session = None
         panel.root.update_idletasks()
         panel.toggle_advanced()

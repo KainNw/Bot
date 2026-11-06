@@ -2,6 +2,7 @@
 
 from .limits import MAX_SEARCH_RADIUS, MIN_SEARCH_RADIUS
 from .profiles import WORLD_ATTACK_LABELS
+from .tbs_view import build_tbs_tab
 from .ui_theme import apply_theme, card, page_heading, scrollable
 
 
@@ -58,11 +59,13 @@ def build_panel(p) -> None:
     p.control_tab = ttk.Frame(p.tabs, style="Page.TFrame")
     p.team_tab = ttk.Frame(p.tabs, style="Page.TFrame")
     p.hunt_tab = ttk.Frame(p.tabs, style="Page.TFrame")
+    p.tbs_tab = ttk.Frame(p.tabs, style="Page.TFrame")
     p.diagnostics_tab = ttk.Frame(p.tabs, style="Page.TFrame")
     for frame, title in (
         (p.control_tab, "Control"),
         (p.team_tab, "Mercenarios"),
         (p.hunt_tab, "Caza y botín"),
+        (p.tbs_tab, "TBS"),
         (p.diagnostics_tab, "Diagnóstico"),
     ):
         p.tabs.add(frame, text=title)
@@ -70,6 +73,7 @@ def build_panel(p) -> None:
     _control(p)
     p.build_team_tab()
     _hunting(p)
+    build_tbs_tab(p)
     _diagnostics(p)
 
 

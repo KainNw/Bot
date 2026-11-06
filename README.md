@@ -1,7 +1,13 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.28.0** añade **Speed en combate independiente**:
+con Auto Battle apagado. La versión **0.29.0** añade una pestaña **TBS** para
+investigar **Scourge**, empezando con solo el Main. Permite guardar capturas
+etiquetadas de entrada, selección, movimiento por casillas, ataques y cambios de
+turno. Solo lee memoria; las órdenes automáticas de TBS requieren contrastar estas
+capturas. Consulta [TBS y memoria](docs/tbs-memory.md).
+
+Conserva **Speed en combate independiente** de **0.28.0**:
 otra casilla con factor propio que espera a 1× en el mapa, acelera en batalla y
 vuelve a 1× al salir, sin iniciar el bot. Usa el controlador de combate existente
 con una cancelación independiente. Conserva la lógica y los ajustes del Speed
