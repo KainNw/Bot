@@ -451,7 +451,7 @@ def test_stop_cancels_inflight_worker_and_no_second_request_is_sent(monkeypatch)
 
 
 @pytest.mark.parametrize("previous_request", ["none", "deadline", "route_cleanup"])
-def test_window_preflight_stops_worker_without_losing_previous_uncertainty(
+def test_blocked_window_preflight_stops_worker_without_losing_previous_uncertainty(
     turn_frame, monkeypatch, previous_request
 ):
     session = SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100))
@@ -468,7 +468,7 @@ def test_window_preflight_stops_worker_without_losing_previous_uncertainty(
 
     def rejected(*args):
         calls.append(args)
-        raise WindowUnavailable(100, "minimized")
+        raise WindowUnavailable(100, "disabled")
 
     monkeypatch.setattr("atlantica_bot.hunt_loop.BotLease", lambda _: nullcontext())
     monkeypatch.setattr(
@@ -483,7 +483,7 @@ def test_window_preflight_stops_worker_without_losing_previous_uncertainty(
     assert worker.turns.inflight is None and not worker.turns.ledger
     assert worker.engine.needs_reconnect is (previous_request != "none")
     assert len(calls) == (2 if previous_request == "route_cleanup" else 1)
-    assert "minimizada" in worker.engine.message
+    assert "bloqueada" in worker.engine.message
     if previous_request == "route_cleanup":
         assert "Parada del desplazamiento sin confirmar" in worker.engine.message
 

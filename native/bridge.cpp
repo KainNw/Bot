@@ -57,7 +57,8 @@ static const char* WindowUnavailableReason(HWND window, DWORD pid, DWORD expecte
     if (!tid) return "not_found";
     if (owner != pid) return "wrong_process";
     if (expected_thread && tid != expected_thread) return "thread_changed";
-    if (!restoring && IsIconic(window)) return "minimized";
+    // Commands run on this exact window's message thread; minimization does not
+    // invalidate that binding and must not stop background operation.
     if (!restoring && !IsWindowEnabled(window)) return "disabled";
     return nullptr;
 }
@@ -110,6 +111,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
             std::cout << std::setprecision(std::numeric_limits<float>::max_digits10);
             std::cout << "{\"pid\":" << pid << ",\"status\":" << shared->result
                 << ",\"exception\":" << shared->exception << ",\"thread_id\":" << shared->thread_id
+                << ",\"window_minimized\":" << (IsIconic(window) ? "true" : "false")
                 << ",\"operation\":" << shared->operation
                 << ",\"slot\":" << shared->slot << ",\"distance_squared\":";
             if (std::isfinite(shared->distance_squared)) std::cout << shared->distance_squared;
@@ -246,9 +248,10 @@ static int SelfTest() {
     const bool disabled_window_ok = Run(test.window, pid, command, nullptr, true) == 20;
     EnableWindow(test.window, TRUE);
     ShowWindow(test.window, SW_MINIMIZE);
-    const bool minimized_window_ok = Run(test.window, pid, command, nullptr, true) == 20;
-    ShowWindow(test.window, SW_RESTORE);
-    ShowWindow(test.window, SW_HIDE);
+    const bool minimized_window_ok = IsIconic(test.window) != FALSE;
+    const auto minimized_foreground = GetForegroundWindow();
+    // Probe and all ordinary cancelled operations below execute while iconic.
+    // The fixture must remain minimized and its original thread must handle them.
     const int code = Run(test.window, GetCurrentProcessId(), command, &response);
     wchar_t cancel_name[96];
     swprintf_s(cancel_name, L"Local\\AtlanticaPanel.Cancel.SelfTest.%lu", GetCurrentProcessId());
@@ -290,6 +293,8 @@ static int SelfTest() {
     SharedCommand speed_response = {}, speed_restore_response = {};
     cancelled.operation = SpeedApply;
     const int speed_code = cancellation ? Run(test.window, GetCurrentProcessId(), cancelled, &speed_response, true) : 32;
+    const bool minimized_execution_ok = IsIconic(test.window)
+        && GetForegroundWindow() == minimized_foreground;
     cancelled.operation = SpeedRestore;
     ShowWindow(test.window, SW_MINIMIZE);
     EnableWindow(test.window, FALSE);
@@ -319,7 +324,7 @@ static int SelfTest() {
     WaitForSingleObject(thread, 5000); CloseHandle(thread); CloseHandle(test.ready);
     // The bridge executable's base/build must be rejected before any client address is read.
     const int result = code ? code : (
-        invalid_window_ok && disabled_window_ok && minimized_window_ok && no_clock_hooks
+        invalid_window_ok && disabled_window_ok && minimized_window_ok && minimized_execution_ok && no_clock_hooks
         && response.result == Unsupported && response.thread_id == tid
         && !cancelled_code && cancelled_response.result == Cancelled
         && !move_code && move_response.result == Cancelled
@@ -341,6 +346,7 @@ static int SelfTest() {
         && !missing_code && missing_response.result == CancellationUnavailable
         && !empty_code && empty_response.result == CancellationUnavailable ? 0 : 31);
     if (result) std::cerr << "Self-test failure: " << result << ", response: " << response.result
+        << ", minimized: " << minimized_window_ok << "/" << minimized_execution_ok
         << ", cancelled: " << cancelled_code << "/" << cancelled_response.result
         << ", clock: " << clock_start_code << "/" << clock_start_response.result
         << ", clock guard: " << no_clock_hooks

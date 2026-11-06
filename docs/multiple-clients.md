@@ -50,15 +50,20 @@ individual por PID impide dos pruebas simultáneas del panel sobre el mismo clie
 
 ## Código 20 del puente
 
-El auxiliar rechaza una ventana minimizada o bloqueada por un diálogo, un HWND
+Desde **0.24.1**, minimizar la ventana del juego no provoca el código 20 ni
+detiene el bot. Las órdenes se entregan al mismo hilo mediante su mensaje interno;
+el puente no restaura la ventana ni cambia el foco. Minimizar el panel tampoco
+cambia el cliente conectado ni envía una parada.
+
+El auxiliar rechaza una ventana bloqueada por un diálogo, un HWND
 que ya no existe, un proceso distinto o un hilo que cambió. Lo comprueba antes
 de instalar el hook y enviar cualquier orden. La versión 0.15 muestra la causa
 concreta; las versiones anteriores mostraban un aviso genérico sobre permisos
 y resultado desconocido. Un auxiliar anterior que no devuelve la causa sigue
 identificándose como rechazo previo al envío.
 
-Restaura la ventana seleccionada y cierra los diálogos del cliente. Puede quedar
-detrás de otras ventanas, pero debe permanecer sin minimizar. Si su proceso o hilo
+Cierra los diálogos del cliente. La ventana seleccionada puede quedar
+detrás de otras ventanas o minimizada. Si su proceso o hilo
 cambió, vuelve a elegirla y conectar. No se cambia el foco ni se restaura otra
 ventana automáticamente. Un fallo de permisos en la instalación del hook es otro
 error; el código 20 no lo demuestra.
@@ -70,9 +75,21 @@ confirmarse, sigue exigiendo comprobar el juego y reconectar. El **estado nativo
 un desplazamiento activo, y no se sustituye ese movimiento.
 
 La restauración de la prueba de velocidad 0.16 es una excepción deliberada a la
-comprobación de ventana minimizada/deshabilitada: solo permite revertir sus dos
+comprobación de ventana deshabilitada: solo permite revertir sus dos
 campos ya guardados, con las demás comprobaciones de instancia y propiedad.
-No habilita ataques ni movimiento en ventanas minimizadas.
+La versión 0.24.1 admite el estado minimizado para todas las órdenes; los diálogos
+bloqueantes siguen impidiendo ataques y movimiento.
+
+El diagnóstico nativo añade `window_minimized` para indicar el estado de la ventana
+al responder. La prueba propia de Windows comprueba un HWND minimizado real:
+entrega el mensaje al hilo original, verifica las cancelaciones y comprueba que
+la ventana sigue minimizada sin cambiar el foco. Se ejecuta sobre la ventana de
+prueba del auxiliar; la compilación del juego se rechaza antes de leer sus direcciones.
+Esto no prueba el comportamiento del motor gráfico del cliente de Atlantica ni
+convierte un resultado incierto o una orden sin progreso en permiso para repetirla.
+
+Los auxiliares antiguos pueden devolver todavía `reason: minimized`: hay que
+actualizar el panel completo para quitar ese rechazo.
 
 El usuario confirmó el inicio del ataque individual con Auto Battle apagado y una
 sola ventana. El ciclo 0.4 añade Iniciar bot/Parar bot usando la misma ruta y sin

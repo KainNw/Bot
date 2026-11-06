@@ -1,7 +1,12 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.24.0** añade **Defender (G)** y **Pasar
+con Auto Battle apagado. La versión **0.24.1** permite ejecutar las órdenes con
+la ventana del juego minimizada: elimina el rechazo que detenía el bot con código
+20. Conserva las comprobaciones de PID, HWND, hilo y diálogos bloqueantes, sin
+restaurar la ventana ni cambiar el foco. Consulta [varias ventanas](docs/multiple-clients.md).
+
+Conserva las opciones de **0.24.0**: **Defender (G)** y **Pasar
 acción (F)** al perfil y a las pruebas individuales. **Solo Main + pasar las
 acciones restantes** permite que el Main ejecute su acción y después se pasen los
 miembros disponibles. Si todos los enemigos mueren, omite esos pases para dejar
@@ -113,11 +118,11 @@ validado. Consulta [el análisis de velocidad](docs/battle-speed.md) para obtene
 la captura que falta.
 
 Conserva 0.15.0, que explica la causa del **código 20
-del puente**: ventana minimizada, bloqueada, desaparecida o vinculada a otro proceso
+del puente**: ventana bloqueada, desaparecida o vinculada a otro proceso
 o hilo. Ese rechazo ocurre antes de enviar la orden; por sí solo ya no exige
 reconectar ni presenta el resultado como desconocido. Las solicitudes anteriores
-cuya parada no pueda confirmarse conservan sus comprobaciones. Restaura la ventana
-elegida y cierra sus diálogos; si cambió de proceso o hilo, vuelve a elegirla y conectar.
+cuya parada no pueda confirmarse conservan sus comprobaciones. Cierra los diálogos
+de la ventana elegida; si cambió de proceso o hilo, vuelve a elegirla y conectar.
 Consulta [varias ventanas](docs/multiple-clients.md#código-20-del-puente).
 
 Añade **Capturar bonus (memoria)** para comparar el bonus visible con el estado
