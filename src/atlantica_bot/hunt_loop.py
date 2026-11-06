@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 
 from .battle import BattleFrame, read_battle_frame
 from .clients import ClientWindow
-from .clock_control import NativeClock
+from .clock_control import GeneralNativeClock, NativeClock
 from .combat import CombatDetector
 from .errors import BeforeSendChanged, DiagnosticError, SceneChanged, WindowUnavailable
 from .ipc import BotLease, Cancellation, SpeedLease
@@ -1312,7 +1312,7 @@ class HuntWorker:
     def _run(self) -> None:
         try:
             with ExitStack() as leases:
-                if self.engine.profile.battle_speed_enabled:
+                if self.engine.profile.speed_enabled:
                     try:
                         leases.enter_context(SpeedLease(self.window.pid))
                     except (DiagnosticError, OSError) as exc:
@@ -1324,13 +1324,17 @@ class HuntWorker:
                 try:
                     if self.stop_event.is_set():
                         signal.cancel()
-                    if self.engine.profile.battle_speed_enabled and not self.stop_event.is_set():
+                    if self.engine.profile.speed_enabled and not self.stop_event.is_set():
                         try:
-                            self.clock = NativeClock(
+                            general = self.engine.profile.general_speed_enabled
+                            clock_type = GeneralNativeClock if general else NativeClock
+                            self.clock = clock_type(
                                 self.session,
                                 self.window,
                                 signal,
-                                self.engine.profile.battle_speed_rate,
+                                self.engine.profile.general_speed_rate
+                                if general
+                                else self.engine.profile.battle_speed_rate,
                             )
                             self.clock.start()
                             self.engine.speed = dict(self.clock.report)

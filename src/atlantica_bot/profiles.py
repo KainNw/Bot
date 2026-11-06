@@ -88,6 +88,12 @@ class BotProfile:
     battle_speed_rate: float = 1.25
     neo_loot_grace_seconds: float = 1.0
     pass_remaining: bool = False
+    general_speed_enabled: bool = False
+    general_speed_rate: float = 1.25
+
+    @property
+    def speed_enabled(self) -> bool:
+        return self.battle_speed_enabled or self.general_speed_enabled
 
     def validate(self) -> None:
         if type(self.number) is not int or self.number not in (1, 2, 3):
@@ -122,6 +128,14 @@ class BotProfile:
         ):
             raise DiagnosticError("Elige una velocidad de combate admitida: 1,25, 1,5, 2, 3 o 4×.")
         if (
+            type(self.general_speed_enabled) is not bool
+            or type(self.general_speed_rate) not in (int, float)
+            or self.general_speed_rate not in SPEED_RATES
+        ):
+            raise DiagnosticError("Elige un Speed general admitido: 1,25, 1,5, 2, 3 o 4×.")
+        if self.general_speed_enabled and self.battle_speed_enabled:
+            raise DiagnosticError("Elige un modo de Speed: general o solo combate.")
+        if (
             type(self.world_attack_mode) is not str
             or self.world_attack_mode not in WORLD_ATTACK_LABELS
         ):
@@ -153,7 +167,7 @@ class BotProfile:
 
     def summary(self) -> dict:
         return {
-            "schema_version": 8,
+            "schema_version": 9,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "magic_first_turn_only": self.magic_first_turn_only,
@@ -165,6 +179,8 @@ class BotProfile:
             "battle_speed_rate": self.battle_speed_rate,
             "neo_loot_grace_seconds": self.neo_loot_grace_seconds,
             "pass_remaining": self.pass_remaining,
+            "general_speed_enabled": self.general_speed_enabled,
+            "general_speed_rate": self.general_speed_rate,
             "turn_execution_available": True,
         }
 
@@ -203,7 +219,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8)
+                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -231,6 +247,8 @@ class ProfileStore:
                 payload["battle_speed_rate"] if payload["schema_version"] >= 6 else 1.25,
                 payload["neo_loot_grace_seconds"] if payload["schema_version"] >= 7 else 1.0,
                 payload["pass_remaining"] if payload["schema_version"] >= 8 else False,
+                payload["general_speed_enabled"] if payload["schema_version"] >= 9 else False,
+                payload["general_speed_rate"] if payload["schema_version"] >= 9 else 1.25,
             )
             profile.validate()
             return profile

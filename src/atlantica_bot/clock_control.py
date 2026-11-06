@@ -56,6 +56,17 @@ def rate_from_bits(value: int) -> float:
 
 
 class NativeClock:
+    mode = "battle"
+    start_argument = "--clock-start"
+    start_operation = 13
+    reason_labels = REASONS
+    start_message = "Esperando combate"
+    start_error = "No se confirmó el inicio en velocidad normal."
+
+    @property
+    def initial_rate(self) -> float:
+        return 1.0
+
     def __init__(self, session, window, cancellation, rate: float):
         if type(rate) not in (float, int) or rate not in RATES:
             raise DiagnosticError("Elige una velocidad admitida para el combate.")
@@ -68,6 +79,7 @@ class NativeClock:
         self.stop_sent = False
         self.report = {
             "enabled": True,
+            "mode": self.mode,
             "configured_rate": rate,
             "current_rate": 1.0,
             "armed": False,
@@ -85,7 +97,7 @@ class NativeClock:
         helper = bridge_path()
         args = [
             str(helper),
-            "--clock-" + operation,
+            self.start_argument if operation == "start" else "--clock-" + operation,
             "--pid",
             str(self.window.pid),
             "--created",
@@ -125,7 +137,7 @@ class NativeClock:
                 for k in ("pid", "status", "thread_id", "operation", "slot", "exception")
             ):
                 raise ValueError
-            expected = {"start": 13, "stop": 14, "status": 15}[operation]
+            expected = {"start": self.start_operation, "stop": 14, "status": 15}[operation]
             if (
                 data["pid"],
                 data["thread_id"],
@@ -189,9 +201,9 @@ class NativeClock:
                 REJECTED.get(status, "El inicio de velocidad no está confirmado.")
             )
         c = data["clock"]
-        if c["armed"] != 1 or rate_from_bits(c["current_bits"]) != 1.0:
-            raise DiagnosticError("No se confirmó el inicio en velocidad normal.")
-        self.report.update(armed=True, message="Esperando combate")
+        if c["armed"] != 1 or rate_from_bits(c["current_bits"]) != self.initial_rate:
+            raise DiagnosticError(self.start_error)
+        self.report.update(armed=True, message=self.start_message)
         self.address, self.token = c["address"], (c["token_lo"], c["token_hi"])
         if not 0x10000 <= self.address <= 0xFFFF0000 or not any(self.token):
             raise DiagnosticError("La dirección del control de velocidad no es válida.")
@@ -225,7 +237,7 @@ class NativeClock:
         if (
             armed not in (0, 1)
             or configured != bits(self.rate)
-            or reason not in REASONS
+            or reason not in self.reason_labels
             or view > 4
         ):
             raise DiagnosticError("El estado de velocidad no es válido.")
@@ -233,10 +245,11 @@ class NativeClock:
             raise DiagnosticError("La instancia cambió durante la lectura de velocidad.")
         self.report = {
             "enabled": True,
+            "mode": self.mode,
             "configured_rate": self.rate,
             "current_rate": rate_from_bits(current),
             "armed": bool(armed),
-            "message": REASONS[reason],
+            "message": self.reason_labels[reason],
             "reason": reason,
             "applications": applied,
             "restorations": restored,
@@ -301,3 +314,16 @@ class NativeClock:
         # Read-only status can recover a lost start/stop acknowledgement without
         # repeating a mutation or releasing another run's instance lease.
         return self._confirm_response(self._request("status"), 45)
+
+
+class GeneralNativeClock(NativeClock):
+    mode = "general"
+    start_argument = "--clock-general-start"
+    start_operation = 18
+    reason_labels = REASONS | {12: "Speed general activo", 13: "Esperando datos del cliente; 1×"}
+    start_message = "Speed general activo"
+    start_error = "No se confirmó el inicio del Speed general."
+
+    @property
+    def initial_rate(self) -> float:
+        return self.rate

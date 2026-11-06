@@ -99,6 +99,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.battle_speed_enabled = tk.BooleanVar(value=False)
             self.battle_speed_rate = tk.StringVar(value="1.25")
             self.battle_speed_status = tk.StringVar(value="Speed desactivado")
+            self.general_speed_enabled = tk.BooleanVar(value=False)
+            self.general_speed_rate = tk.StringVar(value="1.25")
+            self.general_speed_status = tk.StringVar(value="Speed general desactivado")
             self.bot_status = tk.StringVar(value="Bot detenido.")
             self.execution_status = tk.StringVar()
             self.pid = tk.StringVar()
@@ -136,6 +139,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.neo_loot_grace,
                 self.battle_speed_enabled,
                 self.battle_speed_rate,
+                self.general_speed_enabled,
+                self.general_speed_rate,
                 self.world_attack_mode,
                 self.turns_enabled,
             ):
@@ -679,6 +684,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.profile_list.configure(state="disabled" if active else "readonly")
             self.attack_mode_list.configure(state="disabled" if active else "readonly")
             self.battle_speed_list.configure(state="disabled" if active else "readonly")
+            self.general_speed_list.configure(state="disabled" if active else "readonly")
             for button in (
                 self.list_button,
                 self.pick_button,
@@ -693,6 +699,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.loot_check,
                 self.neo_loot_grace_entry,
                 self.battle_speed_check,
+                self.general_speed_check,
                 self.save_hunt_button,
             ):
                 button.configure(state="disabled" if active else "normal")
@@ -831,7 +838,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     info = self.bot_report
                     speed = info.get("speed", {})
                     current_rate = speed.get("current_rate")
-                    self.battle_speed_status.set(
+                    speed_status = (
+                        self.general_speed_status
+                        if speed.get("mode") == "general"
+                        else self.battle_speed_status
+                    )
+                    speed_status.set(
                         "Speed: "
                         + (
                             f"{current_rate:g}× · "
@@ -889,6 +901,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.neo_loot_grace.set(f"{profile.neo_loot_grace_seconds:g}")
                 self.battle_speed_enabled.set(profile.battle_speed_enabled)
                 self.battle_speed_rate.set(f"{profile.battle_speed_rate:g}")
+                self.general_speed_enabled.set(profile.general_speed_enabled)
+                self.general_speed_rate.set(f"{profile.general_speed_rate:g}")
                 self.world_attack_mode.set(WORLD_ATTACK_LABELS[profile.world_attack_mode])
                 count = sum(merc.enabled for merc in profile.mercenaries)
                 magic_count = sum(
@@ -914,6 +928,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 delay = float(self.attack_delay.get().strip().replace(",", "."))
                 radius = int(self.search_radius.get())
                 speed_rate = float(self.battle_speed_rate.get().strip().replace(",", "."))
+                general_rate = float(self.general_speed_rate.get().strip().replace(",", "."))
                 neo_grace = float(self.neo_loot_grace.get().strip().replace(",", "."))
             except ValueError as exc:
                 raise DiagnosticError(
@@ -928,6 +943,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 neo_loot_grace_seconds=neo_grace,
                 battle_speed_enabled=self.battle_speed_enabled.get(),
                 battle_speed_rate=speed_rate,
+                general_speed_enabled=self.general_speed_enabled.get(),
+                general_speed_rate=general_rate,
                 world_attack_mode=next(
                     (
                         key
@@ -939,6 +956,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             )
             updated.validate()
             return updated
+
+        def select_speed_mode(self, mode: str) -> None:
+            if mode == "general" and self.general_speed_enabled.get():
+                self.battle_speed_enabled.set(False)
+            elif mode == "battle" and self.battle_speed_enabled.get():
+                self.general_speed_enabled.set(False)
 
         def save_hunt_options(self) -> None:
             try:

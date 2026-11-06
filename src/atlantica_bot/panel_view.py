@@ -207,7 +207,10 @@ def _hunting(p) -> None:
     row = ttk.Frame(body)
     row.pack(fill="x")
     p.battle_speed_check = ttk.Checkbutton(
-        row, text="Activar Speed", variable=p.battle_speed_enabled
+        row,
+        text="Activar Speed",
+        variable=p.battle_speed_enabled,
+        command=lambda: p.select_speed_mode("battle"),
     )
     p.battle_speed_check.pack(side="left")
     p.battle_speed_list = ttk.Combobox(
@@ -225,6 +228,36 @@ def _hunting(p) -> None:
     ttk.Label(
         body,
         text="Vuelve a 1× al salir del combate o parar el bot.",
+        style="Caption.TLabel",
+        wraplength=370,
+    ).pack(anchor="w")
+    general, body = card(extras, "Speedhack general")
+    general.pack(fill="x", pady=(14, 0))
+    row = ttk.Frame(body)
+    row.pack(fill="x")
+    p.general_speed_check = ttk.Checkbutton(
+        row,
+        text="Activar Speed general",
+        variable=p.general_speed_enabled,
+        command=lambda: p.select_speed_mode("general"),
+    )
+    p.general_speed_check.pack(side="left")
+    p.general_speed_list = ttk.Combobox(
+        row,
+        textvariable=p.general_speed_rate,
+        values=("1.25", "1.5", "2", "3", "4"),
+        state="readonly",
+        width=6,
+    )
+    p.general_speed_list.pack(side="left", padx=8)
+    ttk.Label(row, text="×").pack(side="left")
+    ttk.Label(
+        body, textvariable=p.general_speed_status, style="Accent.TLabel", wraplength=370
+    ).pack(anchor="w", pady=(8, 4))
+    ttk.Label(
+        body,
+        text="Mapa y combate del PID seleccionado. Se aplica al iniciar el bot y vuelve "
+        "a 1× al pararlo. Un modo de Speed a la vez.",
         style="Caption.TLabel",
         wraplength=370,
     ).pack(anchor="w")

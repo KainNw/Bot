@@ -1,7 +1,7 @@
 -- Atlantica: bounded manual Cheat Engine timer experiment.
 -- Requires 64-bit Cheat Engine on Windows; the game itself is 32-bit.
 -- Loading only opens the form. Automatic mode must be explicitly armed.
-local M = {version = "0.24.1", rates = {1.25, 1.5, 2, 3, 4}, MAP = "__map__",
+local M = {version = "0.25.0", rates = {1.25, 1.5, 2, 3, 4}, MAP = "__map__",
   GRAPHICS_OTHER = "__graphics_other__",
   NOT_READY = "__not_ready__",
   modeOrder = {"timed", "battle_end", "automatic"}, modes = {

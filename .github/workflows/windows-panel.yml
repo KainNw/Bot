@@ -127,7 +127,7 @@ jobs:
         shell: pwsh
         run: |
           $probeInstance = Get-Process -Id $PID
-          foreach ($probeOperation in @('--clock-start', '--clock-stop', '--clock-status')) {
+          foreach ($probeOperation in @('--clock-start', '--clock-stop', '--clock-status', '--clock-general-start')) {
             $probeArguments = @(
               $probeOperation, '--pid', "$PID", '--created', "$($probeInstance.StartTime.ToFileTimeUtc())",
               '--window', '1', '--thread', '1', '--clock-owner-pid', "$PID",

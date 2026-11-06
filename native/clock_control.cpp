@@ -14,13 +14,14 @@ constexpr ULONGLONG kBattleLimit = 60000;
 #endif
 enum View : uint32_t { Unknown, Map, Battle, NotReady, Graphics };
 enum Reason : uint32_t { None, Waiting, Boosted, ReturnedMap, GraphicsChanged,
-    ReadinessChanged, TimeLimit, CancelledOwner, OwnerExited, ReadError, CharacterChanged, Stopped };
+    ReadinessChanged, TimeLimit, CancelledOwner, OwnerExited, ReadError, CharacterChanged, Stopped,
+    GeneralBoosted, GeneralWaiting };
 struct Frame {
     uint32_t owner, world, actor, manager, context, identity[3], index, other, phase, graphics;
     View view;
 };
 struct Control {
-    bool armed = false, need_map = false;
+    bool armed = false, need_map = false, general = false;
     uint32_t owner_pid = 0, lo = 0, hi = 0, identity[3] = {}, configured = 0;
     uint32_t reason = None, applied = 0, restored = 0, error = 0, view = Unknown;
     uint32_t token_lo = 0, token_hi = 0;
@@ -156,9 +157,22 @@ void ClockPoll() {
     if (WaitForSingleObject(control.cancellation, 0) != WAIT_TIMEOUT) { Restore(CancelledOwner, true); return; }
     if (WaitForSingleObject(control.owner, 0) != WAIT_TIMEOUT) { Restore(OwnerExited, true); return; }
     Frame frame;
-    if (!StableFrame(&frame)) { control.view = Unknown; Restore(ReadError, true); return; }
+    if (!StableFrame(&frame)) {
+        control.view = Unknown;
+        Restore(control.general ? GeneralWaiting : ReadError, !control.general);
+        return;
+    }
     control.view = frame.view;
     if (std::memcmp(frame.identity, control.identity, 12) != 0) { Restore(CharacterChanged, true); return; }
+    if (control.general) {
+        if (clock_scaler::Rate() == 1.f) ++control.applied;
+        // Renew a short real-time lease. General mode has no battle duration cap,
+        // while a stalled process cannot accumulate an unbounded accelerated gap.
+        control.deadline = clock_scaler::RealMilliseconds() + 1000;
+        clock_scaler::SetRate(Float(control.configured), control.deadline);
+        control.reason = GeneralBoosted;
+        return;
+    }
     if (frame.view == Map) {
         if (clock_scaler::Rate() > 1.f) Restore(ReturnedMap, false);
         control.need_map = false; control.candidate_since = 0; return;
@@ -186,7 +200,7 @@ uint32_t ClockExecute(SharedCommand* cmd, HANDLE cancellation, HWND window) {
     ClockPoll();
     Scope scope;
     Lock held;
-    if (cmd->operation != ClockStart) {
+    if (!IsClockStart(cmd->operation)) {
         if (!SameOwner(cmd)) { Fill(cmd); return ClockBusy; }
         if (cmd->operation == ClockStop) Restore(Stopped, true);
         Fill(cmd); return cmd->operation == ClockStop ? ClockStopped : ClockReported;
@@ -223,10 +237,16 @@ uint32_t ClockExecute(SharedCommand* cmd, HANDLE cancellation, HWND window) {
     control.owner = owner; control.cancellation = signal; control.window = window;
     control.token_lo = cmd->nonce_lo; control.token_hi = cmd->nonce_hi;
     control.configured = cmd->clock_rate_bits; control.view = frame.view;
+    control.general = cmd->operation == ClockGeneralStart;
     control.need_map = frame.view == Graphics; control.candidate_since = 0;
     control.applied = control.restored = 0; control.reason = Waiting; control.armed = true;
     if (!SetTimer(window, reinterpret_cast<UINT_PTR>(&control), 50, Timer)) {
         control.error = GetLastError(); Restore(ReadError, true); Fill(cmd); return ClockUnavailable;
+    }
+    if (control.general) {
+        control.deadline = clock_scaler::RealMilliseconds() + 1000;
+        clock_scaler::SetRate(Float(control.configured), control.deadline);
+        control.reason = GeneralBoosted; ++control.applied;
     }
     Fill(cmd); return ClockArmed;
 }

@@ -5,14 +5,20 @@
 
 constexpr uint32_t kMagic = 0x414F5031;
 constexpr uint32_t kMaxSearchRadius = 500;
-constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.12";
+constexpr wchar_t kWakeName[] = L"AtlanticaPanel.Command.13";
 enum Operation : uint32_t {
     Probe = 0, Attack = 1, Approach = 2, StopMovement = 3,
     NativeAttack = 4, StopNativePursuit = 5, BattleBasic = 6,
     BattleSelect = 7, BattleMagic = 8, BattleLoot = 9, StationaryAttack = 10,
     SpeedApply = 11, SpeedRestore = 12, ClockStart = 13, ClockStop = 14, ClockStatus = 15,
-    BattleDefend = 16, BattlePass = 17
+    BattleDefend = 16, BattlePass = 17, ClockGeneralStart = 18
 };
+inline bool IsClockStart(uint32_t operation) {
+    return operation == ClockStart || operation == ClockGeneralStart;
+}
+inline bool IsClockOperation(uint32_t operation) {
+    return IsClockStart(operation) || operation == ClockStop || operation == ClockStatus;
+}
 inline bool IsBattleOperation(uint32_t operation) {
     return (operation >= BattleBasic && operation <= BattleLoot)
         || operation == BattleDefend || operation == BattlePass;

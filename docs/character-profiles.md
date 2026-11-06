@@ -12,7 +12,8 @@ El guardado incluye:
   primer turno.
 - Modo de ataque al mob, radio y espera antes del encuentro.
 - Recogida de botín restante y espera del NeoACA.
-- Activación y factor de Speed, y la opción **Ejecutar turnos del perfil**.
+- Modo de Speed y factores separados de General y Combate, y la opción
+  **Ejecutar turnos del perfil**.
 
 Los campos de caza, botín, Speed y ejecutar turnos se guardan automáticamente
 tras 600 ms sin cambios, mientras el bot está detenido. Un campo incompleto o

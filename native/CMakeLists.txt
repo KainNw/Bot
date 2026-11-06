@@ -29,5 +29,10 @@ target_compile_definitions(ClockControllerSelfTest PRIVATE ATLANTICA_CLOCK_TEST_
 target_compile_options(ClockControllerSelfTest PRIVATE /W4 /WX /EHsc)
 target_link_libraries(ClockControllerSelfTest PRIVATE ClockScaler user32)
 add_test(NAME own_fixture_clock_lifecycle COMMAND ClockControllerSelfTest)
+add_executable(GeneralClockControllerSelfTest general_clock_controller_self_test.cpp clock_control.cpp)
+target_compile_definitions(GeneralClockControllerSelfTest PRIVATE ATLANTICA_CLOCK_TEST_LIMIT=300)
+target_compile_options(GeneralClockControllerSelfTest PRIVATE /W4 /WX /EHsc)
+target_link_libraries(GeneralClockControllerSelfTest PRIVATE ClockScaler user32)
+add_test(NAME own_fixture_general_clock_lifecycle COMMAND GeneralClockControllerSelfTest)
 set_tests_properties(own_window_hook_and_build_guard own_process_clock_scaling
-  own_fixture_clock_lifecycle PROPERTIES TIMEOUT 30)
+  own_fixture_clock_lifecycle own_fixture_general_clock_lifecycle PROPERTIES TIMEOUT 30)

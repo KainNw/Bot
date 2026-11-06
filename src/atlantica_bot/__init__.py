@@ -1,3 +1,3 @@
 """Client controls and diagnostics for the verified Atlantica build."""
 
-__version__ = "0.24.1"
+__version__ = "0.25.0"

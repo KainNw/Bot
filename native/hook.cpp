@@ -566,10 +566,10 @@ static uint32_t InvokeSpeed(SharedCommand* cmd, HANDLE cancellation) {
     return SpeedRetired;
 }
 static uint32_t Invoke(SharedCommand* cmd, HANDLE cancellation, HWND window) {
-    if (cmd->operation == ClockStart || cmd->operation == ClockStop || cmd->operation == ClockStatus) {
-        if (cmd->operation == ClockStart && IsCancelled(cancellation)) return Cancelled;
+    if (IsClockOperation(cmd->operation)) {
+        if (IsClockStart(cmd->operation) && IsCancelled(cancellation)) return Cancelled;
         if (!Supported()) return Unsupported;
-        if (cmd->operation == ClockStart && !HexAnchor(0x00431769,
+        if (IsClockStart(cmd->operation) && !HexAnchor(0x00431769,
             "8b811803000085c07d0432c0eb258b8904020000ff742404518b0d0c29a904"
             "8b891c0900008b4c8108e808cb0c003c010f95c0c20400")) return Unsupported;
         return ClockExecute(cmd, cancellation, window);
@@ -765,7 +765,7 @@ extern "C" LRESULT CALLBACK AtlanticaHookProc(int code, WPARAM removed, LPARAM d
                 if (mapping) {
                     auto cmd = static_cast<SharedCommand*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedCommand)));
                     if (cmd) {
-                        if (cmd->magic == kMagic && cmd->version == 12 && cmd->pid == pid
+                        if (cmd->magic == kMagic && cmd->version == 13 && cmd->pid == pid
                             && cmd->nonce_lo == msg->wParam && cmd->nonce_hi == static_cast<DWORD>(msg->lParam)
                             && InterlockedCompareExchange(&cmd->state, 2, 1) == 1) {
                             cmd->thread_id = GetCurrentThreadId();

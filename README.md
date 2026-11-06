@@ -1,7 +1,15 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.24.1** permite ejecutar las órdenes con
+con Auto Battle apagado. La versión **0.25.0** añade una casilla aparte de
+**Speedhack general** en **Caza y botín**, con factor propio de **1,25× a 4×**.
+Al iniciar el bot aplica ese factor en mapa y combate del PID seleccionado;
+al parar vuelve a 1×. **Speed en combate** conserva su comportamiento de
+acelerar solo la batalla y volver a 1× en el mapa. Se elige un modo a la vez,
+conservando el factor de cada uno, y se guarda por personaje. Consulta
+[Speed del panel](docs/panel-speed.md).
+
+Conserva la corrección de **0.24.1**, que permite ejecutar las órdenes con
 la ventana del juego minimizada: elimina el rechazo que detenía el bot con código
 20. Conserva las comprobaciones de PID, HWND, hilo y diálogos bloqueantes, sin
 restaurar la ventana ni cambiar el foco. Consulta [varias ventanas](docs/multiple-clients.md).

@@ -96,7 +96,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
     if (!shared || !hook) std::cerr << "Bridge setup error: " << GetLastError() << std::endl;
     int code = 24;
     if (shared && hook) {
-        command.magic = kMagic; command.version = 12; command.pid = pid;
+        command.magic = kMagic; command.version = 13; command.pid = pid;
         command.nonce_lo = nonce[0]; command.nonce_hi = nonce[1]; command.state = 1;
         *shared = command;
         if (PostMessageW(window, RegisterWindowMessageW(kWakeName), nonce[0], nonce[1])) {
@@ -196,7 +196,7 @@ static int Run(HWND window, DWORD pid, SharedCommand command, SharedCommand* res
                 std::cout << "}";
             } else std::cout << "null";
             std::cout << ",\"clock\":";
-            if (command.operation == ClockStart || command.operation == ClockStop || command.operation == ClockStatus) {
+            if (IsClockOperation(command.operation)) {
             std::cout << "{\"rate_bits\":" << shared->clock_rate_bits
                 << ",\"owner_pid\":" << shared->clock_owner_pid
                 << ",\"created_lo\":" << shared->clock_created_lo << ",\"created_hi\":" << shared->clock_created_hi
@@ -305,6 +305,9 @@ static int SelfTest() {
     SharedCommand clock_start_response = {}, clock_stop_response = {}, clock_status_response = {};
     cancelled.operation = ClockStart;
     const int clock_start_code = cancellation ? Run(test.window, pid, cancelled, &clock_start_response, true) : 32;
+    SharedCommand general_start_response = {};
+    cancelled.operation = ClockGeneralStart;
+    const int general_start_code = cancellation ? Run(test.window, pid, cancelled, &general_start_response, true) : 32;
     cancelled.operation = ClockStop;
     ShowWindow(test.window, SW_MINIMIZE); EnableWindow(test.window, FALSE);
     const int clock_stop_code = cancellation ? Run(test.window, pid, cancelled, &clock_stop_response, true) : 32;
@@ -341,6 +344,7 @@ static int SelfTest() {
         && !speed_code && speed_response.result == Cancelled
         && !speed_restore_code && speed_restore_response.result == Cancelled
         && !clock_start_code && clock_start_response.result == Cancelled
+        && !general_start_code && general_start_response.result == Cancelled
         && !clock_stop_code && clock_stop_response.result == Unsupported
         && !clock_status_code && clock_status_response.result == Unsupported
         && !missing_code && missing_response.result == CancellationUnavailable
@@ -367,7 +371,8 @@ int wmain(int argc, wchar_t** argv) {
                 || key == L"--battle-select" || key == L"--battle-magic" || key == L"--battle-loot"
                 || key == L"--battle-defend" || key == L"--battle-pass"
                 || key == L"--stationary-attack" || key == L"--speed-apply" || key == L"--speed-restore"
-                || key == L"--clock-start" || key == L"--clock-stop" || key == L"--clock-status") {
+                || key == L"--clock-start" || key == L"--clock-stop" || key == L"--clock-status"
+                || key == L"--clock-general-start") {
                 if (operation) return 2;
                 command.operation = key == L"--attack" ? Attack : key == L"--probe" ? Probe
                     : key == L"--approach" ? Approach : key == L"--stop-move" ? StopMovement
@@ -377,6 +382,7 @@ int wmain(int argc, wchar_t** argv) {
                     : key == L"--battle-defend" ? BattleDefend : key == L"--battle-pass" ? BattlePass
                     : key == L"--speed-apply" ? SpeedApply : key == L"--speed-restore" ? SpeedRestore
                     : key == L"--clock-start" ? ClockStart : key == L"--clock-stop" ? ClockStop
+                    : key == L"--clock-general-start" ? ClockGeneralStart
                     : key == L"--clock-status" ? ClockStatus : StationaryAttack;
                 operation = true; continue;
             }
@@ -473,7 +479,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (!pid || !hwnd || !created || !expected_thread || !operation) return 2;
         const bool speed_operation = command.operation == SpeedApply || command.operation == SpeedRestore;
-        const bool clock_operation = command.operation == ClockStart || command.operation == ClockStop || command.operation == ClockStatus;
+        const bool clock_operation = IsClockOperation(command.operation);
         if (clock_operation) {
             if (clock_fields != 7u || speed_fields || battle_fields || magic_fields || goal_fields || position_fields)
                 return 2;

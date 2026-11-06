@@ -761,9 +761,18 @@ def test_out_of_range_wait_reports_distance_without_changing_native_limit():
     assert engine.running and engine.attempts == 0
 
 
-@pytest.mark.parametrize("enabled,stop_fault", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize(
+    "enabled,stop_fault,general",
+    [
+        (False, False, False),
+        (True, False, False),
+        (True, True, False),
+        (True, False, True),
+        (True, True, True),
+    ],
+)
 def test_worker_owns_speed_until_cancelled_and_restore_is_confirmed(
-    monkeypatch, enabled, stop_fault
+    monkeypatch, enabled, stop_fault, general
 ):
     lifecycle = []
 
@@ -789,6 +798,7 @@ def test_worker_owns_speed_until_cancelled_and_restore_is_confirmed(
 
     class Clock:
         def __init__(self, session, window, signal, rate):
+            assert rate == (2.0 if general else 1.25)
             self.signal, self.attempted = signal, True
             self.report = {"armed": True, "current_rate": 1.0, "message": "Esperando combate"}
 
@@ -815,12 +825,24 @@ def test_worker_owns_speed_until_cancelled_and_restore_is_confirmed(
     monkeypatch.setattr("atlantica_bot.hunt_loop.SpeedLease", lambda pid: Lease("speed"))
     monkeypatch.setattr("atlantica_bot.hunt_loop.BotLease", lambda pid: Lease("bot"))
     monkeypatch.setattr("atlantica_bot.hunt_loop.Cancellation", Signal)
-    monkeypatch.setattr("atlantica_bot.hunt_loop.NativeClock", Clock)
+
+    def other_mode(*_args):
+        pytest.fail("The unselected Speed mode must not start")
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.NativeClock", other_mode if general else Clock)
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.GeneralNativeClock", Clock if general else other_mode
+    )
     worker = HuntWorker(
         SimpleNamespace(creation_time=777, process=SimpleNamespace(pid=100)),
         ClientWindow(100, 0x1234, "Atlantica"),
         DETECTOR,
-        profile=replace(BotProfile.default(1), battle_speed_enabled=enabled),
+        profile=replace(
+            BotProfile.default(1),
+            battle_speed_enabled=enabled and not general,
+            general_speed_enabled=enabled and general,
+            general_speed_rate=2.0,
+        ),
     )
     monkeypatch.setattr(worker, "_iteration", lambda: worker.engine.stop("Finished"))
     worker._run()

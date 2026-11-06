@@ -122,6 +122,19 @@ def check_character_settings(panel) -> None:
         assert saved.battle_speed_enabled and saved.battle_speed_rate == 3
         assert saved.neo_loot_grace_seconds == 0.25 and saved.attack_delay_seconds == 1.5
         assert first_store.load_preferences() == CharacterPreferences(2, True)
+        assert not panel.general_speed_enabled.get()
+        panel.general_speed_check.invoke()
+        panel.general_speed_rate.set("2")
+        panel.flush_character_settings()
+        assert panel.general_speed_enabled.get() and not panel.battle_speed_enabled.get()
+        assert first_store.load(2).general_speed_rate == 2
+        assert first_store.load(2).battle_speed_rate == 3
+        panel.battle_speed_check.invoke()
+        panel.flush_character_settings()
+        assert panel.battle_speed_enabled.get() and not panel.general_speed_enabled.get()
+        assert panel.battle_speed_rate.get() == "3" and panel.general_speed_rate.get() == "2"
+        panel.general_speed_check.invoke()
+        panel.flush_character_settings()
 
         # Invalid input keeps the previous file, and name polling preserves live edits.
         path = first_store.directory / "profile-2.json"
@@ -141,6 +154,7 @@ def check_character_settings(panel) -> None:
         assert panel.character_store.key != first_store.key
         assert panel.search_radius.get() == "60" and not panel.turns_enabled.get()
         assert not panel.battle_speed_enabled.get()
+        assert not panel.general_speed_enabled.get()
         panel.search_radius.set("15")
         panel.flush_character_settings()
         second_store = panel.character_store
@@ -151,6 +165,8 @@ def check_character_settings(panel) -> None:
         assert panel.search_radius.get() == "300" and panel.collect_loot.get()
         assert panel.profile.mercenaries == members
         assert panel.profile.pass_remaining
+        assert panel.general_speed_enabled.get() and panel.general_speed_rate.get() == "2"
+        assert not panel.battle_speed_enabled.get() and panel.battle_speed_rate.get() == "3"
         assert panel.bot_worker is None and panel.speed_experiment is None
 
         # An unflushed callback from a replaced PID must not write into either character.
