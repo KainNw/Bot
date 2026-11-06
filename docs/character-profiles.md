@@ -12,6 +12,7 @@ El guardado incluye:
   primer turno.
 - Modo de ataque al mob, radio y espera antes del encuentro.
 - Recogida de botín restante y espera del NeoACA.
+- Recogida inmediata: omite la espera guardada mientras está marcada.
 - Modo de Speed y factores separados de General y Combate, y la opción
   **Ejecutar turnos del perfil**.
 - Auto Life de MP: habilitación, umbral y tecla F1–F9.

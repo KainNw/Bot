@@ -40,7 +40,7 @@ def test_magic_actions_and_fallback_are_saved_per_mercenary_in_priority_order(tm
     store.save(updated)
     assert store.load(1) == updated
     payload = json.loads((tmp_path / "profile-1.json").read_text())
-    assert payload["schema_version"] == 10
+    assert payload["schema_version"] == 11
     assert [m["action"] for m in payload["mercenaries"]] == list(reversed(actions))
     assert payload["turn_execution_available"] is True
 
@@ -64,8 +64,47 @@ def test_legacy_profile_migrates_in_memory_without_rewriting_or_losing_settings(
     assert all(m.action == "basic" and m.fallback_basic for m in loaded.mercenaries)
     assert path.read_bytes() == saved
     store.save(loaded)
-    assert json.loads(path.read_bytes())["schema_version"] == 10
+    assert json.loads(path.read_bytes())["schema_version"] == 11
     assert store.load(1) == loaded
+
+
+@pytest.mark.parametrize("instant", [False, True])
+def test_instant_loot_keeps_saved_neo_wait_and_other_features(tmp_path, instant):
+    profile = replace(
+        BotProfile.default(1),
+        collect_remaining_loot=True,
+        instant_loot=instant,
+        neo_loot_grace_seconds=3,
+        general_speed_rate=2,
+        auto_life_key="F9",
+    )
+    store = ProfileStore(tmp_path)
+    store.save(profile)
+    saved = store.load(1)
+    assert saved == profile and saved.loot_grace_seconds == (0 if instant else 3)
+
+
+def test_previous_profile_gets_instant_loot_without_rewriting_or_losing_neo_value(tmp_path):
+    old = replace(BotProfile.default(1), collect_remaining_loot=True, neo_loot_grace_seconds=2.5)
+    payload = old.summary()
+    payload["schema_version"] = 10
+    del payload["instant_loot"]
+    path = tmp_path / "profile-1.json"
+    raw = json.dumps(payload).encode()
+    path.write_bytes(raw)
+    loaded = ProfileStore(tmp_path).load(1)
+    assert loaded.instant_loot and loaded.loot_grace_seconds == 0
+    assert loaded.neo_loot_grace_seconds == 2.5 and path.read_bytes() == raw
+
+
+@pytest.mark.parametrize("invalid", [0, 1, "true", None])
+def test_invalid_instant_loot_preserves_saved_profile(tmp_path, invalid):
+    store = ProfileStore(tmp_path)
+    original = BotProfile.default(1)
+    store.save(original)
+    with pytest.raises(DiagnosticError, match="inmediata"):
+        store.save(replace(original, instant_loot=invalid))
+    assert store.load(1) == original
 
 
 @pytest.mark.parametrize("grace", [0, 0.25, 1, 5])

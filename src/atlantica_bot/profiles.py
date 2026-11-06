@@ -93,10 +93,15 @@ class BotProfile:
     auto_life_enabled: bool = False
     auto_life_threshold: int = 50
     auto_life_key: str = "F1"
+    instant_loot: bool = True
 
     @property
     def speed_enabled(self) -> bool:
         return self.battle_speed_enabled or self.general_speed_enabled
+
+    @property
+    def loot_grace_seconds(self) -> float:
+        return 0.0 if self.instant_loot else self.neo_loot_grace_seconds
 
     def validate(self) -> None:
         if type(self.number) is not int or self.number not in (1, 2, 3):
@@ -118,6 +123,8 @@ class BotProfile:
             raise DiagnosticError("El radio de búsqueda debe estar entre 5 y 500 casillas.")
         if type(self.collect_remaining_loot) is not bool:
             raise DiagnosticError("Revisa la opción de recogida de botín restante.")
+        if type(self.instant_loot) is not bool:
+            raise DiagnosticError("Revisa la opción de recogida inmediata.")
         if (
             type(self.neo_loot_grace_seconds) not in (int, float)
             or not math.isfinite(self.neo_loot_grace_seconds)
@@ -180,7 +187,7 @@ class BotProfile:
 
     def summary(self) -> dict:
         return {
-            "schema_version": 10,
+            "schema_version": 11,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "magic_first_turn_only": self.magic_first_turn_only,
@@ -197,6 +204,7 @@ class BotProfile:
             "auto_life_enabled": self.auto_life_enabled,
             "auto_life_threshold": self.auto_life_threshold,
             "auto_life_key": self.auto_life_key,
+            "instant_loot": self.instant_loot,
             "turn_execution_available": True,
         }
 
@@ -235,7 +243,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -268,6 +276,7 @@ class ProfileStore:
                 payload["auto_life_enabled"] if payload["schema_version"] >= 10 else False,
                 payload["auto_life_threshold"] if payload["schema_version"] >= 10 else 50,
                 payload["auto_life_key"] if payload["schema_version"] >= 10 else "F1",
+                payload["instant_loot"] if payload["schema_version"] >= 11 else True,
             )
             profile.validate()
             return profile

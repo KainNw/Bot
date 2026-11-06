@@ -106,17 +106,21 @@ def test_main_killing_all_enemies_stops_passes_and_leaves_time_for_loot(turn_fra
     assert bot.passes_queued == 0 and bot.running and bot.pending is None
 
 
-def test_no_pass_after_victory_when_optional_loot_is_enabled(turn_frame):
-    bot = engine(replace(plan(pass_remaining=True), collect_remaining_loot=True))
+@pytest.mark.parametrize("instant", [False, True])
+def test_no_pass_after_victory_when_optional_loot_is_enabled(turn_frame, instant):
+    bot = engine(
+        replace(plan(pass_remaining=True), collect_remaining_loot=True, instant_loot=instant)
+    )
     attack = bot.next(turn_frame, 0)
     record(bot, attack, 32, 0)
     dead = replace(
         turn_frame,
         units=tuple(replace(u, life=0) if u.world_slot != 1 else u for u in turn_frame.units),
     )
-    assert bot.next(dead, 0.2) is None
-    assert bot.next(dead, 1.1) is None
-    loot = bot.next(dead, 1.21)
+    if not instant:
+        assert bot.next(dead, 0.2) is None
+        assert bot.next(dead, 1.1) is None
+    loot = bot.next(dead, 0.2 if instant else 1.21)
     assert loot.action == "loot" and bot.passes_queued == 0
 
 

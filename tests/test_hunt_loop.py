@@ -568,6 +568,50 @@ def test_worker_dispatches_turns_only_when_enabled_and_never_scans_world_in_batt
         assert len(worker.engine.summary()["combat"]["roster"]) == 9
 
 
+@pytest.mark.parametrize("first_code,expected_calls", [(37, 2), (36, 1), (10, 1), (11, 1)])
+def test_instant_loot_reads_fresh_after_definite_rejection_without_wait_or_uncertain_repeat(
+    turn_frame, monkeypatch, first_code, expected_calls
+):
+    frame = replace(
+        turn_frame,
+        units=tuple(replace(u, life=0) if u.world_slot != 1 else u for u in turn_frame.units),
+    )
+    worker = HuntWorker(
+        SimpleNamespace(process=SimpleNamespace(pid=100), creation_time=777),
+        ClientWindow(100, 12345, "Atlantica", 1234),
+        DETECTOR,
+        profile=replace(BotProfile.default(1), collect_remaining_loot=True),
+    )
+    reads, requests = [], []
+    monkeypatch.setattr(
+        "atlantica_bot.hunt_loop.observe_scene", lambda *a, **kw: observation(active=True)
+    )
+
+    def read_frame(_):
+        reads.append(1)
+        return frame
+
+    def send(_session, _window, trial, **_kwargs):
+        requests.append(trial)
+        return {
+            "pid": 100,
+            "operation": trial.operation,
+            "status": first_code if len(requests) == 1 else 36,
+        }
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.read_battle_frame", read_frame)
+    monkeypatch.setattr("atlantica_bot.hunt_loop.try_battle_action", send)
+    worker._iteration()
+    worker._iteration()
+    assert len(requests) == len(reads) == expected_calls
+    assert all(t.action == "loot" for t in requests)
+    if expected_calls == 2:
+        assert requests[0].target != requests[1].target
+        assert worker.turns.loot_queued == 1 and worker.engine.running
+    else:
+        assert worker.turns.loot_queued == int(first_code == 36)
+
+
 @pytest.mark.parametrize("mode", ["nearby", "native", "stationary"])
 @pytest.mark.parametrize("execute_turns", [False, True])
 def test_worker_handles_late_battle_without_resending_world_attack_or_losing_pid(

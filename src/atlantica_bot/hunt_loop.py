@@ -1298,6 +1298,13 @@ class HuntWorker:
             return 0.1
         if self.turns is not None and self.engine.phase in ("confirming_battle", "battle"):
             frame = self.turns.last_frame
+            if (
+                frame is not None
+                and self.turns.profile.collect_remaining_loot
+                and self.turns.profile.instant_loot
+                and (not frame.enemies or self.turns.pending is not None)
+            ):
+                return 0.05
             waiting_opening = self.turns.opening_turn is None and not self.turns.finished_opening
             if (
                 self.turns.pending is not None
@@ -1527,9 +1534,8 @@ class HuntWorker:
                     self.engine.record(candidate, report, time.monotonic())
         if self.turns is not None and self.engine.running:
             if self.engine.phase == "battle":
-                # A successful selection rebuilds the bar synchronously. Read it again
-                # immediately; never wait a polling interval or reuse the previous bar.
-                # At most one selection and one action, or two selections if plans change.
+                # Reread after selection or a definite no-send loot rejection.
+                # Bound the burst to two requests; a queued action ends the cycle.
                 for _ in range(2):
                     if self.stop_event.is_set():
                         break
@@ -1546,7 +1552,16 @@ class HuntWorker:
                         self.session, self.window, trial, cancellation=self.cancellation
                     )
                     self.turns.record(trial, report, time.monotonic())
-                    if report["status"] != 31 or trial.operation != 7 or not self.turns.running:
+                    can_advance = (
+                        report["status"] == 31
+                        and trial.operation == 7
+                        or (
+                            self.turns.profile.instant_loot
+                            and trial.action == "loot"
+                            and report["status"] == 37
+                        )
+                    )
+                    if not can_advance or not self.turns.running:
                         break
                 if self.engine.phase == "battle":
                     self.engine.message = self.turns.message

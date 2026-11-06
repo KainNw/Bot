@@ -19,7 +19,7 @@ def defeated(frame):
 
 
 def collector(frame, *, ledger=None, execute=False):
-    profile = replace(BotProfile.default(1), collect_remaining_loot=True)
+    profile = replace(BotProfile.default(1), collect_remaining_loot=True, instant_loot=False)
     bot = TurnEngine(
         frame.context.pid, frame.context.creation_time, profile, ledger, execute_orders=execute
     )
@@ -45,6 +45,7 @@ def test_collection_waits_for_all_enemies_and_neo_grace_without_attacking_manual
     assert summary["loot"]["queued"] == 1 and summary["queued"] == 0
     assert summary["loot"]["collection_confirmed"] is False
     assert summary["loot"]["bonus_detection_verified"] is False
+    assert summary["loot"]["first_request_after_corpses_seconds"] == 1
 
 
 def test_collection_is_optional_and_never_delays_the_opening_magic(turn_frame):
@@ -61,8 +62,7 @@ def test_collection_is_optional_and_never_delays_the_opening_magic(turn_frame):
     assert trial.action == "Q"
     record(bot, trial, 32, 0.1)
     dead = defeated(turn_frame)
-    assert bot.next(dead, 0.2) is None
-    loot = bot.next(dead, 1.2)
+    loot = bot.next(dead, 0.2)
     assert loot.action == "loot" and loot.source == trial.source
     assert 1 in bot.consumed  # An offensive order does not block a separate search action.
     disabled = TurnEngine(100, 777, original)
@@ -171,11 +171,85 @@ def test_worker_observes_pending_actions_frequently_without_sending_another(turn
     worker.turns.enter(fresh=True)
     trial = worker.turns.next(turn_frame, 0)
     record(worker.turns, trial, 26, 0)
-    assert worker._poll_delay() == 0.1
+    assert worker._poll_delay() == (0.05 if collect else 0.1)
     assert worker.turns.pending is not None and worker.turns.inflight is None
     assert worker.turns.queued == 1
     worker.turns.next(defeated(turn_frame), 1)
-    assert worker._poll_delay() == (0.1 if collect else 0.5)
+    assert worker._poll_delay() == (0.05 if collect else 0.5)
+
+
+def test_instant_collection_starts_on_first_defeated_frame_despite_saved_neo_wait(turn_frame):
+    frame = defeated(turn_frame)
+    bot = collector(frame)
+    bot.profile = replace(bot.profile, instant_loot=True, neo_loot_grace_seconds=5)
+    trial = bot.next(frame, 10)
+    assert trial.action == "loot" and trial.target.life == 0
+    assert bot.summary()["loot"]["instant"]
+    assert bot.summary()["loot"]["effective_grace_seconds"] == 0
+    assert bot.summary()["loot"]["neo_grace_seconds"] == 5
+
+
+@pytest.mark.parametrize("busy_main", [True, False])
+def test_available_collector_is_chosen_without_waiting_for_unavailable_main(turn_frame, busy_main):
+    frame = defeated(turn_frame)
+    main = (
+        replace(frame.sources[0], action_state=2)
+        if busy_main
+        else replace(frame.sources[0], flags=0)
+    )
+    frame = replace(frame, units=(main, *frame.units[1:]), selected_unit=frame.sources[1].address)
+    bot = collector(frame)
+    bot.profile = replace(bot.profile, instant_loot=True)
+    trial = bot.next(frame, 10)
+    assert trial.action == "loot" and trial.source.member_slot == 2
+    assert not bot.loot_unready_attempts and not bot.loot_skipped
+
+
+def test_instant_loot_prefers_selected_available_member_without_changing_attack_order(turn_frame):
+    frame = replace(defeated(turn_frame), selected_unit=turn_frame.sources[1].address)
+    bot = collector(frame)
+    bot.profile = replace(bot.profile, instant_loot=True)
+    trial = bot.next(frame, 10)
+    assert trial.action == "loot" and trial.source.member_slot == 2
+    assert bot.profile.mercenaries[0].slot == 1 and bot.selections == 0
+
+
+@pytest.mark.parametrize("progress", ["corpse_gone", "corpse_state", "animation_complete"])
+def test_instant_loot_advances_on_observed_completion_without_extra_settle(turn_frame, progress):
+    frame = defeated(turn_frame)
+    bot = collector(frame)
+    bot.profile = replace(bot.profile, instant_loot=True)
+    trial = bot.next(frame, 10)
+    record(bot, trial, 36, 10)
+    if progress == "corpse_gone":
+        ready = replace(frame, units=tuple(u for u in frame.units if u != trial.target))
+    elif progress == "corpse_state":
+        ready = replace(
+            frame,
+            units=tuple(
+                replace(u, flags=u.flags ^ 1) if u == trial.target else u for u in frame.units
+            ),
+        )
+    else:
+        busy = replace(frame, units=(replace(frame.sources[0], action_state=2), *frame.units[1:]))
+        assert bot.next(busy, 10.01) is None
+        ready = frame
+    next_trial = bot.next(ready, 10.02)
+    assert next_trial.action == "loot" and next_trial.target != trial.target
+    assert bot.observed == 1 and bot.loot_queued == 1
+    assert not bot.summary()["loot"]["collection_confirmed"]
+
+
+def test_instant_mode_keeps_unknown_pending_result_without_repeating_search(turn_frame):
+    frame = defeated(turn_frame)
+    bot = collector(frame)
+    bot.profile = replace(bot.profile, instant_loot=True)
+    trial = bot.next(frame, 10)
+    record(bot, trial, 36, 10)
+    assert bot.next(frame, 10.01) is None
+    assert bot.next(frame, 21.99) is None
+    assert bot.next(frame, 22) is None
+    assert bot.loot_queued == 1 and bot.needs_reconnect and not bot.running
 
 
 def test_loot_state_explains_no_known_corpse_instead_of_claiming_bonus_received(turn_frame):

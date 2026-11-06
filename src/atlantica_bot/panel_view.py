@@ -301,6 +301,10 @@ def _hunting(p) -> None:
         body, text="Recoger botín restante / bonus", variable=p.collect_loot
     )
     p.loot_check.pack(anchor="w")
+    p.instant_loot_check = ttk.Checkbutton(
+        body, text="Recogida inmediata (sin espera)", variable=p.instant_loot
+    )
+    p.instant_loot_check.pack(anchor="w", pady=(6, 0))
     row = ttk.Frame(body)
     row.pack(fill="x", pady=(10, 0))
     ttk.Label(row, text="Espera del NeoACA (0–5 s)").pack(side="left")
@@ -310,8 +314,8 @@ def _hunting(p) -> None:
     p.neo_loot_grace_entry.pack(side="left", padx=8)
     ttk.Label(
         body,
-        text="Al terminar con los mobs, espera al NeoACA y después busca el botín restante. "
-        "La recogida del bonus es experimental.",
+        text="Inmediata omite la espera del NeoACA y usa un recolector disponible en cuanto "
+        "el cliente lo permite. Desmárcala para usar la espera configurada.",
         style="Caption.TLabel",
         wraplength=370,
     ).pack(anchor="w", pady=(8, 0))

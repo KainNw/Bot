@@ -255,6 +255,20 @@ class TurnEngine:
             # A full busy → idle transition supports a shorter settle. A resource
             # change alone can precede the animation, so it keeps the longer wait.
             settle = 0.2 if pending.seen_busy and source is not None else 0.5
+            if (
+                trial.action == "loot"
+                and self.profile.instant_loot
+                and (
+                    target is None
+                    or target.flags != trial.target.flags
+                    or target.action_state != trial.target.action_state
+                    or pending.seen_busy
+                    and source is not None
+                )
+            ):
+                # Corpse progress or a completed busy -> idle cycle already
+                # provides feedback; do not add a second fixed animation wait.
+                settle = 0.0
             if now - pending.idle_since >= settle:
                 self.observed += 1
                 self._order(
@@ -293,10 +307,11 @@ class TurnEngine:
         if not frame.corpses:
             self.loot_wait_reason = "no_known_corpses"
             return None
+        self._mark("first_corpses_observed", now)
         if self.loot_empty_since is None:
             self.loot_empty_since = now
         # Give NeoACA the first opportunity. This does not delay the opening magic.
-        if now - self.loot_empty_since < self.profile.neo_loot_grace_seconds:
+        if now - self.loot_empty_since < self.profile.loot_grace_seconds:
             self.loot_wait_reason = "neo_grace"
             self.message = "Esperando la recogida del NeoACA antes de buscar botín restante."
             return None
@@ -308,12 +323,23 @@ class TurnEngine:
             self.loot_wait_reason = "pending_result"
             return None
         sources = {u.member_slot: u for u in frame.sources}
-        for plan in self.profile.mercenaries:
+        plans = self.profile.mercenaries
+        if self.profile.instant_loot:
+            plans = tuple(
+                sorted(
+                    plans,
+                    key=lambda p: (
+                        not (p.slot in sources and sources[p.slot].address == frame.selected_unit)
+                    ),
+                )
+            )
+        for plan in plans:
             source = sources.get(plan.slot)
             if (
                 not plan.enabled
                 or source is None
                 or source.action_state != 1
+                or not source.flags & 0x8000
                 or plan.slot in self.loot_skipped
             ):
                 continue
@@ -578,6 +604,7 @@ class TurnEngine:
         self.attempts += 1
         slot = trial.source.member_slot
         if code == 36:
+            self._mark("first_loot_queued", now)
             self.loot_wait_reason = "pending_result"
             self.loot_queued += 1
             self.ledger.add(loot_key(trial.frame, trial.target))
@@ -657,6 +684,14 @@ class TurnEngine:
                 "paused": self.loot_suspended,
                 "pause_reason": self.loot_pause_reason,
                 "neo_grace_seconds": self.profile.neo_loot_grace_seconds,
+                "instant": self.profile.instant_loot,
+                "effective_grace_seconds": self.profile.loot_grace_seconds,
+                "first_request_after_corpses_seconds": round(
+                    self.timeline["first_loot_queued"] - self.timeline["first_corpses_observed"], 3
+                )
+                if "first_loot_queued" in self.timeline
+                and "first_corpses_observed" in self.timeline
+                else None,
                 "wait_reason": self.loot_wait_reason,
                 "known_corpses": len(self.last_frame.corpses) if self.last_frame else 0,
                 "unready_attempts": dict(self.loot_unready_attempts),

@@ -1,7 +1,14 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.26.0** activa **Speedhack general** al
+con Auto Battle apagado. La versión **0.27.0** añade **Recogida inmediata (sin espera)**,
+activada por defecto: omite la espera del NeoACA, elige un recolector disponible y
+aprovecha el que ya está seleccionado. Reduce la pausa de observación a 50 ms y
+elimina la espera añadida tras observar un cadáver desaparecer o una animación
+de recogida completada. Conserva las guardas nativas y no repite órdenes encoladas.
+Consulta [caza y botín](docs/hunt-settings.md).
+
+Conserva **Speedhack general** de **0.26.0**, que se activa al
 marcar la casilla, sin iniciar el bot, con factor propio de **1,25× a 4×**.
 Permanece en mapa y combate del PID seleccionado aunque pares el bot;
 al desmarcar o cerrar el panel vuelve a 1×. **Speed en combate** conserva su comportamiento de

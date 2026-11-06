@@ -98,6 +98,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.search_radius = tk.StringVar(value="60")
             self.attack_delay = tk.StringVar(value="0")
             self.collect_loot = tk.BooleanVar(value=False)
+            self.instant_loot = tk.BooleanVar(value=True)
             self.neo_loot_grace = tk.StringVar(value="1")
             self.battle_speed_enabled = tk.BooleanVar(value=False)
             self.battle_speed_rate = tk.StringVar(value="1.25")
@@ -137,12 +138,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.status.trace_add("write", self.sync_identity)
             self.bot_status.trace_add("write", self.sync_identity)
             self.profile_number.trace_add("write", self.sync_identity)
+            self.instant_loot.trace_add("write", lambda *_: self.lock_target_controls())
             self.load_profile()
             self.sync_identity()
             for variable in (
                 self.attack_delay,
                 self.search_radius,
                 self.collect_loot,
+                self.instant_loot,
                 self.neo_loot_grace,
                 self.battle_speed_enabled,
                 self.battle_speed_rate,
@@ -529,6 +532,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     attack_delay=self.attack_delay,
                     search_radius=self.search_radius,
                     collect_loot=self.collect_loot,
+                    instant_loot=self.instant_loot,
                     neo_loot_grace=self.neo_loot_grace,
                     on_save=self.save_hunt_options,
                     on_calibrate=self.calibrate_radius,
@@ -717,6 +721,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.radius_calibrate_button,
                 self.delay_entry,
                 self.loot_check,
+                self.instant_loot_check,
                 self.neo_loot_grace_entry,
                 self.battle_speed_check,
                 self.auto_life_check,
@@ -751,6 +756,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.bot_stop_button.configure(
                 state="normal" if self.bot_worker is not None else "disabled"
             )
+            if self.instant_loot.get():
+                self.neo_loot_grace_entry.configure(state="disabled")
             if active:
                 for button in (
                     self.capture_button,
@@ -968,6 +975,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.attack_delay.set(f"{profile.attack_delay_seconds:g}")
                 self.search_radius.set(str(profile.search_radius))
                 self.collect_loot.set(profile.collect_remaining_loot)
+                self.instant_loot.set(profile.instant_loot)
                 self.neo_loot_grace.set(f"{profile.neo_loot_grace_seconds:g}")
                 self.battle_speed_enabled.set(profile.battle_speed_enabled)
                 self.battle_speed_rate.set(f"{profile.battle_speed_rate:g}")
@@ -1020,6 +1028,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 attack_delay_seconds=delay,
                 search_radius=radius,
                 collect_remaining_loot=self.collect_loot.get(),
+                instant_loot=self.instant_loot.get(),
                 neo_loot_grace_seconds=neo_grace,
                 battle_speed_enabled=self.battle_speed_enabled.get(),
                 battle_speed_rate=speed_rate,
@@ -2668,6 +2677,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.show_overview()
         overview = panel.overview
         assert overview is not None and overview.alive and len(overview.cells) == 9
+        assert panel.instant_loot.get()
+        assert str(overview.grace_entry.cget("state")) == "disabled"
+        panel.instant_loot_check.invoke()
+        assert not overview.instant_loot.get()
+        assert str(overview.grace_entry.cget("state")) == "normal"
+        panel.instant_loot_check.invoke()
+        assert overview.instant_loot.get()
+        assert str(overview.grace_entry.cget("state")) == "disabled"
         assert "Turnos manuales" in overview.identity.get()
         assert "no ejecutará básicos ni magias" in panel.execution_status.get()
         panel.turns_enabled.set(True)

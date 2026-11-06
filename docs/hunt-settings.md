@@ -1,4 +1,4 @@
-# Caza y botín — 0.22.0
+# Caza y botín — 0.27.0
 
 La pestaña **Caza y botín** está en el panel y en **Vista general**. Comparte los
 valores de la misma conexión. Guarda las opciones en el perfil elegido (1–3),
@@ -48,11 +48,16 @@ El usuario indica que el bonus aparece dentro de la batalla después de eliminar
 a todos los mobs, cada ciertos minutos, y se recoge con X. La opción comienza
 desactivada para los perfiles anteriores. Al habilitarla:
 
-1. Espera que no haya enemigos vivos y deja la **Espera del NeoACA** configurada
-   para su recogida: de 0 a 5 s, con decimales; por defecto, 1 s. Este ajuste no
-   modifica el temporizador del robot ni retrasa la magia inicial.
+1. Espera que no haya enemigos vivos. **Recogida inmediata (sin espera)** viene
+   activada y omite la espera fija del NeoACA, incluidos perfiles anteriores.
+   Si la desmarcas, se aplica la **Espera del NeoACA** guardada: de 0 a 5 s,
+   con decimales. Su valor anterior se conserva aunque quede inactivo.
+   El ajuste no modifica el temporizador del robot ni retrasa la magia inicial.
 2. En el turno propio y la fase normal, elige un miembro presente y habilitado,
-   en el orden del perfil, y un enemigo derrotado.
+   con la señal de disponibilidad del cliente, y un enemigo derrotado. En modo
+   inmediato aprovecha el miembro seleccionado si está habilitado y disponible;
+   después conserva el orden del perfil entre los demás. Las órdenes de ataque
+   y magia conservan su prioridad habitual.
 3. Selecciona ese miembro y vuelve a leer el combate. Solicita la búsqueda nativa
    solo si el cliente confirma su disponibilidad y la elegibilidad del cadáver.
 4. No repite una búsqueda encolada sobre el mismo cadáver, aunque cambie de miembro,
@@ -64,6 +69,18 @@ la recogida. Solo los miembros presentes y habilitados pueden recibirla. Desde
 la recogida: el cliente vuelve a comprobar la elegibilidad propia de la búsqueda.
 Los límites de tres comprobaciones sin envío por miembro/turno son independientes
 para combate y recogida. Las órdenes ya encoladas no se vuelven a enviar.
+Desde 0.27.0 omite de entrada los miembros sin el bit nativo de disponibilidad
+`0x8000`, evitando solicitudes condenadas a ser rechazadas. Si la búsqueda devuelve
+un rechazo definitivo sin envío (37), puede consultar el siguiente cadáver con una
+lectura fresca dentro del mismo ciclo; mantiene el máximo de dos solicitudes.
+Una solicitud encolada o incierta corta ese avance.
+
+La observación durante la recogida inmediata y las acciones pendientes revisa cada
+50 ms, más el tiempo que tarden las lecturas. Si desaparece el cadáver, cambia su
+estado o se observa el ciclo ocupado→disponible del recolector, continúa sin los 200–500 ms adicionales
+que antes se añadían. Una unidad aún ocupada o una orden sin progreso siguen esperando.
+La aceptación del servidor y la duración real de la animación siguen dependiendo
+del cliente; no se prometen cero milisegundos ni recepción de inventario.
 No envía X global ni cambia el foco de otras ventanas. Cada solicitud conserva
 PID, fecha de creación, ventana, contexto, turno y las identidades elegidas.
 
@@ -83,6 +100,8 @@ estado PID…** y **Exportar combate** antes de parar.
 `combat.loot` incluye el número de cuerpos conocidos, el motivo de espera
 (`neo_grace`, `enemy_turn`, `no_known_corpses`, `no_eligible_collector`,
 `pending_result` o `all_corpses_requested`) y las comprobaciones sin envío.
+También indica `instant`, la espera efectiva y el tiempo observado desde los
+primeros cadáveres hasta la primera búsqueda encolada.
 `combat.pending` indica el tiempo pendiente y si se observó animación o cambio
 de estado; ninguno de esos datos confirma la recepción en el inventario.
 Para comparar un bonus de armas/equipamiento o libros que no se recoge, utiliza
@@ -109,8 +128,9 @@ previa pausa solo la recogida restante hasta el siguiente combate. No repite esa
 orden ni detiene la caza. El modo **Combate automático / Turnos manuales** se muestra
 por separado: activar recogida no activa básicos ni magias.
 
-IPC versión 8, estructura de 408 bytes, operación 9; no cambia las operaciones
-de ataque, magia o persecución existentes. Se prueban persistencia/migración,
+La recogida conserva la operación 9 y el IPC 14 de 700 bytes de 0.26.0; esta mejora
+no modifica el puente nativo ni las operaciones de ataque, magia o persecución.
+Se prueban persistencia/migración,
 límites y calibración del radio, cuenta interrumpible, guardas de cadáveres,
 rechazos, registro contra duplicados y respuestas ligadas al PID/turno. El workflow
 de Windows compila x86 y comprueba cancelación y arranque de la interfaz empaquetada;

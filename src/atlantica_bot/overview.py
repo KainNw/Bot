@@ -26,6 +26,7 @@ class OverviewWindow:
         attack_delay,
         search_radius,
         collect_loot,
+        instant_loot,
         neo_loot_grace,
         on_save: Callable,
         on_calibrate: Callable,
@@ -39,6 +40,7 @@ class OverviewWindow:
         self._pid: int | None = None
         self._main_alias = ""
         self._execute_orders = execute_turns.get()
+        self.instant_loot = instant_loot
         self.window = tk.Toplevel(parent)
         self.window.title("Atlantica — Vista general")
         self.window.configure(background=BACKGROUND)
@@ -131,6 +133,18 @@ class OverviewWindow:
         )
         loot.pack(anchor="w", pady=8)
         self.hunt_controls.append(loot)
+        instant = tk.Checkbutton(
+            hunting,
+            text="Recogida inmediata (sin espera)",
+            variable=instant_loot,
+            background=SURFACE,
+            foreground=TEXT,
+            activebackground=SURFACE,
+            activeforeground=TEXT,
+            selectcolor=BACKGROUND,
+        )
+        instant.pack(anchor="w", pady=(0, 8))
+        self.hunt_controls.append(instant)
         grace_row = tk.Frame(hunting, background=SURFACE)
         grace_row.pack(fill="x", pady=(0, 8))
         tk.Label(
@@ -140,10 +154,11 @@ class OverviewWindow:
             grace_row, from_=0, to=5, increment=0.25, textvariable=neo_loot_grace, width=7
         )
         grace.pack(side="left")
+        self.grace_entry = grace
         self.hunt_controls.append(grace)
         option_label(
-            "Al acabar la espera del NeoACA, usa la búsqueda nativa en enemigos derrotados. "
-            "La recogida del bonus necesita confirmación en el juego."
+            "Inmediata omite la espera del NeoACA y usa un recolector disponible cuando el "
+            "cliente lo permite. Desmárcala para usar la espera configurada."
         )
         controls = tk.Frame(hunting, background=SURFACE)
         controls.pack(anchor="w", pady=8)
@@ -350,6 +365,9 @@ class OverviewWindow:
         self.attack_mode_list.configure(state="readonly" if editable else "disabled")
         for widget in self.hunt_controls:
             widget.configure(state="normal" if editable else "disabled")
+        self.grace_entry.configure(
+            state="normal" if editable and not self.instant_loot.get() else "disabled"
+        )
         self.start_button.configure(state="normal" if start else "disabled")
         self.stop_button.configure(state="normal" if stop else "disabled")
         self.configure_button.configure(state="normal" if editable else "disabled")
