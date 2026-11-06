@@ -233,6 +233,24 @@ def check_character_settings(panel) -> None:
         identify(505, 50, "MainTres")
         assert panel.profile == BotProfile.default(1)
 
+        # The new independent preference survives PID changes without replacing
+        # the existing bot's battle speed or starting either clock on load.
+        panel.battle_speed_enabled.set(True)
+        panel.battle_speed_rate.set("3")
+        panel.independent_battle_speed_rate.set("2")
+        with patch.object(panel, "apply_independent_battle_speed") as apply_speed:
+            panel.independent_battle_speed_check.invoke()
+            apply_speed.assert_called_once()
+        panel.flush_character_settings()
+        saved = third_store.load(1)
+        assert saved.independent_battle_speed_enabled and saved.independent_battle_speed_rate == 2
+        assert saved.battle_speed_enabled and saved.battle_speed_rate == 3
+        connect(606, 60, "MainTres")
+        assert panel.independent_battle_speed_enabled.get()
+        assert panel.independent_battle_speed_rate.get() == "2"
+        assert panel.battle_speed_enabled.get() and panel.battle_speed_rate.get() == "3"
+        assert panel.independent_battle_speed_worker is None and panel.bot_worker is None
+
         panel.session = None
         panel.template_profile_store = original_templates
         panel.sync_identity()
@@ -294,4 +312,106 @@ def check_general_speed_controls(panel) -> None:
     finally:
         panel.session = original
         panel.general_speed_report = {}
+        panel.lock_target_controls()
+
+
+def check_independent_battle_speed_controls(panel) -> None:
+    calls = []
+
+    class Worker:
+        def __init__(self, session, window, rate):
+            assert rate == 2
+            self.window = window
+            self.alive = False
+            self.report = {
+                "pid": window.pid,
+                "creation_time": session.creation_time,
+                "mode": "battle",
+                "independent": True,
+                "enabled": True,
+                "armed": True,
+                "current_rate": 1,
+                "message": "Esperando combate",
+            }
+
+        def start(self):
+            calls.append("arm")
+            self.alive = True
+
+        def stop(self):
+            calls.append("restore")
+            self.alive = False
+            self.report.update(armed=False, current_rate=1, message="Velocidad normal")
+
+    original_session, original_profile, original_detector = (
+        panel.session,
+        panel.profile,
+        panel.detector,
+    )
+    panel.session = SimpleNamespace(
+        process=SimpleNamespace(pid=777),
+        creation_time=888,
+        snapshot=lambda: SimpleNamespace(
+            auto_battle=False, hunting=False, files=SimpleNamespace(marker_present=False)
+        ),
+    )
+    window = SimpleNamespace(pid=777, handle=0x1234, thread_id=500)
+    try:
+        with (
+            patch("atlantica_bot.gui.IndependentBattleSpeedWorker", Worker),
+            patch.object(panel, "selected_window", return_value=window),
+            patch.object(panel, "error") as error,
+        ):
+            panel.independent_battle_speed_enabled.set(False)
+            panel.independent_battle_speed_rate.set("2")
+            panel.general_speed_enabled.set(False)
+            panel.battle_speed_enabled.set(True)
+            panel.battle_speed_rate.set("3")
+            panel.profile = replace(
+                BotProfile.default(1), battle_speed_enabled=True, battle_speed_rate=3
+            )
+            panel.lock_target_controls()
+            panel.independent_battle_speed_check.invoke()
+            worker = panel.independent_battle_speed_worker
+            assert worker.alive and panel.bot_worker is None and calls == ["arm"]
+            assert not panel.target_is_editable() and "independiente" in panel.detail.get()
+            assert panel.battle_speed_enabled.get() and panel.battle_speed_rate.get() == "3"
+            assert str(panel.general_speed_check.cget("state")) == "disabled"
+            panel.poll_independent_battle_speed()
+            assert "Esperando combate" in panel.independent_battle_speed_status.get()
+            worker.report.update(current_rate=2, message="En combate")
+            panel.poll_independent_battle_speed()
+            assert "2×" in panel.independent_battle_speed_status.get()
+            worker.report.update(current_rate=1, message="Regreso al mapa")
+            panel.poll_independent_battle_speed()
+            assert worker.alive and worker.report["armed"]
+            panel.stop_bot()
+            assert worker.alive and calls == ["arm"]
+            # Starting the original bot must never add a second clock owner.
+            from .combat import CombatDetector
+
+            panel.detector = CombatDetector(777, 888, "local_context")
+            with (
+                patch.object(panel, "refresh_main_identity"),
+                patch("atlantica_bot.gui.HuntWorker") as hunt,
+            ):
+                panel.start_bot()
+                hunt.assert_not_called()
+            assert error.call_count == 1 and "independiente" in str(error.call_args.args[0])
+            assert panel.battle_speed_enabled.get() and panel.battle_speed_rate.get() == "3"
+            panel.independent_battle_speed_check.invoke()
+            panel.poll_independent_battle_speed()
+            assert panel.independent_battle_speed_worker is None
+            assert (
+                calls == ["arm", "restore"]
+                and panel.independent_battle_speed_report["current_rate"] == 1
+            )
+            assert panel.battle_speed_enabled.get() and panel.battle_speed_rate.get() == "3"
+    finally:
+        panel.session, panel.profile, panel.detector = (
+            original_session,
+            original_profile,
+            original_detector,
+        )
+        panel.independent_battle_speed_report = {}
         panel.lock_target_controls()

@@ -10,9 +10,14 @@ from .ipc import Cancellation, SpeedLease
 class GeneralSpeedWorker:
     """Own only the selected instance's clock, independently of the hunting worker."""
 
+    mode = "general"
+    title = "Speed general"
+
     def __init__(self, session, window, rate: float):
         if session.creation_time is None or session.process.pid != window.pid:
-            raise DiagnosticError("Conecta con una instancia válida antes de activar General.")
+            raise DiagnosticError(
+                f"Conecta con una instancia válida antes de activar {self.title}."
+            )
         self.session, self.window, self.rate = session, window, rate
         self.stop_event = threading.Event()
         self.signal = None
@@ -20,11 +25,11 @@ class GeneralSpeedWorker:
             "pid": window.pid,
             "creation_time": session.creation_time,
             "enabled": True,
-            "mode": "general",
+            "mode": self.mode,
             "configured_rate": rate,
             "current_rate": 1.0,
             "armed": False,
-            "message": "Preparando Speed general",
+            "message": f"Preparando {self.title}",
         }
         self.thread = threading.Thread(
             target=self._run, name=f"AtlanticaSpeed-{window.pid}", daemon=True
@@ -45,6 +50,9 @@ class GeneralSpeedWorker:
     def _update(self, clock, **changes) -> None:
         self.report = {**self.report, **clock.report, **changes}
 
+    def _make_clock(self, signal):
+        return GeneralNativeClock(self.session, self.window, signal, self.rate)
+
     def _run(self) -> None:
         clock = None
         try:
@@ -53,7 +61,7 @@ class GeneralSpeedWorker:
                 try:
                     if self.stop_event.is_set():
                         return
-                    clock = GeneralNativeClock(self.session, self.window, signal, self.rate)
+                    clock = self._make_clock(signal)
                     clock.start()
                     self._update(clock)
                     while not self.stop_event.wait(0.25):

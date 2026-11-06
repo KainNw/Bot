@@ -1,7 +1,13 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.27.0** añade **Recogida inmediata (sin espera)**,
+con Auto Battle apagado. La versión **0.28.0** añade **Speed en combate independiente**:
+otra casilla con factor propio que espera a 1× en el mapa, acelera en batalla y
+vuelve a 1× al salir, sin iniciar el bot. Usa el controlador de combate existente
+con una cancelación independiente. Conserva la lógica y los ajustes del Speed
+vinculado a **Iniciar bot**. Consulta [Speed del panel](docs/panel-speed.md).
+
+Conserva **Recogida inmediata (sin espera)** de **0.27.0**,
 activada por defecto: omite la espera del NeoACA, elige un recolector disponible y
 aprovecha el que ya está seleccionado. Reduce la pausa de observación a 50 ms y
 elimina la espera añadida tras observar un cadáver desaparecer o una animación

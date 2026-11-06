@@ -231,6 +231,40 @@ def _hunting(p) -> None:
         style="Caption.TLabel",
         wraplength=370,
     ).pack(anchor="w")
+    independent, body = card(extras, "Speed en combate independiente")
+    independent.pack(fill="x", pady=(14, 0))
+    row = ttk.Frame(body)
+    row.pack(fill="x")
+    p.independent_battle_speed_check = ttk.Checkbutton(
+        row,
+        text="Activar sin iniciar bot",
+        variable=p.independent_battle_speed_enabled,
+        command=lambda: p.apply_independent_battle_speed(),
+    )
+    p.independent_battle_speed_check.pack(side="left")
+    p.independent_battle_speed_list = ttk.Combobox(
+        row,
+        textvariable=p.independent_battle_speed_rate,
+        values=("1.25", "1.5", "2", "3", "4"),
+        state="readonly",
+        width=6,
+    )
+    p.independent_battle_speed_list.pack(side="left", padx=8)
+    ttk.Label(row, text="×").pack(side="left")
+    p.independent_battle_speed_apply = ttk.Button(
+        row, text="Aplicar", command=p.apply_independent_battle_speed
+    )
+    p.independent_battle_speed_apply.pack(side="left", padx=(8, 0))
+    ttk.Label(
+        body, textvariable=p.independent_battle_speed_status, style="Accent.TLabel", wraplength=370
+    ).pack(anchor="w", pady=(8, 4))
+    ttk.Label(
+        body,
+        text="1× en el mapa; acelera al entrar en combate. Parar bot mantiene este "
+        "control. Desmarca o cierra el panel para volver a 1×.",
+        style="Caption.TLabel",
+        wraplength=370,
+    ).pack(anchor="w")
     general, body = card(extras, "Speedhack general")
     general.pack(fill="x", pady=(14, 0))
     row = ttk.Frame(body)

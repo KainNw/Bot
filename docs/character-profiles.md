@@ -15,6 +15,7 @@ El guardado incluye:
 - Recogida inmediata: omite la espera guardada mientras está marcada.
 - Modo de Speed y factores separados de General y Combate, y la opción
   **Ejecutar turnos del perfil**.
+- Speed en combate independiente: casilla y factor propios, sin sustituir los del bot.
 - Auto Life de MP: habilitación, umbral y tecla F1–F9.
 
 Los campos de caza, botín, Speed y ejecutar turnos se guardan automáticamente
@@ -26,7 +27,8 @@ o cerrar el panel guarda los cambios válidos que estén pendientes.
 
 **Conectar no inicia el bot ni aplica Speed al juego**. Carga los controles y
 espera a **Iniciar bot** para caza y Auto Life. General se aplica al marcar su
-casilla o pulsar **Aplicar**, aunque el bot esté detenido. Si ya hay una operación abierta, la carga de otra
+casilla o pulsar **Aplicar**, aunque el bot esté detenido. El Speed en combate
+independiente también se arma con su propia casilla o Aplicar. Si ya hay una operación abierta, la carga de otra
 configuración espera a que termine; no reemplaza un ciclo activo.
 
 ## Identificación y varias ventanas

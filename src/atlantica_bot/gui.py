@@ -11,6 +11,7 @@ from pathlib import Path
 from . import __version__
 from .battle import BattleTrial, read_battle_frame
 from .battle_context import read_normal_battle
+from .battle_speed import IndependentBattleSpeedWorker
 from .bonus import BONUS_LABELS, BonusComparison, capture_bonus_snapshot, read_bonus_code
 from .capture import export_code_context
 from .character_profiles import CharacterPreferences, CharacterProfileStore, character_key
@@ -67,6 +68,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.bot_worker: HuntWorker | None = None
             self.general_speed_worker: GeneralSpeedWorker | None = None
             self.general_speed_report = {}
+            self.independent_battle_speed_worker: IndependentBattleSpeedWorker | None = None
+            self.independent_battle_speed_report = {}
             self.bot_report = {}
             self.closing = False
             self.calibrating = False
@@ -106,6 +109,11 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.general_speed_enabled = tk.BooleanVar(value=False)
             self.general_speed_rate = tk.StringVar(value="1.25")
             self.general_speed_status = tk.StringVar(value="Speed general desactivado")
+            self.independent_battle_speed_enabled = tk.BooleanVar(value=False)
+            self.independent_battle_speed_rate = tk.StringVar(value="1.25")
+            self.independent_battle_speed_status = tk.StringVar(
+                value="Speed independiente desactivado"
+            )
             self.auto_life_enabled = tk.BooleanVar(value=False)
             self.auto_life_threshold = tk.StringVar(value="50")
             self.auto_life_key = tk.StringVar(value="F1")
@@ -151,6 +159,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.battle_speed_rate,
                 self.general_speed_enabled,
                 self.general_speed_rate,
+                self.independent_battle_speed_enabled,
+                self.independent_battle_speed_rate,
                 self.auto_life_enabled,
                 self.auto_life_threshold,
                 self.auto_life_key,
@@ -381,6 +391,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 if (
                     self.bot_worker is not None
                     or self.general_speed_worker is not None
+                    or self.independent_battle_speed_worker is not None
                     or self.calibrating
                     or self.bonus_open()
                     or self.speed_open()
@@ -499,11 +510,24 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 report = {}
             speed = report.get("speed", {})
             general = self.general_speed_report
-            if self.session is not None and (general.get("pid"), general.get("creation_time")) == (
-                self.session.process.pid,
-                self.session.creation_time,
+            if (
+                self.session is not None
+                and (general.get("pid"), general.get("creation_time"))
+                == (
+                    self.session.process.pid,
+                    self.session.creation_time,
+                )
+                and (self.general_speed_worker is not None or not speed.get("enabled"))
             ):
                 speed = general
+            independent = self.independent_battle_speed_report
+            if (
+                self.session is not None
+                and (independent.get("pid"), independent.get("creation_time"))
+                == (self.session.process.pid, self.session.creation_time)
+                and (self.independent_battle_speed_worker is not None or not speed.get("enabled"))
+            ):
+                speed = independent
             rate = speed.get("current_rate")
             speed_label = (
                 f"Speed {rate:g}×"
@@ -662,6 +686,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.flush_character_settings()
             self.stop_bot()
             self.stop_general_speed()
+            self.stop_independent_battle_speed()
             self.session = None
             self.directory = None
             self.start_button.configure(state="disabled")
@@ -702,12 +727,19 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 or self.bonus_open()
                 or self.speed_open()
             )
-            target_active = active or self.general_speed_worker is not None
+            target_active = (
+                active
+                or self.general_speed_worker is not None
+                or self.independent_battle_speed_worker is not None
+            )
             self.window_list.configure(state="disabled" if target_active else "readonly")
             self.profile_list.configure(state="disabled" if target_active else "readonly")
             self.attack_mode_list.configure(state="disabled" if active else "readonly")
             self.battle_speed_list.configure(state="disabled" if active else "readonly")
             self.general_speed_list.configure(state="disabled" if target_active else "readonly")
+            self.independent_battle_speed_list.configure(
+                state="disabled" if target_active else "readonly"
+            )
             self.auto_life_key_list.configure(state="disabled" if active else "readonly")
             for button in (
                 self.list_button,
@@ -744,6 +776,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 or self.calibrating
                 or self.bonus_open()
                 or self.speed_open()
+                or self.independent_battle_speed_worker is not None
                 or self.bot_worker is not None
                 and self.bot_worker.engine.profile.battle_speed_enabled
             )
@@ -751,6 +784,25 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.general_speed_apply.configure(
                 state="disabled"
                 if general_blocked or self.general_speed_worker is not None or self.session is None
+                else "normal"
+            )
+            independent_blocked = (
+                self.closing
+                or self.calibrating
+                or self.bonus_open()
+                or self.speed_open()
+                or self.general_speed_worker is not None
+                or self.bot_worker is not None
+                and self.bot_worker.engine.profile.battle_speed_enabled
+            )
+            self.independent_battle_speed_check.configure(
+                state="disabled" if independent_blocked else "normal"
+            )
+            self.independent_battle_speed_apply.configure(
+                state="disabled"
+                if independent_blocked
+                or self.independent_battle_speed_worker is not None
+                or self.session is None
                 else "normal"
             )
             self.bot_stop_button.configure(
@@ -785,7 +837,13 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             allow_bonus: bool = False,
             allow_speed: bool = False,
             allow_general: bool = False,
+            allow_independent: bool = False,
         ) -> None:
+            if self.independent_battle_speed_worker is not None and not allow_independent:
+                raise DiagnosticError(
+                    "Desmarca Speed en combate independiente y espera a 1× "
+                    "antes de cambiar el cliente o perfil."
+                )
             if self.general_speed_worker is not None and not allow_general:
                 raise DiagnosticError(
                     "Desmarca Speed general y espera a 1× antes de cambiar el cliente o perfil."
@@ -804,9 +862,16 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 )
 
         def target_is_editable(self) -> bool:
+            if self.independent_battle_speed_worker is not None:
+                self.detail.set(
+                    "Desmarca Speed en combate independiente y espera a 1× "
+                    "antes de cambiar el cliente."
+                )
+                return False
             if (
                 self.bot_worker is not None
                 or self.general_speed_worker is not None
+                or self.independent_battle_speed_worker is not None
                 or self.closing
                 or self.calibrating
                 or self.bonus_open()
@@ -829,7 +894,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
         def start_bot(self) -> None:
             try:
-                self.require_idle_bot(allow_general=True)
+                self.require_idle_bot(allow_general=True, allow_independent=True)
                 self.refresh_main_identity(force=True)
                 session = self.session
                 if session is None:
@@ -848,6 +913,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 if self.profile is None:
                     raise DiagnosticError("Revisa la configuración del perfil antes de iniciar.")
                 profile = self.configured_profile(self.profile)
+                if (
+                    self.independent_battle_speed_worker is not None
+                    and profile.battle_speed_enabled
+                ):
+                    raise DiagnosticError(
+                        "Desmarca Speed en combate independiente antes de iniciar "
+                        "el bot con su Speed en combate."
+                    )
                 worker = HuntWorker(
                     session,
                     self.selected_window(session),
@@ -886,6 +959,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
         def poll_bot(self) -> None:
             self.poll_general_speed()
+            self.poll_independent_battle_speed()
             worker = self.bot_worker
             if worker is not None:
                 try:
@@ -934,19 +1008,35 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
         def copy_bot(self) -> None:
             general = self.general_speed_report
+            independent = self.independent_battle_speed_report
+            bot = self.bot_report
+            if self.session is not None and (
+                bot.get("pid"),
+                bot.get("detector", {}).get("instance_creation_time"),
+            ) != (self.session.process.pid, self.session.creation_time):
+                bot = {}
             if self.session is not None and (general.get("pid"), general.get("creation_time")) != (
                 self.session.process.pid,
                 self.session.creation_time,
             ):
                 general = {}
-            if self.bot_report or general:
+            if self.session is not None and (
+                independent.get("pid"),
+                independent.get("creation_time"),
+            ) != (
+                self.session.process.pid,
+                self.session.creation_time,
+            ):
+                independent = {}
+            if bot or general or independent:
                 self.root.clipboard_clear()
                 self.root.clipboard_append(
                     json.dumps(
                         {
                             "tool_version": __version__,
-                            **self.bot_report,
+                            **bot,
                             **({"general_speed": general} if general else {}),
+                            **({"independent_battle_speed": independent} if independent else {}),
                         },
                         ensure_ascii=False,
                         indent=2,
@@ -981,6 +1071,14 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.battle_speed_rate.set(f"{profile.battle_speed_rate:g}")
                 self.general_speed_enabled.set(profile.general_speed_enabled)
                 self.general_speed_rate.set(f"{profile.general_speed_rate:g}")
+                self.independent_battle_speed_enabled.set(profile.independent_battle_speed_enabled)
+                self.independent_battle_speed_rate.set(f"{profile.independent_battle_speed_rate:g}")
+                if self.independent_battle_speed_worker is None:
+                    self.independent_battle_speed_status.set(
+                        "Configuración cargada; pulsa Aplicar para armar el Speed independiente."
+                        if profile.independent_battle_speed_enabled
+                        else "Speed independiente desactivado"
+                    )
                 self.auto_life_enabled.set(profile.auto_life_enabled)
                 self.auto_life_threshold.set(str(profile.auto_life_threshold))
                 self.auto_life_key.set(profile.auto_life_key)
@@ -1016,6 +1114,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 radius = int(self.search_radius.get())
                 speed_rate = float(self.battle_speed_rate.get().strip().replace(",", "."))
                 general_rate = float(self.general_speed_rate.get().strip().replace(",", "."))
+                independent_rate = float(
+                    self.independent_battle_speed_rate.get().strip().replace(",", ".")
+                )
                 life_threshold = int(self.auto_life_threshold.get())
                 neo_grace = float(self.neo_loot_grace.get().strip().replace(",", "."))
             except ValueError as exc:
@@ -1034,6 +1135,8 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 battle_speed_rate=speed_rate,
                 general_speed_enabled=self.general_speed_enabled.get(),
                 general_speed_rate=general_rate,
+                independent_battle_speed_enabled=self.independent_battle_speed_enabled.get(),
+                independent_battle_speed_rate=independent_rate,
                 auto_life_enabled=self.auto_life_enabled.get(),
                 auto_life_threshold=life_threshold,
                 auto_life_key=self.auto_life_key.get(),
@@ -1051,6 +1154,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
 
         def select_speed_mode(self, mode: str) -> None:
             if mode == "general" and self.general_speed_enabled.get():
+                self.independent_battle_speed_enabled.set(False)
                 self.battle_speed_enabled.set(False)
                 self.apply_general_speed()
             elif mode == "general":
@@ -1066,6 +1170,10 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     return
                 if self.general_speed_worker is not None:
                     return
+                if self.independent_battle_speed_worker is not None:
+                    raise DiagnosticError(
+                        "Desactiva Speed en combate independiente antes de activar General."
+                    )
                 if self.closing or self.calibrating or self.bonus_open() or self.speed_open():
                     raise DiagnosticError("Termina la operación actual antes de activar General.")
                 if (
@@ -1114,6 +1222,82 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             if not worker.alive:
                 self.general_speed_worker = None
                 self.general_speed_enabled.set(False)
+                self.lock_target_controls()
+            self.bot_copy_button.configure(
+                state="normal", text=f"Copiar estado PID {worker.window.pid}"
+            )
+            self.render_identity()
+
+        def apply_independent_battle_speed(self) -> None:
+            try:
+                if not self.independent_battle_speed_enabled.get():
+                    self.stop_independent_battle_speed()
+                    return
+                if self.independent_battle_speed_worker is not None:
+                    return
+                if self.closing or self.calibrating or self.bonus_open() or self.speed_open():
+                    raise DiagnosticError(
+                        "Termina la operación actual antes de activar el Speed independiente."
+                    )
+                if self.general_speed_worker is not None:
+                    raise DiagnosticError(
+                        "Desactiva Speed general y espera a 1× antes de activar el independiente."
+                    )
+                if (
+                    self.bot_worker is not None
+                    and self.bot_worker.engine.profile.battle_speed_enabled
+                ):
+                    raise DiagnosticError(
+                        "Para el bot antes de activar otro controlador de Speed en combate."
+                    )
+                if self.session is None:
+                    raise DiagnosticError(
+                        "Conecta con el PID antes de activar Speed en combate independiente."
+                    )
+                self.session.snapshot()
+                rate = float(self.independent_battle_speed_rate.get())
+                self.general_speed_enabled.set(False)
+                worker = IndependentBattleSpeedWorker(
+                    self.session, self.selected_window(self.session), rate
+                )
+                self.independent_battle_speed_worker = worker
+                self.independent_battle_speed_report = dict(worker.report)
+                worker.start()
+                self.independent_battle_speed_status.set("Armando Speed en combate independiente…")
+                self.lock_target_controls()
+            except (DiagnosticError, OSError, ValueError, RuntimeError) as exc:
+                if (
+                    self.independent_battle_speed_worker is not None
+                    and not self.independent_battle_speed_worker.alive
+                ):
+                    self.independent_battle_speed_worker = None
+                self.independent_battle_speed_enabled.set(False)
+                self.independent_battle_speed_status.set(str(exc))
+                self.error(exc)
+
+        def stop_independent_battle_speed(self) -> None:
+            worker = self.independent_battle_speed_worker
+            if worker is not None:
+                try:
+                    worker.stop()
+                    self.independent_battle_speed_status.set("Restaurando 1×…")
+                except (DiagnosticError, OSError) as exc:
+                    self.independent_battle_speed_status.set(f"Restauración pendiente: {exc}")
+
+        def poll_independent_battle_speed(self) -> None:
+            worker = self.independent_battle_speed_worker
+            if worker is None:
+                return
+            self.independent_battle_speed_report = dict(worker.report)
+            info = self.independent_battle_speed_report
+            rate = info.get("current_rate")
+            self.independent_battle_speed_status.set(
+                (f"{rate:g}× · " if isinstance(rate, (int, float)) else "")
+                + info.get("message", "Speed en combate independiente")
+            )
+            if not worker.alive:
+                self.independent_battle_speed_worker = None
+                self.independent_battle_speed_enabled.set(False)
                 self.lock_target_controls()
             self.bot_copy_button.configure(
                 state="normal", text=f"Copiar estado PID {worker.window.pid}"
@@ -1776,11 +1960,17 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 return
             self.closing = True
             self.stop_general_speed()
+            self.stop_independent_battle_speed()
             self.lock_target_controls()
 
             def finish_close() -> None:
-                if (self.bot_worker is not None and self.bot_worker.alive) or (
-                    self.general_speed_worker is not None and self.general_speed_worker.alive
+                if (
+                    (self.bot_worker is not None and self.bot_worker.alive)
+                    or (self.general_speed_worker is not None and self.general_speed_worker.alive)
+                    or (
+                        self.independent_battle_speed_worker is not None
+                        and self.independent_battle_speed_worker.alive
+                    )
                 ):
                     self.root.after(100, finish_close)
                 else:
@@ -2847,10 +3037,15 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.show_members(load=False)
         panel.calibrate_combat()
         panel.calibration_window.destroy()
-        from .gui_smoke import check_character_settings, check_general_speed_controls
+        from .gui_smoke import (
+            check_character_settings,
+            check_general_speed_controls,
+            check_independent_battle_speed_controls,
+        )
 
         check_character_settings(panel)
         check_general_speed_controls(panel)
+        check_independent_battle_speed_controls(panel)
         panel.session = None
         panel.root.update_idletasks()
         panel.toggle_advanced()

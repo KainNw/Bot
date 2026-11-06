@@ -3,9 +3,37 @@
 Desde **0.19.0**, el panel controla los temporizadores del cliente seleccionado sin
 tener que abrir Cheat Engine. Es una función experimental, desactivada por defecto.
 
-Desde **0.25.0** hay dos casillas, con factores guardados por separado. Se elige
-un modo a la vez: marcar General desmarca Combate y viceversa, conservando el
-factor de ambos. Cargar un perfil o conectar un personaje no activa relojes.
+Desde **0.28.0** hay tres controles con factores guardados por separado:
+**Speed en combate**, vinculado al bot; **Speed en combate independiente**, que
+se arma con su propia casilla; y **General**, activo también en el mapa.
+Cargar un perfil o conectar un personaje no activa relojes.
+
+## Speed en combate independiente
+
+1. Conecta con el PID y abre **Caza y botín → Speed en combate independiente**.
+2. Elige **1,25×, 1,5×, 2×, 3× o 4×** y marca **Activar sin iniciar bot**.
+   Si la casilla ya viene marcada de un perfil cargado, pulsa **Aplicar**.
+3. En el mapa mantiene **1×**. Al entrar en un combate normal listo acelera y,
+   al volver al mapa, restaura **1×** y queda esperando la siguiente batalla.
+4. **Parar bot** conserva este control independiente. Desmarca su casilla para
+   restaurar **1×** y desarmarlo. Cerrar el panel o perder el proceso propietario
+   también solicita la restauración.
+
+Reutiliza exactamente `NativeClock`, incluida su comprobación de estado y el
+límite de 60 segundos reales por batalla. No inicia búsquedas, ataques, recogida
+ni turnos. Su reserva por PID y cancelación son independientes del trabajador
+de caza. El código del controlador nativo y del Speed del bot no cambia.
+
+La casilla nueva conserva la habilitación y el factor del Speed original del bot.
+Solo puede haber un controlador activo por PID. Para usar **Iniciar bot** con su
+Speed en combate, desactiva antes el independiente y espera a que confirme 1×.
+General y el independiente tampoco se superponen. Desmarcar, esperar 1× y cambiar
+de factor permite rearmarlo con otra velocidad.
+
+Se guarda por personaje. Los perfiles de esquemas 1–11 lo cargan desactivado y
+mantienen sus ajustes anteriores; guardar el nuevo campo no arma el controlador.
+**Copiar estado PID…** añade `independent_battle_speed` con el estado, factor
+actual, PID y creación de la instancia, incluso cuando el bot está detenido.
 
 ## Speedhack general
 
@@ -91,6 +119,12 @@ una operación distinta; la reserva por PID y la restauración son comunes. Se r
 una caducidad breve con tiempo real para evitar acumular un tramo acelerado sin
 comprobaciones si el proceso se queda bloqueado. El comportamiento real de General
 en Atlantica todavía necesita la prueba visual en el cliente de Windows.
+
+La comprobación de interfaz del control independiente verifica la activación con
+el bot detenido, el regreso a 1×, la permanencia al pulsar Parar bot y el guardado
+del factor original. Reutiliza las pruebas nativas existentes de entrada/salida,
+cancelación, límite por batalla y salida del propietario. Su uso real desde la
+casilla nueva queda pendiente de una prueba visual en el cliente.
 
 Los relojes usan MinHook bajo su licencia BSD, incluida en
 `THIRD-PARTY-NOTICES.txt`. El código y su revisión de origen están en

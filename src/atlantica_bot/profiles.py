@@ -94,10 +94,16 @@ class BotProfile:
     auto_life_threshold: int = 50
     auto_life_key: str = "F1"
     instant_loot: bool = True
+    independent_battle_speed_enabled: bool = False
+    independent_battle_speed_rate: float = 1.25
 
     @property
     def speed_enabled(self) -> bool:
-        return self.battle_speed_enabled or self.general_speed_enabled
+        return (
+            self.battle_speed_enabled
+            or self.general_speed_enabled
+            or self.independent_battle_speed_enabled
+        )
 
     @property
     def loot_grace_seconds(self) -> float:
@@ -146,6 +152,14 @@ class BotProfile:
         if self.general_speed_enabled and self.battle_speed_enabled:
             raise DiagnosticError("Elige un modo de Speed: general o solo combate.")
         if (
+            type(self.independent_battle_speed_enabled) is not bool
+            or type(self.independent_battle_speed_rate) not in (int, float)
+            or self.independent_battle_speed_rate not in SPEED_RATES
+        ):
+            raise DiagnosticError("Elige un factor admitido para Speed en combate independiente.")
+        if self.general_speed_enabled and self.independent_battle_speed_enabled:
+            raise DiagnosticError("Elige General o Combate independiente para el control manual.")
+        if (
             type(self.auto_life_enabled) is not bool
             or type(self.auto_life_threshold) is not int
             or not 1 <= self.auto_life_threshold <= 100
@@ -187,7 +201,7 @@ class BotProfile:
 
     def summary(self) -> dict:
         return {
-            "schema_version": 11,
+            "schema_version": 12,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "magic_first_turn_only": self.magic_first_turn_only,
@@ -205,6 +219,8 @@ class BotProfile:
             "auto_life_threshold": self.auto_life_threshold,
             "auto_life_key": self.auto_life_key,
             "instant_loot": self.instant_loot,
+            "independent_battle_speed_enabled": self.independent_battle_speed_enabled,
+            "independent_battle_speed_rate": self.independent_battle_speed_rate,
             "turn_execution_available": True,
         }
 
@@ -243,7 +259,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -277,6 +293,12 @@ class ProfileStore:
                 payload["auto_life_threshold"] if payload["schema_version"] >= 10 else 50,
                 payload["auto_life_key"] if payload["schema_version"] >= 10 else "F1",
                 payload["instant_loot"] if payload["schema_version"] >= 11 else True,
+                payload["independent_battle_speed_enabled"]
+                if payload["schema_version"] >= 12
+                else False,
+                payload["independent_battle_speed_rate"]
+                if payload["schema_version"] >= 12
+                else 1.25,
             )
             profile.validate()
             return profile
