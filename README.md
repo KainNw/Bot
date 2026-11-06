@@ -1,11 +1,12 @@
 # Control de caza para Atlantica Online
 
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
-con Auto Battle apagado. La versión **0.29.0** añade una pestaña **TBS** para
-investigar **Scourge**, empezando con solo el Main. Permite guardar capturas
-etiquetadas de entrada, selección, movimiento por casillas, ataques y cambios de
-turno. Solo lee memoria; las órdenes automáticas de TBS requieren contrastar estas
-capturas. Consulta [TBS y memoria](docs/tbs-memory.md).
+con Auto Battle apagado. La versión **0.30.0** amplía la pestaña **TBS** para
+investigar **Scourge**, empezando con solo el Main. El visor muestra su posición
+interna, HP/MP, unidades y estados de acción. Añade control de turno, terreno
+cercano y **Registrar turnos 12 s** para observar la transición al enemigo mientras
+juegas manualmente. Solo lee memoria; las órdenes automáticas de TBS requieren
+contrastarlas. Consulta [TBS y memoria](docs/tbs-memory.md).
 
 Conserva **Speed en combate independiente** de **0.28.0**:
 otra casilla con factor propio que espera a 1× en el mapa, acelera en batalla y

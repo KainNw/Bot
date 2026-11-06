@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import struct
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -14,6 +15,7 @@ from . import __version__
 from .errors import DiagnosticError, SceneChanged
 from .hunting import SUPPORTED_CLIENT_SHA256
 from .session import GameSession
+from .tbs_state import describe_tbs_snapshot
 from .world import OWNER_ADDRESS, Reader
 
 # Verified against loaded code in combat-20261103-232004 (all 37 block hashes checked).
@@ -35,6 +37,26 @@ TBS_ANCHORS = (
     ),
     (0x005220D6, bytes.fromhex("0fbf81a4210000c30fbf81a6210000c3")),
     (0x008AD25A, bytes.fromhex("c7063c803604")),
+    # Scourge capture 20261106-105227: turn update, state gates and grid access.
+    (0x008BCD88, bytes.fromhex("8a078886b9030000668b4702668986c0030000")),
+    (0x00522237, bytes.fromhex("568bf18b4e04e8523c53008a8ea02100003a88b90300005e0f94c0c3")),
+    (0x00522424, bytes.fromhex("8b81a821000085c0740883f801740332c0c3b001c3")),
+    (
+        0x0052659B,
+        bytes.fromhex(
+            "8b86a821000083f803750b8b4510c70082020000ebb983f80474f03bc3750b8b4510c70083020000eba5"
+        ),
+    ),
+    (
+        0x004A1B3B,
+        bytes.fromhex(
+            "8b510485d2750433c0eb2d568b74240885f67c213b711c7d1c8b44240c"
+            "85c07c143b41207d0f8b49188b048103c6668b44c202eb0233c05ec20800"
+        ),
+    ),
+    (0x0052523B, bytes.fromhex("8b43048b40108d4828c745fc01")),
+    (0x00A55E94, bytes.fromhex("8b4114c3")),
+    (0x00538711, bytes.fromhex("8b414cc3")),
 )
 TBS_CODE_BLOCKS = (
     ("bf-context-dispatch", 0x00431000, 0x2000),
@@ -46,6 +68,9 @@ TBS_CODE_BLOCKS = (
     ("bf-client-actions", 0x008B0000, 0x10000),
     ("bf-client-controller", 0x008C0000, 0x10000),
     ("bf-interface-resolution", 0x00A55000, 0x2000),
+    ("bf-pathfinding", 0x00914000, 0x4000),
+    ("bf-terrain-query", 0x00A27000, 0x2000),
+    ("bf-property-flags", 0x00427000, 0x2000),
     ("bf-common-tables", 0x042DE000, 0x2000),
     ("bf-client-tables", 0x04368000, 0x3000),
 )
@@ -63,10 +88,12 @@ TBS_STAGES = {
     "enemy_turn": "TBS: turno del enemigo",
     "mission_end": "TBS: resultado de la misión",
     "map_after": "Mapa después de salir",
+    "turn_trace": "TBS: seguimiento automático de estados",
 }
 MAX_UNITS = 512
 MAX_SAMPLES = 32
 UNIT_STRIDE = 0x33B0
+GRID_RADIUS = 8
 
 
 def _binding(reader: Reader) -> tuple:
@@ -138,7 +165,7 @@ def _unit(reader: Reader, address: int, index: int, header: bytes, actor_word: i
     return row
 
 
-def capture_tbs_snapshot(session: GameSession) -> dict:
+def capture_tbs_snapshot(session: GameSession, *, include_grid: bool = True) -> dict:
     """Observe candidates on either side of a manual action, without normal-battle APIs."""
     if session.creation_time is None:
         raise DiagnosticError("Conecta con una instancia identificada antes de capturar TBS.")
@@ -174,14 +201,114 @@ def capture_tbs_snapshot(session: GameSession) -> dict:
     if info:
         result["world_grid"] = list(struct.unpack("<3h", reader.read(info + 0xCA, 6)))
     if context_b >= 0 and context_a < 0:
-        result["bf"] = _read_bf(reader, client, identity[0])
+        result["bf"] = _read_bf(reader, client, identity[0], include_grid=include_grid)
     session.snapshot()
     if _binding(reader) != binding:
         raise SceneChanged("La escena o misión cambió durante la lectura; vuelve a capturar.")
+    result["view"] = describe_tbs_snapshot(result)
     return result
 
 
-def _read_bf(reader: Reader, client: int, actor_word: int) -> dict:
+def _turn_context(reader: Reader, common: int, pool: int) -> dict:
+    try:
+        data = reader.read(common + 0x3B8, 10)
+        return {
+            "status": "captured",
+            "active_group": data[1],
+            "turn_counter": struct.unpack_from("<H", data, 8)[0],
+            "turn_started_tick": struct.unpack_from("<I", data, 4)[0],
+            "room_local_group": reader.byte(common + 0x7B6),
+            "pool_local_group": reader.byte(pool + 0x110),
+            "room_type_e8": reader.i32(common + 0xE8),
+            "room_mode_e4": reader.i32(common + 0xE4),
+            "source": "008BCD88_OperateTurnInfo_and_00522237_group_comparison",
+            "action_eligibility_fully_validated": False,
+        }
+    except (DiagnosticError, OSError) as exc:
+        return {"status": "unavailable", "message": str(exc)}
+
+
+def _terrain(reader: Reader, common: int, pool: int, rows: list[dict]) -> dict:
+    mains = [
+        row
+        for row in rows
+        if row.get("matches_local_identity_word")
+        and row.get("member_index_219c") == 0
+        and row.get("status") == "captured"
+    ]
+    if len(mains) != 1:
+        return {"status": "unavailable", "reason": "unique_main_position_required"}
+    grid = reader.u32(pool + 0x10)
+    if not grid:
+        return {"status": "unavailable", "reason": "grid_not_published"}
+    descriptor = reader.read(grid + 4, 32)
+    primary, secondary, _, room, _, row_table, width, height = struct.unpack("<8I", descriptor)
+    if room != common:
+        return {"status": "unavailable", "reason": "grid_belongs_to_other_room"}
+    if not primary or not row_table or not 1 <= width <= 4096 or not 1 <= height <= 4096:
+        return {"status": "unavailable", "reason": "invalid_grid_dimensions_or_storage"}
+    x, y = mains[0]["grid_candidate"]
+    if not 0 <= x < width or not 0 <= y < height:
+        return {
+            "status": "unavailable",
+            "reason": "main_outside_grid",
+            "width": width,
+            "height": height,
+        }
+    x_min, x_max = max(0, x - GRID_RADIUS), min(width - 1, x + GRID_RADIUS)
+    y_min, y_max = max(0, y - GRID_RADIUS), min(height - 1, y + GRID_RADIUS)
+    cells, checks = [], []
+    for row in range(y_min, y_max + 1):
+        row_offset_address = row_table + row * 4
+        offset_data = reader.read(row_offset_address, 4)
+        offset = int.from_bytes(offset_data, "little")
+        if offset + width > width * height:
+            raise DiagnosticError("La fila de terreno queda fuera de la colección declarada.")
+        count = x_max - x_min + 1
+        start = primary + (offset + x_min) * 8
+        data = reader.read(start, count * 8)
+        checks.extend(((row_offset_address, offset_data), (start, data)))
+        flags = None
+        if secondary:
+            address = secondary + (offset + x_min) * 8
+            flags = reader.read(address, count * 8)
+            checks.append((address, flags))
+        for column in range(count):
+            cell = data[column * 8 : column * 8 + 8]
+            cells.append(
+                {
+                    "x": x_min + column,
+                    "y": row,
+                    "raw_word_0": struct.unpack_from("<H", cell)[0],
+                    "unit_index_word": struct.unpack_from("<h", cell, 2)[0],
+                    "object_index_word": struct.unpack_from("<h", cell, 4)[0],
+                    "object_group_byte": cell[6],
+                    "raw_byte_7": cell[7],
+                    "secondary_words": list(struct.unpack_from("<4H", flags, column * 8))
+                    if flags is not None
+                    else None,
+                }
+            )
+    if (
+        reader.u32(pool + 0x10) != grid
+        or reader.read(grid + 4, 32) != descriptor
+        or any(reader.read(address, len(data)) != data for address, data in checks)
+    ):
+        raise SceneChanged("El terreno cambió durante la captura; vuelve a capturar.")
+    return {
+        "status": "captured",
+        "width": width,
+        "height": height,
+        "center": [x, y],
+        "radius": GRID_RADIUS,
+        "cells": cells,
+        "source": "pool_10_grid_04_and_08_row_table_18_stride_8",
+        "green_destinations_verified": False,
+        "pathfinding_executed": False,
+    }
+
+
+def _read_bf(reader: Reader, client: int, actor_word: int, *, include_grid: bool) -> dict:
     if not client:
         return {"status": "unavailable", "reason": "bf_client_not_published"}
     common, pool = client + 8, client + 8 + 0x850
@@ -197,6 +324,7 @@ def _read_bf(reader: Reader, client: int, actor_word: int) -> dict:
     descriptor = reader.read(pool + 8, 8)
     count, base = struct.unpack("<iI", descriptor)
     controls = _controls(reader, common, pool)
+    turn = _turn_context(reader, common, pool)
     result.update({"capacity": count, "controls": controls, "units": []})
     if not 0 <= count <= 65536 or (count and not base):
         return {**result, "status": "invalid_collection"}
@@ -215,10 +343,17 @@ def _read_bf(reader: Reader, client: int, actor_word: int) -> dict:
             raise
         except (DiagnosticError, OSError) as exc:
             unavailable.append({"index": index, "message": str(exc)})
+    terrain = {"status": "skipped_for_turn_trace"}
+    if include_grid:
+        try:
+            terrain = _terrain(reader, common, pool, rows)
+        except (DiagnosticError, OSError) as exc:
+            terrain = {"status": "unavailable", "message": str(exc)}
     if (
         reader.read(pool + 8, 8) != descriptor
         or tuple(reader.u32(address) for address in (client, common, pool)) != tables
         or _controls(reader, common, pool) != controls
+        or _turn_context(reader, common, pool) != turn
         or any(reader.read(address + 0x2194, 40) != header for address, header in headers)
     ):
         raise SceneChanged("Las unidades o la selección cambiaron; espera un momento y captura.")
@@ -229,6 +364,8 @@ def _read_bf(reader: Reader, client: int, actor_word: int) -> dict:
         "unavailable_units": unavailable,
         "observed_entries": min(count, MAX_UNITS),
         "truncated": count > MAX_UNITS,
+        "turn": turn,
+        "terrain": terrain,
     }
 
 
@@ -257,6 +394,7 @@ class TbsResearch:
         self.samples: list[dict] = []
         self.blocks: list[tuple[str, int, bytes]] = []
         self.unavailable_code: list[str] = []
+        self.trace_runs: list[dict] = []
 
     def add(self, stage: str, snapshot: dict, *, note: str = "") -> None:
         if stage not in TBS_STAGES or len(self.samples) >= MAX_SAMPLES or len(note) > 300:
@@ -267,7 +405,7 @@ class TbsResearch:
             raise DiagnosticError("La captura pertenece a otra instancia; abre una captura nueva.")
         sample = {
             "stage": stage,
-            "label_source": "user_reported",
+            "label_source": "automatic_sampler" if stage == "turn_trace" else "user_reported",
             "note": note,
             "snapshot": snapshot,
         }
@@ -296,7 +434,7 @@ class TbsResearch:
                 "El nombre de misión y la formación admiten hasta 120 caracteres."
             )
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "tool_version": __version__,
             "purpose": "tbs_memory_research",
             "client_sha256": SUPPORTED_CLIENT_SHA256,
@@ -307,6 +445,7 @@ class TbsResearch:
             "formation": formation.strip(),
             "mission_and_formation_source": "user_reported",
             "samples": self.samples,
+            "trace_runs": self.trace_runs,
             "unavailable_code": self.unavailable_code,
             "tbs_mode_confirmed": False,
             "turn_execution_available": False,
@@ -333,3 +472,59 @@ class TbsResearch:
                 archive.writestr(entry["file"], data)
         with destination.open("xb") as output:
             output.write(payload.getvalue())
+
+
+class TbsTrace:
+    """A real-time observation budget; scheduling belongs to the GUI, never the game."""
+
+    def __init__(self, research: TbsResearch, session: GameSession, *, clock=None, capture=None):
+        if (research.pid, research.creation_time) != (session.process.pid, session.creation_time):
+            raise DiagnosticError("El seguimiento pertenece a otra instancia del juego.")
+        if len(research.samples) >= MAX_SAMPLES or len(research.trace_runs) >= 4:
+            raise DiagnosticError("Guarda el ZIP y abre otra captura para seguir registrando.")
+        self.research, self.session = research, session
+        self.clock = clock or time.monotonic
+        self.capture = capture or capture_tbs_snapshot
+        self.started = self.clock()
+        self.running = True
+        self.added = self.transient_reads = 0
+        self.error = None
+        self.reason = None
+
+    def stop(self, reason: str = "manual") -> None:
+        if not self.running:
+            return
+        self.running, self.reason = False, reason
+        self.research.trace_runs.append(
+            {
+                "reason": reason,
+                "elapsed_seconds": round(max(0.0, self.clock() - self.started), 3),
+                "samples": self.added,
+                "transient_reads": self.transient_reads,
+                "error": self.error,
+                "writes_or_client_commands": False,
+            }
+        )
+
+    def step(self) -> dict | None:
+        if not self.running:
+            return None
+        if self.clock() - self.started >= 12:
+            self.stop("time_budget")
+            return None
+        if len(self.research.samples) >= MAX_SAMPLES:
+            self.stop("sample_limit")
+            return None
+        try:
+            snapshot = self.capture(self.session, include_grid=False)
+            self.research.add("turn_trace", snapshot)
+            self.added += 1
+            if len(self.research.samples) >= MAX_SAMPLES:
+                self.stop("sample_limit")
+            return snapshot
+        except SceneChanged:
+            self.transient_reads += 1
+        except (DiagnosticError, OSError) as exc:
+            self.error = str(exc)
+            self.stop("read_error")
+        return None

@@ -1,10 +1,21 @@
 # TBS: investigación de Scourge
 
-0.29.0 añade una pestaña **TBS** y una captura de memoria por etapas. La primera
+0.29.0 añadió una pestaña **TBS** y una captura de memoria por etapas. La primera
 misión elegida por el usuario es **Scourge**, inicialmente con solo el Main.
 Esta versión permite investigar sus estados; todavía no mueve ni ataca en TBS.
 El nombre de la misión y cada etapa se guardan como indicaciones del usuario,
 no como identificaciones automáticas de la memoria.
+
+0.30.0 incorpora los resultados de la [primera secuencia de Scourge](tbs-scourge-analysis-20261106.md):
+un visor del Main y las unidades, posiciones internas, HP/MP y estado parcial de
+acción. Añade bando activo, contador de turno, terreno cercano y **Registrar turnos
+12 s**. Para esa prueba, inicia el registro justo antes de pasar al turno enemigo;
+puedes detenerlo con el mismo botón. No es necesario volver a capturar todas las
+etapas anteriores. Guarda el ZIP al terminar.
+
+Las capturas manuales incluyen terreno cercano; el seguimiento lo omite para
+observar los cambios de turno con menos lecturas. Que una celda esté libre no
+confirma por sí solo que sea un destino verde válido ni que tenga ruta accesible.
 
 ## Evidencia disponible
 
@@ -77,9 +88,10 @@ los perfiles, el puente nativo ni los controladores de velocidad.
 
 ## Pendiente antes de automatizar
 
-Falta obtener una secuencia real de Scourge para confirmar el modo TBS, el Main
-de la formación, coordenadas, límites y obstáculos, turno del jugador, puntos y
-costes de acción, alcance, elegibilidad de objetivos, órdenes de movimiento,
-ataque/magia y condiciones de éxito/fracaso. Las capturas actuales no acreditan
-estos estados. El lector no ejecuta funciones candidatas ni habilita aún un bot
-TBS. Las pruebas usan memoria simulada; no sustituyen la captura del juego.
+Ya se dispone de una secuencia real de Scourge, con el Main, posiciones y cambios
+de vida/estado. Faltan contrastar el bando activo y contador en ambos turnos,
+equivalencia con casillas visibles, límites y obstáculos, alcance efectivo,
+elegibilidad completa de objetivos, órdenes de movimiento, ataque/magia y
+condiciones de éxito/fracaso. El lector no ejecuta funciones candidatas ni
+habilita aún un bot TBS. Las pruebas usan memoria simulada y datos de la secuencia
+aportada; la nueva lectura de turnos y terreno necesita capturas del cliente.

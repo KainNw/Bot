@@ -20,7 +20,33 @@ def check_tbs_research_controls(panel) -> None:
     original_session = panel.session
     session = SimpleNamespace(process=SimpleNamespace(pid=123), creation_time=777)
     panel.session = session
-    sample = {"pid": 123, "creation_time": 777, "route": "bf_context_b_candidate"}
+    sample = {
+        "pid": 123,
+        "creation_time": 777,
+        "route": "bf_context_b_candidate",
+        "bf": {
+            "status": "captured",
+            "tables": ["04368DB0", "043691DC", "04368C9C"],
+            "controls": {"member_mapping_114": [0], "phase_798": 3},
+            "units": [
+                {
+                    "index": 0,
+                    "entry_2194": 0,
+                    "member_index_219c": 0,
+                    "matches_local_identity_word": True,
+                    "status": "captured",
+                    "table": "0436803C",
+                    "raw_21a0": [0, 0],
+                    "raw_21a8_to_21b8": [1, 7, 0, 1, 0],
+                    "grid_candidate": [38, 84],
+                    "member_values_4c_50": [100, 45],
+                    "raw_2038": 100,
+                    "raw_2040": 50,
+                    "raw_2ac8": 0,
+                }
+            ],
+        },
+    }
     try:
         with (
             patch.object(panel, "error") as error,
@@ -46,18 +72,33 @@ def check_tbs_research_controls(panel) -> None:
             panel.tbs_take_button.invoke()
             assert len(panel.tbs_research.samples) == 2
             assert panel.tbs_research.samples[1]["stage"] == "after_move"
+            assert "38, 84" in panel.tbs_latest.get()
+            assert len(panel.tbs_units_table.get_children()) == 1
             panel.session = SimpleNamespace(process=SimpleNamespace(pid=124), creation_time=888)
             panel.tbs_take_button.invoke()
             assert len(panel.tbs_research.samples) == 2
             assert "conexión cambió" in panel.tbs_status.get()
             panel.session = session
+            timers_before = set(panel.root.tk.call("after", "info"))
+            panel.tbs_trace_button.invoke()
+            timers_started = set(panel.root.tk.call("after", "info")) - timers_before
+            assert len(timers_started) == 1
+            assert str(panel.tbs_take_button.cget("state")) == "disabled"
+            panel.tbs_trace_button.invoke()
+            assert not timers_started.intersection(panel.root.tk.call("after", "info"))
+            assert panel.tbs_research.trace_runs[-1]["reason"] == "manual"
             with TemporaryDirectory(prefix="atlantica-tbs-research-") as directory:
                 destination = Path(directory) / "Scourge.zip"
                 panel.tbs_research.export(destination, mission="Scourge")
                 with ZipFile(destination) as archive:
                     assert archive.testzip() is None
                     assert b"Scourge" in archive.read("manifest.json")
+            research = panel.tbs_research
+            panel.tbs_trace_button.invoke()
+            timers_started = set(panel.root.tk.call("after", "info")) - timers_before
             window.tk.call(window.protocol("WM_DELETE_WINDOW"))
+            assert research.trace_runs[-1]["reason"] == "window_closed"
+            assert not timers_started.intersection(panel.root.tk.call("after", "info"))
             assert not panel.tbs_open() and panel.tbs_research is None
             assert str(panel.profile_list.cget("state")) == "readonly"
     finally:

@@ -12,6 +12,7 @@ from atlantica_bot.tbs import (
     TBS_ANCHORS,
     TBS_CODE_BLOCKS,
     TbsResearch,
+    TbsTrace,
     capture_tbs_snapshot,
     read_tbs_code,
 )
@@ -310,3 +311,170 @@ def test_code_capture_reads_only_fixed_image_pages_and_reports_unavailable_block
     blocks, unavailable = read_tbs_code(session)
     assert unavailable == [TBS_CODE_BLOCKS[-1][0]] and len(blocks) == len(TBS_CODE_BLOCKS) - 1
     assert calls == [(123, address, size) for _, address, size in TBS_CODE_BLOCKS]
+
+
+def publish_turn(memory, *, group=0, counter=5):
+    memory.put(0x600008 + 0x3B8, struct.pack("<BBHIH", 2, group, 0, 10000, counter))
+    memory.put(0x600008 + 0x7B6, b"\0")
+    memory.put(0x600858 + 0x110, b"\0")
+    memory.word(0x600008 + 0xE8, 4)
+    memory.word(0x600008 + 0xE4, 1)
+
+
+def test_turn_group_counter_and_state_remain_distinct_from_general_phase(tbs):
+    session, memory, _ = tbs
+    publish_turn(memory, group=1, counter=7)
+    result = capture_tbs_snapshot(session)
+    assert result["bf"]["controls"]["phase_798"] == 3
+    assert result["bf"]["turn"]["active_group"] == 1
+    assert result["bf"]["turn"]["turn_counter"] == 7
+    assert result["view"]["main_turn_relation"] == "other_group"
+    assert not result["view"]["turn_execution_available"]
+
+
+def test_turn_change_while_reading_discards_the_frame(tbs):
+    session, memory, _ = tbs
+    publish_turn(memory)
+
+    def change(address, size):
+        if address == 0x900000 + 0x2040:
+            publish_turn(memory, group=1, counter=6)
+
+    memory.on_read = change
+    with pytest.raises(SceneChanged):
+        capture_tbs_snapshot(session)
+
+
+def publish_grid(memory, *, width=5, height=5):
+    memory.word(0x600858 + 0x10, 0xC00000)
+    memory.put(
+        0xC00004, struct.pack("<8I", 0xD00000, 0xE00000, 0, 0x600008, 0, 0xF00000, width, height)
+    )
+    for y in range(height):
+        memory.word(0xF00000 + y * 4, y * width)
+        for x in range(width):
+            memory.put(0xD00000 + (y * width + x) * 8, struct.pack("<HhhBB", 0, -1, -1, 0, 0))
+            memory.put(0xE00000 + (y * width + x) * 8, struct.pack("<4H", 1, 2, 3, 4))
+
+
+def test_bounded_nearby_grid_preserves_cells_without_inventing_green_destinations(tbs):
+    session, memory, _ = tbs
+    publish_grid(memory)
+    grid = capture_tbs_snapshot(session)["bf"]["terrain"]
+    assert grid["status"] == "captured" and grid["center"] == [2, 3]
+    assert grid["width"] == grid["height"] == 5 and len(grid["cells"]) == 25
+    assert grid["cells"][0]["unit_index_word"] == -1
+    assert grid["cells"][0]["secondary_words"] == [1, 2, 3, 4]
+    assert not grid["green_destinations_verified"] and not grid["pathfinding_executed"]
+
+
+@pytest.mark.parametrize("change", ["dimensions", "room", "row_bounds"])
+def test_invalid_grid_cannot_be_used_as_reachable_cells(tbs, change):
+    session, memory, _ = tbs
+    publish_grid(memory)
+    if change == "dimensions":
+        memory.word(0xC0001C, 4097)
+    elif change == "room":
+        memory.word(0xC00010, 0xABCDEF)
+    else:
+        memory.word(0xF00000, 26)
+    grid = capture_tbs_snapshot(session)["bf"]["terrain"]
+    assert grid["status"] == "unavailable" and "cells" not in grid
+    assert not any(0xD00000 <= address < 0xE10000 for address, _ in memory.reads)
+
+
+def test_changed_terrain_is_unavailable_without_losing_coherent_unit_evidence(tbs):
+    session, memory, _ = tbs
+    publish_grid(memory)
+    reads = 0
+
+    def change(address, size):
+        nonlocal reads
+        if address == 0xD00000:
+            reads += 1
+            if reads > 1:
+                memory.put(0xD00000, b"\x02")
+
+    memory.on_read = change
+    bf = capture_tbs_snapshot(session)["bf"]
+    assert bf["terrain"]["status"] == "unavailable" and bf["status"] == "captured"
+    assert len(bf["units"]) == 2
+
+
+def test_turn_trace_omits_terrain_reads_for_fast_observation(tbs):
+    session, memory, _ = tbs
+    grid = capture_tbs_snapshot(session, include_grid=False)["bf"]["terrain"]
+    assert grid["status"] == "skipped_for_turn_trace"
+    assert (0x600858 + 0x10, 4) not in memory.reads
+
+
+def make_trace(*, outcomes=None, used=0):
+    research = TbsResearch(123, 777)
+    for _ in range(used):
+        research.add("player_turn", sample())
+    clock = [0.0]
+    calls = []
+    outcomes = iter(outcomes or [sample()] * 50)
+
+    def capture(session, *, include_grid):
+        calls.append(include_grid)
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    session = SimpleNamespace(process=SimpleNamespace(pid=123), creation_time=777)
+    trace = TbsTrace(research, session, clock=lambda: clock[0], capture=capture)
+    return research, trace, clock, calls
+
+
+def test_trace_stops_on_real_time_budget_and_marks_automatic_samples():
+    research, trace, clock, calls = make_trace()
+    assert trace.step() == sample()
+    clock[0] = 11.9
+    assert trace.step() == sample()
+    clock[0] = 12
+    assert trace.step() is None and not trace.running
+    assert calls == [False, False] and trace.reason == "time_budget"
+    assert research.samples[0]["stage"] == "turn_trace"
+    assert research.samples[0]["label_source"] == "automatic_sampler"
+    assert research.trace_runs[0]["samples"] == 2
+    trace.stop()
+    assert len(research.trace_runs) == 1
+
+
+def test_trace_stops_manually_or_when_the_zip_sample_limit_is_reached():
+    research, trace, _, calls = make_trace(used=MAX_SAMPLES - 1)
+    trace.step()
+    assert not trace.running and trace.reason == "sample_limit"
+    assert len(research.samples) == MAX_SAMPLES and calls == [False]
+    _, trace, _, calls = make_trace()
+    trace.stop()
+    assert trace.step() is None and not calls
+
+
+def test_trace_retries_transient_reads_and_stops_on_uncertain_instance():
+    research, trace, _, calls = make_trace(
+        outcomes=[SceneChanged("Cargando"), sample(), DiagnosticError("Instancia cambió")]
+    )
+    assert trace.step() is None and trace.running and trace.transient_reads == 1
+    assert trace.step() == sample() and len(research.samples) == 1
+    assert trace.step() is None and not trace.running and len(calls) == 3
+    assert research.trace_runs[0]["reason"] == "read_error"
+
+
+def test_trace_cannot_accept_a_sample_from_reused_pid_or_other_instance():
+    research, trace, _, _ = make_trace(outcomes=[sample(created=778)])
+    assert trace.step() is None and not trace.running and not research.samples
+
+
+def test_trace_control_rejects_foreign_connection_and_unbounded_runs():
+    research = TbsResearch(123, 777)
+    session = SimpleNamespace(process=SimpleNamespace(pid=124), creation_time=778)
+    with pytest.raises(DiagnosticError, match="otra instancia"):
+        TbsTrace(research, session)
+    session = SimpleNamespace(process=SimpleNamespace(pid=123), creation_time=777)
+    for _ in range(4):
+        TbsTrace(research, session).stop()
+    with pytest.raises(DiagnosticError, match="Guarda el ZIP"):
+        TbsTrace(research, session)
