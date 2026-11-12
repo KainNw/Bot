@@ -203,7 +203,7 @@ def test_fast_polling_covers_pending_animations_and_preserves_idle_intervals(com
     "phase,deadline,delay",
     [
         ("waiting_map", None, 0.5),
-        ("searching", None, 0.5),
+        ("searching", None, 0.1),
         ("native_pursuit", None, 0.5),
         ("waiting_battle", 20, 0.25),
     ],

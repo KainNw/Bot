@@ -28,7 +28,7 @@ struct Control {
     wchar_t cancel[96] = {};
     HANDLE owner = nullptr, cancellation = nullptr;
     HWND window = nullptr;
-    ULONGLONG candidate_since = 0, deadline = 0;
+    ULONGLONG candidate_since = 0, deadline = 0, encounter_deadline = 0;
     Frame candidate = {};
 } control;
 ClockTelemetry telemetry = {};
@@ -175,13 +175,20 @@ void ClockPoll() {
     }
     if (frame.view == Map) {
         if (clock_scaler::Rate() > 1.f) Restore(ReturnedMap, false);
-        control.need_map = false; control.candidate_since = 0; return;
+        control.need_map = false; control.encounter_deadline = 0;
+        control.candidate_since = 0; return;
     }
     if (frame.view == Graphics || frame.view == NotReady) {
         if (clock_scaler::Rate() > 1.f) Restore(frame.view == Graphics ? GraphicsChanged : ReadinessChanged, false);
+        // A transient readiness loss is not the end of the encounter. Reconfirm
+        // it at 1x, retaining its original real-time budget and graphics latch.
+        if (frame.view == NotReady && control.reason == ReadinessChanged) control.need_map = false;
         control.candidate_since = 0; return;
     }
     const auto now = clock_scaler::RealMilliseconds();
+    if (control.encounter_deadline && now >= control.encounter_deadline) {
+        Restore(TimeLimit, false); return;
+    }
     if (clock_scaler::Rate() > 1.f) {
         if (now >= control.deadline) Restore(TimeLimit, false);
         return;
@@ -191,7 +198,8 @@ void ClockPoll() {
         control.candidate = frame; control.candidate_since = now; return;
     }
     if (now - control.candidate_since < 200) return;
-    control.deadline = now + kBattleLimit;
+    if (!control.encounter_deadline) control.encounter_deadline = now + kBattleLimit;
+    control.deadline = control.encounter_deadline;
     clock_scaler::SetRate(Float(control.configured), control.deadline);
     control.need_map = true; control.reason = Boosted; ++control.applied;
 }
@@ -239,6 +247,7 @@ uint32_t ClockExecute(SharedCommand* cmd, HANDLE cancellation, HWND window) {
     control.configured = cmd->clock_rate_bits; control.view = frame.view;
     control.general = cmd->operation == ClockGeneralStart;
     control.need_map = frame.view == Graphics; control.candidate_since = 0;
+    control.encounter_deadline = 0;
     control.applied = control.restored = 0; control.reason = Waiting; control.armed = true;
     if (!SetTimer(window, reinterpret_cast<UINT_PTR>(&control), 50, Timer)) {
         control.error = GetLastError(); Restore(ReadError, true); Fill(cmd); return ClockUnavailable;

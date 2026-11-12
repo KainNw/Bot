@@ -421,7 +421,9 @@ class HuntEngine:
             return self._observe_manual_movement(observation, now)
         if now < self.next_scan:
             return False
-        self.next_scan = now + (0.1 if self.delayed_target else 1)
+        self.next_scan = now + (
+            0.1 if self.delayed_target or self.profile.attack_delay_seconds == 0 else 1
+        )
         if self.delayed_target is None:
             self.phase, self.message = "searching", "Buscando mobs cercanos."
         return True
@@ -1294,6 +1296,8 @@ class HuntWorker:
         self.events.put_nowait(report)
 
     def _poll_delay(self) -> float:
+        if self.engine.phase == "searching" and self.engine.profile.attack_delay_seconds == 0:
+            return 0.1
         if self.engine.phase == "attack_delay":
             return 0.1
         if self.turns is not None and self.engine.phase in ("confirming_battle", "battle"):

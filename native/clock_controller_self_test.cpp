@@ -62,13 +62,19 @@ static int RunTest(int argc, wchar_t** argv) {
     if (clock_scaler::Rate() != 1.f) return 5; // Phase 2 is not ready.
     Put<uint32_t>(manager + 0x234c, 3); ClockPoll(); Sleep(230); ClockPoll();
     if (clock_scaler::Rate() != 3.f) return 6;
+    Put<uint32_t>(manager + 0x234c, 2); ClockPoll();
+    if (clock_scaler::Rate() != 1.f) return 23;
+    Put<uint32_t>(manager + 0x234c, 3); ClockPoll(); Sleep(230); ClockPoll();
+    if (clock_scaler::Rate() != 3.f) return 24;
     Put<uint32_t>(actor + 0x318, 0xffffffffu); Put<uint32_t>(0x1539ce18, 0); ClockPoll();
     if (clock_scaler::Rate() != 1.f) return 7;
     const auto info = reinterpret_cast<ClockTelemetry*>(command.clock_info_address);
-    if (info->reason != 3 || info->apply_count != 1 || info->restore_count != 1) return 8;
+    if (info->reason != 3 || info->apply_count != 2 || info->restore_count != 2) return 8;
     Put<uint32_t>(actor + 0x318, 0); Put<uint32_t>(0x1539ce18, 1); ClockPoll(); Sleep(230); ClockPoll();
     if (clock_scaler::Rate() != 3.f) return 9;
-    Sleep(370); ClockPoll();
+    Put<uint32_t>(manager + 0x234c, 2); ClockPoll();
+    Sleep(370);
+    Put<uint32_t>(manager + 0x234c, 3); ClockPoll();
     if (clock_scaler::Rate() != 1.f || info->reason != 6) return 10;
     Sleep(230); ClockPoll(); if (clock_scaler::Rate() != 1.f) return 11; // No repeat in the same encounter.
     Put<uint32_t>(actor + 0x318, 0xffffffffu); Put<uint32_t>(0x1539ce18, 0); ClockPoll();

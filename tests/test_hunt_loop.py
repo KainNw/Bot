@@ -127,6 +127,15 @@ def test_selects_only_verified_nearby_targets_after_stable_map():
     assert engine.select(view(NEAR), 2.1) is None
 
 
+def test_zero_delay_detects_new_nearby_mob_on_next_fast_scan():
+    engine = ready_engine()
+    engine.profile = replace(BotProfile.default(1), attack_delay_seconds=0)
+    assert engine.select(view(), 2) is None
+    assert not engine.observe(observation(), 2.05)
+    assert engine.observe(observation(), 2.11)
+    assert engine.select(view(NEAR), 2.11) == NEAR
+
+
 def test_no_duplicate_request_while_waiting_for_battle_and_one_confirmation():
     engine = ready_engine()
     engine.select(view(NEAR), 2)

@@ -18,7 +18,7 @@ REASONS = {
     2: "En combate",
     3: "Regreso al mapa",
     4: "Cambio gráfico; esperando mapa",
-    5: "Esperando un combate nuevo",
+    5: "Confirmando de nuevo el combate",
     6: "Límite de 60 s; esperando mapa",
     7: "Bot detenido",
     8: "Panel cerrado",
