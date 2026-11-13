@@ -24,6 +24,7 @@ def configured(number=2):
         ),
         magic_first_turn_only=False,
         attack_delay_seconds=3,
+        instant_attack=True,
         search_radius=350,
         collect_remaining_loot=True,
         neo_loot_grace_seconds=0.25,

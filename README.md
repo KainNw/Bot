@@ -1,5 +1,17 @@
 # Control de caza para Atlantica Online
 
+La versión **0.30.1**, basada en **0.30.0**, añade la casilla **Ataque inmediato
+(con 0 s)** en **Caza y botín** y **Vista general**. Comienza desmarcada. Al
+activarla con una espera de 0 segundos, conserva dos lecturas estables del mapa
+pero omite la pausa fija de 2 segundos; revisa los objetivos cada 50 ms y solicita
+el ataque al entrar en alcance sin esperar el siguiente cambio de destino de la
+persecución. Los cambios de destino conservan su intervalo de 2 segundos.
+Desmarcada conserva el ciclo anterior; con una espera mayor que 0 respeta ese
+tiempo. Se guarda por personaje y perfil sin cambiar sus otros ajustes.
+El diagnóstico distingue el tiempo de esta iteración del panel del tiempo de
+ida y vuelta del puente. Las pruebas automáticas no miden la aceptación ni la
+latencia del servidor del juego. Consulta [caza y botín](docs/hunt-settings.md).
+
 Panel para Windows 10/11 que selecciona un cliente y solicita ataques
 con Auto Battle apagado. La versión **0.30.0** amplía la pestaña **TBS** para
 investigar **Scourge**, empezando con solo el Main. El visor muestra su posición

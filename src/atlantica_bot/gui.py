@@ -103,6 +103,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.team_status = tk.StringVar(value="Conecta para consultar el equipo.")
             self.search_radius = tk.StringVar(value="60")
             self.attack_delay = tk.StringVar(value="0")
+            self.instant_attack = tk.BooleanVar(value=False)
             self.collect_loot = tk.BooleanVar(value=False)
             self.instant_loot = tk.BooleanVar(value=True)
             self.neo_loot_grace = tk.StringVar(value="1")
@@ -154,6 +155,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             self.sync_identity()
             for variable in (
                 self.attack_delay,
+                self.instant_attack,
                 self.search_radius,
                 self.collect_loot,
                 self.instant_loot,
@@ -558,6 +560,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                     on_refresh=self.refresh_team,
                     on_copy=self.copy_bot,
                     attack_delay=self.attack_delay,
+                    instant_attack=self.instant_attack,
                     search_radius=self.search_radius,
                     collect_loot=self.collect_loot,
                     instant_loot=self.instant_loot,
@@ -758,6 +761,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
                 self.radius_entry,
                 self.radius_calibrate_button,
                 self.delay_entry,
+                self.instant_attack_check,
                 self.loot_check,
                 self.instant_loot_check,
                 self.neo_loot_grace_entry,
@@ -1083,6 +1087,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             try:
                 self.profile = profile
                 self.attack_delay.set(f"{profile.attack_delay_seconds:g}")
+                self.instant_attack.set(profile.instant_attack)
                 self.search_radius.set(str(profile.search_radius))
                 self.collect_loot.set(profile.collect_remaining_loot)
                 self.instant_loot.set(profile.instant_loot)
@@ -1147,6 +1152,7 @@ def launch_panel(*, smoke_test: bool = False) -> None:
             updated = replace(
                 profile,
                 attack_delay_seconds=delay,
+                instant_attack=self.instant_attack.get(),
                 search_radius=radius,
                 collect_remaining_loot=self.collect_loot.get(),
                 instant_loot=self.instant_loot.get(),
@@ -2900,6 +2906,12 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.show_overview()
         overview = panel.overview
         assert overview is not None and overview.alive and len(overview.cells) == 9
+        assert not panel.instant_attack.get()
+        panel.instant_attack_check.invoke()
+        assert panel.configured_profile(BotProfile.default(1)).instant_attack_active
+        overview.instant_attack_check.invoke()
+        assert not panel.instant_attack.get()
+        assert not panel.configured_profile(BotProfile.default(1)).instant_attack_active
         assert panel.instant_loot.get()
         assert str(overview.grace_entry.cget("state")) == "disabled"
         panel.instant_loot_check.invoke()
@@ -2929,6 +2941,9 @@ def launch_panel(*, smoke_test: bool = False) -> None:
         panel.world_attack_mode.set(WORLD_ATTACK_LABELS["stationary"])
         configured = panel.configured_profile(BotProfile.default(1))
         assert configured.attack_delay_seconds == 1.5 and configured.search_radius == 350
+        panel.instant_attack_check.invoke()
+        configured = panel.configured_profile(BotProfile.default(1))
+        assert configured.instant_attack and not configured.instant_attack_active
         assert configured.collect_remaining_loot
         assert configured.neo_loot_grace_seconds == 0.25
         assert configured.battle_speed_enabled and configured.battle_speed_rate == 3.0

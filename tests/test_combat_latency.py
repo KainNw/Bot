@@ -214,6 +214,17 @@ def test_world_polling_intervals_are_preserved(combat_worker, phase, deadline, d
     assert worker._poll_delay() == delay
 
 
+@pytest.mark.parametrize("phase", ["waiting_map", "resuming", "searching", "native_pursuit"])
+def test_immediate_world_polling_is_opt_in_and_requires_zero_seconds(combat_worker, phase):
+    worker, _ = combat_worker
+    worker.engine.phase = phase
+    previous = worker._poll_delay()
+    worker.engine.profile = replace(worker.engine.profile, instant_attack=True)
+    assert worker._poll_delay() == 0.05
+    worker.engine.profile = replace(worker.engine.profile, attack_delay_seconds=3)
+    assert worker._poll_delay() == (0.5 if phase == "searching" else previous)
+
+
 def test_manual_turn_mode_preserves_previous_intervals(combat_worker):
     worker, _ = combat_worker
     assert worker._poll_delay() == 0.1

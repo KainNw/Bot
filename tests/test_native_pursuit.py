@@ -148,6 +148,38 @@ def test_moving_mob_updates_native_goal_at_a_bounded_rate_and_keeps_total_timeou
     assert engine.pursuit_reason == "timeout" and engine.phase == "stopping_native_pursuit"
 
 
+@pytest.mark.parametrize("instant", [False, True])
+def test_immediate_attack_can_strike_in_range_before_next_movement_update(instant):
+    engine = pursuing_engine()
+    engine.profile = replace(engine.profile, instant_attack=instant)
+    close = GridPosition(52, 198, 340)
+    near = replace(TARGET, slot=13, distance_squared=16)
+    assert engine.observe(observation(close, pursuit=PURSUIT), 2.2)
+    assert engine.select(view(near, position=close), 2.2) == (near if instant else None)
+    if instant:
+        engine.record_native(near, result(1, target=near), 2.21)
+        assert engine.queued == 1 and engine.pending_pursuit == PURSUIT
+        assert not engine.observe(observation(close, pursuit=PURSUIT), 2.3)
+        assert engine.select(view(near, position=close), 2.3) is None
+    else:
+        assert engine.observe(observation(close, pursuit=PURSUIT), 4.2)
+        assert engine.select(view(near, position=close), 4.2) == near
+
+
+def test_immediate_attack_keeps_movement_update_throttle_for_out_of_range_target():
+    engine = pursuing_engine()
+    engine.profile = replace(engine.profile, instant_attack=True)
+    moved = replace(TARGET, x=205, y=341, distance_squared=100)
+    assert engine.observe(observation(pursuit=PURSUIT), 2.2)
+    assert engine.select(view(moved), 2.2) is None
+    assert not engine.observe(observation(pursuit=PURSUIT), 2.22)
+    assert engine.observe(observation(pursuit=PURSUIT), 2.26)
+    assert engine.select(view(moved), 2.26) is None
+    assert engine.observe(observation(pursuit=PURSUIT), 4.2)
+    assert engine.select(view(moved), 4.2) == moved
+    assert engine.native_requests == 1 and engine.attempts == 0
+
+
 def test_reassigned_slot_uses_fresh_slot_for_the_same_identity():
     engine = pursuing_engine()
     position = GridPosition(52, 198, 340)

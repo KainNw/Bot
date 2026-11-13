@@ -96,6 +96,11 @@ class BotProfile:
     instant_loot: bool = True
     independent_battle_speed_enabled: bool = False
     independent_battle_speed_rate: float = 1.25
+    instant_attack: bool = False
+
+    @property
+    def instant_attack_active(self) -> bool:
+        return self.instant_attack and self.attack_delay_seconds == 0
 
     @property
     def speed_enabled(self) -> bool:
@@ -116,6 +121,8 @@ class BotProfile:
             raise DiagnosticError("Revisa la configuración de magia del primer turno.")
         if type(self.pass_remaining) is not bool:
             raise DiagnosticError("Revisa la opción de pasar las acciones restantes.")
+        if type(self.instant_attack) is not bool:
+            raise DiagnosticError("Revisa la opción de ataque inmediato.")
         if (
             type(self.attack_delay_seconds) not in (int, float)
             or not math.isfinite(self.attack_delay_seconds)
@@ -201,11 +208,12 @@ class BotProfile:
 
     def summary(self) -> dict:
         return {
-            "schema_version": 12,
+            "schema_version": 13,
             "profile": self.number,
             "mercenaries": [asdict(merc) for merc in self.mercenaries],
             "magic_first_turn_only": self.magic_first_turn_only,
             "attack_delay_seconds": self.attack_delay_seconds,
+            "instant_attack": self.instant_attack,
             "search_radius": self.search_radius,
             "collect_remaining_loot": self.collect_remaining_loot,
             "world_attack_mode": self.world_attack_mode,
@@ -259,7 +267,7 @@ class ProfileStore:
             payload = json.loads(data)
             if (
                 type(payload["schema_version"]) is not int
-                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+                or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
                 or type(payload["profile"]) is not int
                 or payload["profile"] != number
             ):
@@ -299,6 +307,7 @@ class ProfileStore:
                 payload["independent_battle_speed_rate"]
                 if payload["schema_version"] >= 12
                 else 1.25,
+                payload["instant_attack"] if payload["schema_version"] >= 13 else False,
             )
             profile.validate()
             return profile

@@ -136,6 +136,111 @@ def test_zero_delay_detects_new_nearby_mob_on_next_fast_scan():
     assert engine.select(view(NEAR), 2.11) == NEAR
 
 
+@pytest.mark.parametrize("instant,delay", [(False, 0), (True, 0), (True, 3)])
+def test_immediate_attack_changes_only_opted_in_zero_second_map_wait(instant, delay):
+    profile = replace(BotProfile.default(1), instant_attack=instant, attack_delay_seconds=delay)
+    engine = HuntEngine(100, 777, DETECTOR, profile)
+    assert not engine.observe(observation(), 0)
+    fast = instant and delay == 0
+    assert engine.observe(observation(), 0.05) is fast
+    if not fast:
+        assert engine.observe(observation(), 2)
+    assert engine.select(view(NEAR), 2) == (None if delay else NEAR)
+    assert engine.summary()["attack_delay"]["instant_attack_active"] is fast
+
+
+def test_immediate_attack_still_needs_two_equal_map_readings_and_valid_range():
+    profile = replace(BotProfile.default(1), instant_attack=True)
+    engine = HuntEngine(100, 777, DETECTOR, profile)
+    assert not engine.observe(observation(), 0)
+    changed = GridPosition(52, 194, 340)
+    assert not engine.observe(observation(player=changed), 0.05)
+    assert engine.observe(observation(player=changed), 0.1)
+    assert engine.select(view(FAR, player=changed), 0.1) is None
+    assert engine.select(view(NEAR, player=changed, limit=None), 0.2) is None
+    assert not engine.running and engine.needs_reconnect
+
+
+def test_immediate_attack_keeps_manual_movement_stabilization():
+    engine = ready_engine()
+    engine.profile = replace(engine.profile, instant_attack=True)
+    changed = GridPosition(52, 194, 340)
+    assert not engine.observe(observation(player=changed), 3)
+    assert engine.manual_active
+    assert not engine.observe(observation(player=changed), 3.1)
+    assert not engine.observe(observation(player=changed), 4)
+    assert engine.observe(observation(player=changed), 5)
+
+
+def test_immediate_attack_rechecks_returned_map_and_excludes_confirmed_target():
+    engine = ready_engine()
+    engine.profile = replace(engine.profile, instant_attack=True)
+    assert engine.select(view(NEAR), 2) == NEAR
+    engine.record(NEAR, report(), 2.01)
+    assert not engine.observe(observation(active=True), 2.1)
+    assert not engine.observe(observation(active=True), 2.2)
+    assert engine.battles == 1
+    returned = GridPosition(52, 194, 341)
+    assert not engine.observe(observation(player=returned), 3)
+    assert engine.observe(observation(player=returned), 3.05)
+    fresh = replace(NEAR, slot=9, identity=(12053, 99, 100), distance_squared=3)
+    assert engine.select(view(NEAR, fresh, player=returned), 3.05) == fresh
+    assert engine.range_diagnostic["excluded_previously_engaged"] == 1
+
+
+@pytest.mark.parametrize("stop_before_scan", [False, True])
+def test_immediate_native_attack_sends_in_ready_iteration_and_never_duplicates(
+    monkeypatch, stop_before_scan
+):
+    session = SimpleNamespace(process=SimpleNamespace(pid=100), creation_time=777)
+    worker = HuntWorker(
+        session,
+        ClientWindow(100, 0x1234, "Atlantica", 1234),
+        DETECTOR,
+        replace(BotProfile.default(1), instant_attack=True),
+        native_attack=True,
+    )
+    worker.next_transport_sample = float("inf")
+    now = [0.0]
+    calls = []
+
+    def observe(*args, **kwargs):
+        now[0] += 0.002
+        return observation()
+
+    def scan(*args, **kwargs):
+        now[0] += 0.003
+        if stop_before_scan:
+            worker.stop_event.set()
+        return view(NEAR)
+
+    def attack(selected_session, selected_window, candidate, *args, **kwargs):
+        assert selected_session is session and selected_window is worker.window
+        calls.append(candidate)
+        now[0] += 0.011
+        return {**report(candidate=candidate), "operation": 4}
+
+    monkeypatch.setattr("atlantica_bot.hunt_loop.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("atlantica_bot.hunt_loop.observe_scene", observe)
+    monkeypatch.setattr("atlantica_bot.hunt_loop.scan_world", scan)
+    monkeypatch.setattr("atlantica_bot.hunt_loop.try_native_attack", attack)
+    worker._iteration()
+    assert not calls and worker.engine.phase == "resuming"
+    assert worker._poll_delay() == 0.05
+    now[0] = 0.052
+    worker._iteration()
+    if stop_before_scan:
+        assert not calls and worker.engine.attempts == 0
+        return
+    assert calls == [NEAR] and worker.engine.attempts == worker.engine.queued == 1
+    assert worker.engine.last_request_timing["panel_before_bridge_ms"] == 5
+    assert worker.engine.last_request_timing["bridge_roundtrip_ms"] == 11
+    for _ in range(5):
+        now[0] += 0.1
+        worker._iteration()
+    assert calls == [NEAR] and worker.engine.attempts == 1
+
+
 def test_no_duplicate_request_while_waiting_for_battle_and_one_confirmation():
     engine = ready_engine()
     engine.select(view(NEAR), 2)

@@ -41,6 +41,7 @@ from .world import (
 )
 
 BATTLE_CONFIRMATION_WARNING_SECONDS = 30
+INSTANT_ATTACK_POLL_SECONDS = 0.05
 
 
 def target_key(candidate: Candidate) -> tuple:
@@ -146,6 +147,7 @@ class HuntEngine:
     delayed_phase: str = ""
     stationary_request_position: GridPosition | None = None
     stationary_request_world_position: tuple[float, float, float] | None = None
+    last_request_timing: dict = field(default_factory=dict)
 
     def _event(self, kind: str, now: float | None = None, **data) -> None:
         if now is not None:
@@ -405,7 +407,7 @@ class HuntEngine:
             ):
                 self.anchor = position
                 self.anchor_world_position = observation.world_position
-                self.resume_at = now + 2
+                self.resume_at = now + (0 if self.profile.instant_attack_active else 2)
                 self.stable_samples = 1
             else:
                 self.stable_samples += 1
@@ -422,7 +424,11 @@ class HuntEngine:
         if now < self.next_scan:
             return False
         self.next_scan = now + (
-            0.1 if self.delayed_target or self.profile.attack_delay_seconds == 0 else 1
+            INSTANT_ATTACK_POLL_SECONDS
+            if self.profile.instant_attack_active
+            else 0.1
+            if self.delayed_target or self.profile.attack_delay_seconds == 0
+            else 1
         )
         if self.delayed_target is None:
             self.phase, self.message = "searching", "Buscando mobs cercanos."
@@ -497,7 +503,9 @@ class HuntEngine:
         self.manual_active = False
         self.origin = position
         self.battle_active = False
-        self.next_scan = now + 1
+        self.next_scan = now + (
+            INSTANT_ATTACK_POLL_SECONDS if self.profile.instant_attack_active else 1
+        )
         self.phase, self.message = (
             "searching",
             "Movimiento terminado; buscando desde el punto actual.",
@@ -773,7 +781,9 @@ class HuntEngine:
         )
         if now < self.next_scan:
             return False
-        self.next_scan = now + 0.5
+        self.next_scan = now + (
+            INSTANT_ATTACK_POLL_SECONDS if self.profile.instant_attack_active else 0.5
+        )
         return True
 
     def _inspect_native_pursuit(self, view: WorldView, now: float) -> Candidate | None:
@@ -804,9 +814,14 @@ class HuntEngine:
                 "search_radius": self.approach.radius,
             }
             moved = abs(target.x - self.pursuit.x) + abs(target.y - self.pursuit.y) > 2
+            # Keep destination updates throttled; an in-range strike has no new destination.
             if (
                 target.distance_squared is not None
-                and now >= self.pursuit_update_at
+                and (
+                    now >= self.pursuit_update_at
+                    or self.profile.instant_attack_active
+                    and target.distance_squared <= limit
+                )
                 and (target.distance_squared <= limit or moved)
             ):
                 self.selection_source = "native_pursuit"
@@ -1050,7 +1065,9 @@ class HuntEngine:
             report=dict(report),
         )
         code = report["status"]
-        self.next_scan = now + 1.5
+        self.next_scan = now + (
+            INSTANT_ATTACK_POLL_SECONDS if self.profile.instant_attack_active else 1.5
+        )
         if code == 1:
             if self.stationary_attack:
                 self.stationary_request_position = self.anchor
@@ -1143,6 +1160,7 @@ class HuntEngine:
                 "late_battles_observed": self.late_battles_observed,
             },
             "last_attack": dict(self.last_attack),
+            "last_request_timing": dict(self.last_request_timing),
             "detector": self.detector.summary(),
             "observation_count": self.observation_count,
             "scene_counts": dict(self.scene_counts),
@@ -1164,6 +1182,9 @@ class HuntEngine:
             "range": dict(self.range_diagnostic),
             "attack_delay": {
                 "seconds": self.profile.attack_delay_seconds,
+                "instant_attack_enabled": self.profile.instant_attack,
+                "instant_attack_active": self.profile.instant_attack_active,
+                "map_settle_seconds": 0 if self.profile.instant_attack_active else 2,
                 "target": asdict(self.delayed_target) if self.delayed_target else None,
                 "remaining_seconds": round(max(0, self.attack_ready_at - self.trace_time), 2)
                 if self.attack_ready_at is not None
@@ -1296,6 +1317,13 @@ class HuntWorker:
         self.events.put_nowait(report)
 
     def _poll_delay(self) -> float:
+        if self.engine.profile.instant_attack_active and self.engine.phase in (
+            "waiting_map",
+            "resuming",
+            "searching",
+            "native_pursuit",
+        ):
+            return INSTANT_ATTACK_POLL_SECONDS
         if self.engine.phase == "searching" and self.engine.profile.attack_delay_seconds == 0:
             return 0.1
         if self.engine.phase == "attack_delay":
@@ -1459,6 +1487,7 @@ class HuntWorker:
         self.engine.speed = dict(clock.report)
 
     def _iteration(self) -> None:
+        iteration_started = time.monotonic()
         pursuing = self.engine.pursuit is not None
         moving = self.engine.route is not None or pursuing
         observation = (
@@ -1494,6 +1523,7 @@ class HuntWorker:
             candidate = self.engine.select(view, time.monotonic())
             if candidate is not None and not self.stop_event.is_set():
                 self._publish()
+                request_started = time.monotonic()
                 if self.engine.phase == "requesting_stationary_attack":
                     report = try_stationary_attack(
                         self.session,
@@ -1536,6 +1566,14 @@ class HuntWorker:
                         self.session, self.window, candidate, cancellation=self.cancellation
                     )
                     self.engine.record(candidate, report, time.monotonic())
+                self.engine.last_request_timing = {
+                    "slot": candidate.slot,
+                    "status": report.get("status"),
+                    "panel_before_bridge_ms": round(
+                        (request_started - iteration_started) * 1000, 3
+                    ),
+                    "bridge_roundtrip_ms": round((time.monotonic() - request_started) * 1000, 3),
+                }
         if self.turns is not None and self.engine.running:
             if self.engine.phase == "battle":
                 # Reread after selection or a definite no-send loot rejection.

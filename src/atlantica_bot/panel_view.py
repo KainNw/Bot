@@ -196,6 +196,17 @@ def _hunting(p) -> None:
         wraplength=370,
         style="Caption.TLabel",
     ).pack(anchor="w", pady=(6, 8))
+    p.instant_attack_check = ttk.Checkbutton(
+        body, text="Ataque inmediato (con 0 s)", variable=p.instant_attack
+    )
+    p.instant_attack_check.pack(anchor="w", pady=(0, 4))
+    ttk.Label(
+        body,
+        text="Con 0 s, omite las pausas extra del mapa y al entrar en alcance. "
+        "Desmarcada conserva el ritmo actual.",
+        wraplength=370,
+        style="Caption.TLabel",
+    ).pack(anchor="w", pady=(0, 8))
     ttk.Label(
         body,
         text="Desde mi posición solicita combate sin ordenar acercamiento. "

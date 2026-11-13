@@ -1,4 +1,4 @@
-# Caza y botín — 0.27.0
+# Caza y botín — 0.30.1
 
 La pestaña **Caza y botín** está en el panel y en **Vista general**. Comparte los
 valores de la misma conexión. Guarda las opciones en el perfil elegido (1–3),
@@ -28,6 +28,46 @@ La cuenta no bloquea el trabajador. Relee posición, escena e identidad del mob.
 Una desaparición, un movimiento manual, un combate o una parada cancelan la cuenta.
 Si cambia de puesto conservando su identidad, utiliza el puesto actualizado.
 La estabilidad del mapa y las comprobaciones nativas siguen siendo necesarias con 0 s.
+
+### Ataque inmediato (con 0 s)
+
+Desde **0.30.1** hay una casilla en el panel y en **Vista general**, compartida
+entre ambas ventanas y guardada por personaje y perfil. Comienza desmarcada,
+también al cargar perfiles anteriores. Para usarla, para el bot, configura
+**Espera antes de atacar = 0** y marca **Ataque inmediato (con 0 s)**.
+
+- Al iniciar o volver del combate exige dos lecturas consecutivas de una posición
+  estable, sin añadir la pausa fija de 2 segundos del ciclo anterior.
+- Consulta el mapa, los candidatos y el alcance durante una persecución cada
+  50 ms como mínimo, en vez de los 100–500 ms del ciclo anterior. El trabajo de
+  lectura y del puente se añade a ese intervalo; no es una garantía de latencia.
+- Al entrar en el alcance nativo solicita el ataque sin esperar el plazo de
+  2 segundos que se usa para actualizar el destino de persecución. Mantiene
+  ese límite para las actualizaciones de movimiento si el mob sigue lejos.
+- Omite la pausa de búsqueda de 1,5 segundos posterior a una respuesta del
+  puente. Si hubo envío, sigue bloqueando nuevos ataques hasta confirmar el
+  combate; los rechazos conservan la exclusión temporal del objetivo.
+- No añade una cuenta de espera ni activa Auto Battle. Mantiene identidad,
+  alcance, límites, cancelación y bloqueo de nuevos ataques mientras se espera
+  confirmar un envío. El movimiento manual conserva sus 2 segundos de pausa.
+
+Si la desmarcas, vuelve al ritmo anterior. Si la espera es mayor que 0,
+la casilla queda guardada pero no aplica estas reducciones: se respeta el tiempo
+configurado. Ninguna de las dos ventanas permite cambiarla con el bot ejecutándose.
+
+**Copiar estado** incluye `attack_delay.instant_attack_enabled` y
+`instant_attack_active`. `last_request_timing` separa
+`panel_before_bridge_ms` (lectura, selección y publicación de estado de la
+iteración que envía la solicitud) de `bridge_roundtrip_ms` (llamada al puente y
+registro de su resultado). La espera previa entre iteraciones no forma parte
+de estos dos tiempos. La cola aceptada y el tiempo del puente no demuestran
+un ataque aceptado por el servidor; `seconds_to_observed_battle` mide aparte
+hasta observar la entrada en combate.
+
+La ruta sigue reutilizando las órdenes de Auto Battle descritas en
+[ataque nativo](native-attack.md). No se ha modificado el mensaje ni el puente
+nativo para obtener estas reducciones. La mejora corresponde a las pausas del
+panel; su efecto real en el cliente de Windows requiere prueba en el juego.
 
 ## Radio y calibración
 

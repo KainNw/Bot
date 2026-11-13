@@ -24,6 +24,7 @@ class OverviewWindow:
         on_refresh: Callable,
         on_copy: Callable,
         attack_delay,
+        instant_attack,
         search_radius,
         collect_loot,
         instant_loot,
@@ -117,6 +118,19 @@ class OverviewWindow:
         )
         radius.pack(side="left")
         self.hunt_controls.append(radius)
+        self.instant_attack_check = tk.Checkbutton(
+            hunting,
+            text="Ataque inmediato (con 0 s)",
+            variable=instant_attack,
+            background=SURFACE,
+            foreground=TEXT,
+            activebackground=SURFACE,
+            activeforeground=TEXT,
+            selectcolor=BACKGROUND,
+        )
+        self.instant_attack_check.pack(anchor="w", pady=(0, 4))
+        self.hunt_controls.append(self.instant_attack_check)
+        option_label("Con 0 s, omite las pausas extra del mapa y al entrar en alcance.")
         option_label(
             "Desde mi posición solicita combate sin ordenar movimiento; la aceptación a distancia "
             "depende del servidor. Perseguir y atacar usa el recorrido nativo."

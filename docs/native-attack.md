@@ -75,6 +75,14 @@ al menos dos segundos entre órdenes de una misma persecución. El límite total
 actualizar el punto. Al alcanzar el umbral nativo solicita el ataque sin enviar una
 parada por rejilla ni esperar el final del recorrido de 0.6.
 
+En el ciclo de **0.30.0**, tanto actualizar el destino como atacar al entrar en
+alcance comparten el plazo `pursuit_update_at`: eso puede añadir hasta 2 segundos
+desde la última orden de persecución, además del intervalo de lectura de 500 ms.
+**0.30.1** permite omitir ese plazo para el ataque marcando **Ataque inmediato
+(con 0 s)**. El alcance y la identidad se vuelven a comprobar; las actualizaciones
+de destino siguen limitadas a una cada 2 segundos. Sin la casilla, o con una
+espera configurada mayor que 0, se conserva el comportamiento anterior.
+
 Tras encolar un ataque, espera dos muestras de combate y no lo duplica. Conserva
 el descriptor de persecución para poder solicitar su parada si se detiene el bot
 antes de confirmar batalla. Si observa combate durante la persecución, pausa sin

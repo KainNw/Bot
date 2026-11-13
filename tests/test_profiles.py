@@ -40,7 +40,7 @@ def test_magic_actions_and_fallback_are_saved_per_mercenary_in_priority_order(tm
     store.save(updated)
     assert store.load(1) == updated
     payload = json.loads((tmp_path / "profile-1.json").read_text())
-    assert payload["schema_version"] == 12
+    assert payload["schema_version"] == 13
     assert [m["action"] for m in payload["mercenaries"]] == list(reversed(actions))
     assert payload["turn_execution_available"] is True
 
@@ -64,8 +64,31 @@ def test_legacy_profile_migrates_in_memory_without_rewriting_or_losing_settings(
     assert all(m.action == "basic" and m.fallback_basic for m in loaded.mercenaries)
     assert path.read_bytes() == saved
     store.save(loaded)
-    assert json.loads(path.read_bytes())["schema_version"] == 12
+    assert json.loads(path.read_bytes())["schema_version"] == 13
     assert store.load(1) == loaded
+
+
+@pytest.mark.parametrize("instant", [False, True])
+def test_instant_attack_is_saved_without_overwriting_configured_delay(tmp_path, instant):
+    profile = replace(BotProfile.default(1), instant_attack=instant, attack_delay_seconds=3)
+    store = ProfileStore(tmp_path)
+    store.save(profile)
+    loaded = store.load(1)
+    assert loaded == profile and not loaded.instant_attack_active
+    assert replace(loaded, attack_delay_seconds=0).instant_attack_active is instant
+
+
+def test_version_12_profile_keeps_previous_attack_behavior_without_rewriting(tmp_path):
+    profile = replace(BotProfile.default(1), attack_delay_seconds=0, search_radius=350)
+    payload = profile.summary()
+    payload["schema_version"] = 12
+    del payload["instant_attack"]
+    raw = json.dumps(payload).encode()
+    path = tmp_path / "profile-1.json"
+    path.write_bytes(raw)
+    loaded = ProfileStore(tmp_path).load(1)
+    assert loaded == profile and not loaded.instant_attack
+    assert path.read_bytes() == raw
 
 
 @pytest.mark.parametrize("instant", [False, True])
@@ -328,6 +351,9 @@ def test_schema_three_keeps_team_settings_and_uses_safe_hunt_defaults_without_re
         ("search_radius", 501),
         ("search_radius", True),
         ("collect_remaining_loot", 1),
+        ("instant_attack", 1),
+        ("instant_attack", "true"),
+        ("instant_attack", None),
     ],
 )
 def test_invalid_hunt_options_preserve_saved_profile(tmp_path, field, value):
@@ -340,7 +366,7 @@ def test_invalid_hunt_options_preserve_saved_profile(tmp_path, field, value):
 
 
 @pytest.mark.parametrize(
-    "field", ["attack_delay_seconds", "search_radius", "collect_remaining_loot"]
+    "field", ["attack_delay_seconds", "search_radius", "collect_remaining_loot", "instant_attack"]
 )
 def test_incomplete_hunt_options_in_new_schema_do_not_reset_saved_settings(tmp_path, field):
     payload = BotProfile.default(1).summary()

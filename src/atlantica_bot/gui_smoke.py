@@ -147,6 +147,7 @@ def check_character_settings(panel) -> None:
         assert panel.search_radius.get() == "120"
         panel.search_radius.set("275")
         panel.attack_delay.set("1,5")
+        panel.instant_attack.set(True)
         panel.collect_loot.set(True)
         assert panel.instant_loot.get()
         assert str(panel.neo_loot_grace_entry.cget("state")) == "disabled"
@@ -220,6 +221,7 @@ def check_character_settings(panel) -> None:
         first_store = panel.character_store
         saved = first_store.load(2)
         assert saved.search_radius == 275 and saved.collect_remaining_loot
+        assert saved.instant_attack and not saved.instant_attack_active
         assert not saved.instant_loot
         assert saved.battle_speed_enabled and saved.battle_speed_rate == 3
         assert saved.neo_loot_grace_seconds == 0.25 and saved.attack_delay_seconds == 1.5
@@ -264,6 +266,7 @@ def check_character_settings(panel) -> None:
         connect(202, 20, "MainDos")
         assert panel.character_store.key != first_store.key
         assert panel.search_radius.get() == "60" and not panel.turns_enabled.get()
+        assert not panel.instant_attack.get()
         assert not panel.battle_speed_enabled.get()
         assert not panel.general_speed_enabled.get()
         panel.search_radius.set("15")
@@ -274,6 +277,7 @@ def check_character_settings(panel) -> None:
         assert panel.character_store.key == first_store.key
         assert panel.profile_number.get() == "2" and panel.turns_enabled.get()
         assert panel.search_radius.get() == "300" and panel.collect_loot.get()
+        assert panel.instant_attack.get()
         assert not panel.instant_loot.get()
         assert panel.profile.mercenaries == members
         assert panel.profile.pass_remaining
